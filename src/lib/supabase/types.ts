@@ -21,6 +21,10 @@ export type Database = {
           name: string;
           slug: string;
           mcp_token: string | null;
+          marketing: boolean;
+          sales: boolean;
+          fulfilment: boolean;
+          finance: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -29,6 +33,10 @@ export type Database = {
           name: string;
           slug: string;
           mcp_token?: string | null;
+          marketing?: boolean;
+          sales?: boolean;
+          fulfilment?: boolean;
+          finance?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_organizations"]["Row"]>;
         Relationships: [];
@@ -42,6 +50,7 @@ export type Database = {
           password_hash: string | null;
           email_verified: string | null;
           organization_id: string | null;
+          role: "owner" | "admin" | "member";
           created_at: string;
           updated_at: string;
         };
@@ -53,8 +62,34 @@ export type Database = {
           password_hash?: string | null;
           email_verified?: string | null;
           organization_id?: string | null;
+          role?: "owner" | "admin" | "member";
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_users"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_invites: {
+        Row: {
+          token_hash: string;
+          email: string;
+          name: string | null;
+          role: "owner" | "admin" | "member";
+          organization_id: string;
+          invited_by: string | null;
+          expires_at: string;
+          accepted_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          token_hash: string;
+          email: string;
+          name?: string | null;
+          role?: "owner" | "admin" | "member";
+          organization_id: string;
+          invited_by?: string | null;
+          expires_at: string;
+          accepted_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_invites"]["Row"]>;
         Relationships: [];
       };
       rgaios_password_resets: {

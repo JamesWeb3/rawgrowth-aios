@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { Plug, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { jsonFetcher } from "@/lib/swr";
+import { getIntegration } from "@/lib/integrations-catalog";
 import {
   Select,
   SelectContent,
@@ -13,20 +14,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type ToolEntry = {
+type WorkspaceTool = {
   name: string;
   description: string;
   isWrite: boolean;
 };
-type IntegrationGroup = {
+type IntegrationEntry = {
   id: string;
   name: string;
   connected: boolean;
-  tools: ToolEntry[];
+  hasWriteTools: boolean;
+  toolCount: number;
 };
 type CatalogResponse = {
-  integrations: IntegrationGroup[];
-  workspace: ToolEntry[];
+  integrations: IntegrationEntry[];
+  workspace: WorkspaceTool[];
 };
 
 export type WritePolicy = Record<
@@ -55,21 +57,18 @@ export function ToolsPicker({
     jsonFetcher,
   );
 
-  function toggleTool(toolName: string, isWrite: boolean) {
+  function toggle(key: string, defaultPolicy: "direct" | "requires_approval") {
     const next: WritePolicy = { ...value };
-    if (toolName in next) {
-      delete next[toolName];
-    } else {
-      next[toolName] = isWrite ? "requires_approval" : "direct";
-    }
+    if (key in next) delete next[key];
+    else next[key] = defaultPolicy;
     onChange(next);
   }
 
   function setPolicy(
-    toolName: string,
+    key: string,
     policy: "direct" | "requires_approval" | "draft_only",
   ) {
-    onChange({ ...value, [toolName]: policy });
+    onChange({ ...value, [key]: policy });
   }
 
   if (isLoading && !data) {
@@ -82,37 +81,135 @@ export function ToolsPicker({
   const workspace = data?.workspace ?? [];
 
   return (
-    <div className="space-y-4">
-      {workspace.length > 0 && (
-        <GroupBlock title="Workspace" connected>
-          {workspace.map((t) => (
-            <ToolRow
-              key={t.name}
-              tool={t}
-              enabled={t.name in value}
-              policy={value[t.name] ?? "direct"}
-              onToggle={() => toggleTool(t.name, t.isWrite)}
-              onPolicyChange={(p) => setPolicy(t.name, p)}
+    <div className="space-y-3">
+      {integrations.map((it) => {
+        const catalog = getIntegration(it.id);
+        const Icon = catalog?.Icon;
+        const brand = catalog?.brand ?? "#888";
+        const enabled = it.id in value;
+        const policy = value[it.id] ?? "direct";
+        return (
+          <div
+            key={it.id}
+            className="flex items-center gap-3 rounded-md border border-border bg-card/30 px-3 py-2.5"
+          >
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={!it.connected}
+              onChange={() =>
+                toggle(it.id, it.hasWriteTools ? "requires_approval" : "direct")
+              }
+              className="size-3.5 accent-primary disabled:opacity-40"
             />
-          ))}
-        </GroupBlock>
-      )}
+            <div
+              className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border"
+              style={{ backgroundColor: `${brand}1a` }}
+            >
+              {Icon ? (
+                <Icon
+                  className="size-4"
+                  style={{ color: brand === "#FFFFFF" ? "#fff" : brand }}
+                />
+              ) : null}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-medium text-foreground">
+                {it.name}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {it.connected
+                  ? `${it.toolCount} tool${it.toolCount === 1 ? "" : "s"} available`
+                  : "Not connected"}
+              </div>
+            </div>
+            {enabled && it.hasWriteTools && (
+              <Select
+                value={policy}
+                onValueChange={(v) =>
+                  setPolicy(
+                    it.id,
+                    (v ?? "direct") as
+                      | "direct"
+                      | "requires_approval"
+                      | "draft_only",
+                  )
+                }
+              >
+                <SelectTrigger className="h-7 w-40 bg-input/40 text-[11px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {POLICY_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        );
+      })}
 
-      {integrations.map((g) => (
-        <GroupBlock key={g.id} title={g.name} connected={g.connected}>
-          {g.tools.map((t) => (
-            <ToolRow
-              key={t.name}
-              tool={t}
-              enabled={t.name in value}
-              policy={value[t.name] ?? "direct"}
-              disabled={!g.connected}
-              onToggle={() => toggleTool(t.name, t.isWrite)}
-              onPolicyChange={(p) => setPolicy(t.name, p)}
-            />
-          ))}
-        </GroupBlock>
-      ))}
+      {workspace.length > 0 && (
+        <div className="rounded-md border border-border bg-card/30">
+          <div className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-[1px] text-muted-foreground">
+            Workspace
+          </div>
+          <div className="divide-y divide-border">
+            {workspace.map((t) => {
+              const enabled = t.name in value;
+              const policy = value[t.name] ?? "direct";
+              return (
+                <div key={t.name} className="flex items-start gap-3 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={() =>
+                      toggle(t.name, t.isWrite ? "requires_approval" : "direct")
+                    }
+                    className="mt-0.5 size-3.5 accent-primary"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12.5px] font-medium text-foreground">
+                      {t.name}
+                    </div>
+                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+                      {t.description}
+                    </p>
+                  </div>
+                  {enabled && t.isWrite && (
+                    <Select
+                      value={policy}
+                      onValueChange={(v) =>
+                        setPolicy(
+                          t.name,
+                          (v ?? "direct") as
+                            | "direct"
+                            | "requires_approval"
+                            | "draft_only",
+                        )
+                      }
+                    >
+                      <SelectTrigger className="h-7 w-40 bg-input/40 text-[11px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {POLICY_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <Link
         href="/integrations"
@@ -121,101 +218,6 @@ export function ToolsPicker({
         <Plus className="size-3.5" />
         Add more integrations
       </Link>
-    </div>
-  );
-}
-
-function GroupBlock({
-  title,
-  connected,
-  children,
-}: {
-  title: string;
-  connected: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-card/30">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <div className="flex items-center gap-2">
-          <Plug className="size-3.5 text-muted-foreground" />
-          <span className="text-[12px] font-medium text-foreground">
-            {title}
-          </span>
-        </div>
-        <span
-          className={
-            connected
-              ? "rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-primary"
-              : "rounded-full border border-border bg-muted/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-muted-foreground"
-          }
-        >
-          {connected ? "Connected" : "Not connected"}
-        </span>
-      </div>
-      <div className="divide-y divide-border">{children}</div>
-    </div>
-  );
-}
-
-function ToolRow({
-  tool,
-  enabled,
-  policy,
-  disabled,
-  onToggle,
-  onPolicyChange,
-}: {
-  tool: ToolEntry;
-  enabled: boolean;
-  policy: "direct" | "requires_approval" | "draft_only";
-  disabled?: boolean;
-  onToggle: () => void;
-  onPolicyChange: (p: "direct" | "requires_approval" | "draft_only") => void;
-}) {
-  return (
-    <div className="flex items-start gap-3 px-3 py-2.5">
-      <input
-        type="checkbox"
-        checked={enabled}
-        disabled={disabled}
-        onChange={onToggle}
-        className="mt-0.5 size-3.5 accent-primary disabled:opacity-40"
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <code className="text-[11.5px] text-foreground">{tool.name}</code>
-          {tool.isWrite && (
-            <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-amber-400">
-              Write
-            </span>
-          )}
-        </div>
-        <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-          {tool.description}
-        </p>
-      </div>
-      {enabled && tool.isWrite && (
-        <Select
-          value={policy}
-          onValueChange={(v) =>
-            onPolicyChange(
-              (v ?? "direct") as "direct" | "requires_approval" | "draft_only",
-            )
-          }
-        >
-          <SelectTrigger className="h-7 w-[160px] bg-input/40 text-[11px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {POLICY_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
     </div>
   );
 }

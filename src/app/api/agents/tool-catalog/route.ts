@@ -10,22 +10,23 @@ import "@/lib/mcp/tools";
 
 export const runtime = "nodejs";
 
-type ToolEntry = {
+type WorkspaceTool = {
   name: string;
   description: string;
   isWrite: boolean;
 };
 
-type IntegrationGroup = {
+type IntegrationEntry = {
   id: string;
   name: string;
   connected: boolean;
-  tools: ToolEntry[];
+  hasWriteTools: boolean;
+  toolCount: number;
 };
 
 type Response = {
-  integrations: IntegrationGroup[];
-  workspace: ToolEntry[];
+  integrations: IntegrationEntry[];
+  workspace: WorkspaceTool[];
 };
 
 export async function GET() {
@@ -42,33 +43,40 @@ export async function GET() {
       .map((c) => c.provider_config_key),
   );
 
-  const byIntegration = new Map<string, ToolEntry[]>();
-  const workspace: ToolEntry[] = [];
+  const byIntegration = new Map<
+    string,
+    { count: number; hasWrite: boolean }
+  >();
+  const workspace: WorkspaceTool[] = [];
 
   for (const t of allTools) {
-    const entry: ToolEntry = {
-      name: t.name,
-      description: t.description,
-      isWrite: Boolean(t.isWrite),
-    };
     if (t.requiresIntegration) {
-      const list = byIntegration.get(t.requiresIntegration) ?? [];
-      list.push(entry);
-      byIntegration.set(t.requiresIntegration, list);
+      const prev = byIntegration.get(t.requiresIntegration) ?? {
+        count: 0,
+        hasWrite: false,
+      };
+      prev.count += 1;
+      if (t.isWrite) prev.hasWrite = true;
+      byIntegration.set(t.requiresIntegration, prev);
     } else {
-      workspace.push(entry);
+      workspace.push({
+        name: t.name,
+        description: t.description,
+        isWrite: Boolean(t.isWrite),
+      });
     }
   }
 
-  const integrations: IntegrationGroup[] = [];
-  for (const [integrationId, tools] of byIntegration) {
+  const integrations: IntegrationEntry[] = [];
+  for (const [integrationId, stats] of byIntegration) {
     const catalog = getIntegration(integrationId);
     const providerKey = providerConfigKeyFor(integrationId);
     integrations.push({
       id: integrationId,
       name: catalog?.name ?? integrationId,
       connected: providerKey ? connectedKeys.has(providerKey) : false,
-      tools,
+      hasWriteTools: stats.hasWrite,
+      toolCount: stats.count,
     });
   }
 

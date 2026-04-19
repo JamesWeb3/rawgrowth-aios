@@ -1,0 +1,79 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { getOrgContext } from "@/lib/auth/admin";
+import { createInvite } from "@/lib/members/queries";
+import { sendInviteEmail } from "@/lib/auth/email";
+import { supabaseAdmin } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+
+export async function POST(req: NextRequest) {
+  const ctx = await getOrgContext();
+  if (!ctx?.activeOrgId || !ctx.userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = (await req.json().catch(() => ({}))) as {
+    email?: string;
+    name?: string;
+    role?: "owner" | "admin" | "member";
+  };
+  const email = String(body.email ?? "").trim();
+  const name = body.name ? String(body.name).trim() : null;
+  const role = body.role && ["owner", "admin", "member"].includes(body.role)
+    ? body.role
+    : "member";
+
+  if (!email) {
+    return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  }
+
+  try {
+    const { token } = await createInvite({
+      organizationId: ctx.activeOrgId,
+      email,
+      name,
+      role,
+      invitedBy: ctx.userId,
+    });
+
+    const db = supabaseAdmin();
+    const [{ data: org }, { data: inviter }] = await Promise.all([
+      db
+        .from("rgaios_organizations")
+        .select("name")
+        .eq("id", ctx.activeOrgId)
+        .maybeSingle(),
+      db
+        .from("rgaios_users")
+        .select("name")
+        .eq("id", ctx.userId)
+        .maybeSingle(),
+    ]);
+
+    const base = process.env.NEXTAUTH_URL ?? new URL(req.url).origin;
+    const inviteUrl = `${base}/auth/invite?token=${encodeURIComponent(token)}`;
+
+    await sendInviteEmail({
+      to: email,
+      inviteUrl,
+      organizationName: org?.name ?? "your organization",
+      inviterName: inviter?.name ?? null,
+      recipientName: name,
+    });
+
+    await db.from("rgaios_audit_log").insert({
+      organization_id: ctx.activeOrgId,
+      kind: "member_invited",
+      actor_type: "user",
+      actor_id: ctx.userId,
+      detail: { email, role },
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return NextResponse.json(
+      { error: (err as Error).message },
+      { status: 400 },
+    );
+  }
+}

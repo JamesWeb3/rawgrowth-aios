@@ -31,6 +31,7 @@ import {
 import { UserMenu } from "@/components/user-menu";
 import { ChangeClientPopover } from "@/components/change-client-popover";
 import { ActivityNavBadge } from "@/components/activity-nav-badge";
+import { ApprovalsNavBadge } from "@/components/approvals-nav-badge";
 
 type Org = { id: string; name: string };
 
@@ -154,6 +155,7 @@ export function AppSidebar({
                           {item.label}
                         </span>
                         {item.href === "/activity" && <ActivityNavBadge />}
+                        {item.href === "/approvals" && <ApprovalsNavBadge />}
                         {item.badge && (
                           <span className="ml-auto rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-amber-400 group-data-[collapsible=icon]:hidden">
                             {item.badge}

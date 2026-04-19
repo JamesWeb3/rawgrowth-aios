@@ -176,14 +176,20 @@ function buildToolset(
   const explicit = Object.keys(writePolicy).length > 0;
   const toolset: ToolSet = {};
   for (const t of mcpTools) {
-    // Explicit mode: only offer tools the user has enabled on the agent.
-    // Legacy mode (empty policy): offer everything — keeps older agents working.
-    if (explicit && !(t.name in writePolicy)) continue;
+    // write_policy keys are either an integration id (grants every tool
+    // under that integration) or a workspace tool name. Policy on the
+    // integration key applies to all its write tools.
+    const policyKey = t.requiresIntegration ?? t.name;
+    // Explicit mode: only offer tools the user enabled on the agent.
+    // Legacy mode (empty policy): offer everything so older agents keep working.
+    if (explicit && !(policyKey in writePolicy)) continue;
     toolset[t.name] = tool({
       description: t.description,
       inputSchema: jsonSchema(t.inputSchema as Record<string, unknown>),
       execute: async (args: unknown) => {
-        const policy = writePolicy[t.name] ?? "direct";
+        const configured = writePolicy[policyKey] ?? "direct";
+        // Read tools are never gated — policy only matters for writes.
+        const policy = t.isWrite ? configured : "direct";
         const typedArgs = (args ?? {}) as Record<string, unknown>;
 
         if (policy === "requires_approval") {

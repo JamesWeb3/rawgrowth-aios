@@ -3,6 +3,26 @@ import type { ReactNode } from "react";
 import { PageShell } from "@/components/page-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { DashboardStats } from "@/components/dashboard/stats";
+import { getOrgContext } from "@/lib/auth/admin";
+import { supabaseAdmin } from "@/lib/supabase/server";
+
+async function getPillarFlags() {
+  const ctx = await getOrgContext();
+  if (!ctx?.activeOrgId) {
+    return { marketing: true, sales: true, fulfilment: true, finance: true };
+  }
+  const { data } = await supabaseAdmin()
+    .from("rgaios_organizations")
+    .select("marketing, sales, fulfilment, finance")
+    .eq("id", ctx.activeOrgId)
+    .maybeSingle();
+  return {
+    marketing: data?.marketing ?? true,
+    sales: data?.sales ?? true,
+    fulfilment: data?.fulfilment ?? true,
+    finance: data?.finance ?? true,
+  };
+}
 
 import { LineChart, Line } from "@/components/charts/line-chart";
 import { AreaChart, Area } from "@/components/charts/area-chart";
@@ -109,7 +129,8 @@ function PillarCard({
   );
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const pillars = await getPillarFlags();
   return (
     <PageShell
       title="Dashboard"
@@ -119,95 +140,99 @@ export default function DashboardPage() {
 
       {/* Core business pillars — 2x2 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Marketing — line chart, multi-series trend */}
-        <PillarCard
-          title="Marketing"
-          subtitle="Traffic & leads — last 12 weeks"
-          kpi={{ value: "8.4K", delta: "+12.3% vs prev", positive: true }}
-        >
-          <LineChart
-            data={marketingData}
-            xDataKey="date"
-            aspectRatio="2.2 / 1"
-            margin={{ top: 20, right: 20, bottom: 28, left: 36 }}
+        {pillars.marketing && (
+          <PillarCard
+            title="Marketing"
+            subtitle="Traffic & leads — last 12 weeks"
+            kpi={{ value: "8.4K", delta: "+12.3% vs prev", positive: true }}
           >
-            <Grid horizontal numTicksRows={4} />
-            <Line dataKey="traffic" stroke={COLOR_PRIMARY} strokeWidth={2.5} />
-            <Line dataKey="leads" stroke={COLOR_SECONDARY} strokeWidth={2} />
-            <ChartTooltip />
-          </LineChart>
-        </PillarCard>
+            <LineChart
+              data={marketingData}
+              xDataKey="date"
+              aspectRatio="2.2 / 1"
+              margin={{ top: 20, right: 20, bottom: 28, left: 36 }}
+            >
+              <Grid horizontal numTicksRows={4} />
+              <Line dataKey="traffic" stroke={COLOR_PRIMARY} strokeWidth={2.5} />
+              <Line dataKey="leads" stroke={COLOR_SECONDARY} strokeWidth={2} />
+              <ChartTooltip />
+            </LineChart>
+          </PillarCard>
+        )}
 
-        {/* Sales — funnel chart */}
-        <PillarCard
-          title="Sales"
-          subtitle="Pipeline by stage — current quarter"
-          kpi={{ value: "5.2%", delta: "lead→won rate", positive: true }}
-        >
-          <FunnelChart
-            data={salesFunnelData}
-            orientation="horizontal"
-            color={COLOR_PRIMARY}
-            layers={3}
-            showPercentage
-            showValues
-            showLabels
-            edges="curved"
-            className="mx-auto max-w-[420px]"
-          />
-        </PillarCard>
-
-        {/* Fulfilment — horizontal stacked bars by region */}
-        <PillarCard
-          title="Fulfilment"
-          subtitle="Orders by region & status"
-          kpi={{ value: "847", delta: "orders this week", positive: true }}
-        >
-          <BarChart
-            data={fulfilmentData}
-            xDataKey="region"
-            orientation="horizontal"
-            stacked
-            aspectRatio="2.2 / 1"
-            margin={{ top: 20, right: 20, bottom: 28, left: 60 }}
+        {pillars.sales && (
+          <PillarCard
+            title="Sales"
+            subtitle="Pipeline by stage — current quarter"
+            kpi={{ value: "5.2%", delta: "lead→won rate", positive: true }}
           >
-            <Grid horizontal={false} vertical numTicksColumns={5} />
-            <Bar dataKey="delivered" fill={COLOR_PRIMARY} />
-            <Bar dataKey="shipped" fill={COLOR_BLUE} />
-            <Bar dataKey="inProgress" fill={COLOR_AMBER} />
-            <Bar dataKey="pending" fill={COLOR_MUTED} />
-            <ChartTooltip />
-          </BarChart>
-        </PillarCard>
-
-        {/* Finance — stacked area, revenue vs expenses */}
-        <PillarCard
-          title="Finance"
-          subtitle="Revenue vs expenses — trailing 12 months"
-          kpi={{ value: "$38.2K", delta: "net profit / mo", positive: true }}
-        >
-          <AreaChart
-            data={financeData}
-            xDataKey="date"
-            aspectRatio="2.2 / 1"
-            margin={{ top: 20, right: 20, bottom: 28, left: 52 }}
-          >
-            <Grid horizontal numTicksRows={4} />
-            <Area
-              dataKey="revenue"
-              fill={COLOR_PRIMARY}
-              stroke={COLOR_PRIMARY}
-              fillOpacity={0.35}
+            <FunnelChart
+              data={salesFunnelData}
+              orientation="horizontal"
+              color={COLOR_PRIMARY}
+              layers={3}
+              showPercentage
+              showValues
+              showLabels
+              edges="curved"
+              className="mx-auto max-w-105"
             />
-            <Area
-              dataKey="expenses"
-              fill={COLOR_EXPENSE}
-              stroke={COLOR_EXPENSE}
-              fillOpacity={0.25}
-            />
-            <ChartTooltip />
-          </AreaChart>
-        </PillarCard>
+          </PillarCard>
+        )}
+
+        {pillars.fulfilment && (
+          <PillarCard
+            title="Fulfilment"
+            subtitle="Orders by region & status"
+            kpi={{ value: "847", delta: "orders this week", positive: true }}
+          >
+            <BarChart
+              data={fulfilmentData}
+              xDataKey="region"
+              orientation="horizontal"
+              stacked
+              aspectRatio="2.2 / 1"
+              margin={{ top: 20, right: 20, bottom: 28, left: 60 }}
+            >
+              <Grid horizontal={false} vertical numTicksColumns={5} />
+              <Bar dataKey="delivered" fill={COLOR_PRIMARY} />
+              <Bar dataKey="shipped" fill={COLOR_BLUE} />
+              <Bar dataKey="inProgress" fill={COLOR_AMBER} />
+              <Bar dataKey="pending" fill={COLOR_MUTED} />
+              <ChartTooltip />
+            </BarChart>
+          </PillarCard>
+        )}
+
+        {pillars.finance && (
+          <PillarCard
+            title="Finance"
+            subtitle="Revenue vs expenses — trailing 12 months"
+            kpi={{ value: "$38.2K", delta: "net profit / mo", positive: true }}
+          >
+            <AreaChart
+              data={financeData}
+              xDataKey="date"
+              aspectRatio="2.2 / 1"
+              margin={{ top: 20, right: 20, bottom: 28, left: 52 }}
+            >
+              <Grid horizontal numTicksRows={4} />
+              <Area
+                dataKey="revenue"
+                fill={COLOR_PRIMARY}
+                stroke={COLOR_PRIMARY}
+                fillOpacity={0.35}
+              />
+              <Area
+                dataKey="expenses"
+                fill={COLOR_EXPENSE}
+                stroke={COLOR_EXPENSE}
+                fillOpacity={0.25}
+              />
+              <ChartTooltip />
+            </AreaChart>
+          </PillarCard>
+        )}
       </div>
     </PageShell>
   );
