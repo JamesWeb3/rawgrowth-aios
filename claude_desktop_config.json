@@ -1,0 +1,17 @@
+{
+  "preferences": {
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "task",
+    "coworkWebSearchEnabled": true,
+    "keepAwakeEnabled": true
+  },
+  "mcpServers": {
+    "rawgrowth-aios": {
+      "url": "https://rawgrowth-aios.vercel.app/api/mcp",
+      "headers": {
+        "Authorization": "Bearer c74129a590455121a332e2a81f2aa81159ed4a151a6bb74f160b61707d2cb1c2"
+      }
+    }
+  }
+}

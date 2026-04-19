@@ -42,3 +42,4 @@ next-env.d.ts
 
 # MVP local data (SQLite + caches)
 .data/
+.env*.local

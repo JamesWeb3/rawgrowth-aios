@@ -50,7 +50,7 @@ import Link from "next/link";
 
 import { useAgentsStore } from "@/lib/agents-store";
 import { getIntegration } from "@/lib/integrations-catalog";
-import { useIntegrationsStore } from "@/lib/integrations-store";
+import { useConnections } from "@/lib/connections/use-connections";
 import {
   INTEGRATION_EVENTS,
   SCHEDULE_PRESETS,
@@ -545,7 +545,7 @@ function IntegrationTriggerConfig({
   trigger: Extract<RoutineTrigger, { kind: "integration" }>;
   onUpdate: (patch: Partial<Extract<RoutineTrigger, { kind: "integration" }>>) => void;
 }) {
-  const isConnected = useIntegrationsStore((s) => s.isConnected);
+  const { isConnected } = useConnections();
   const selectedIntegrationId = eventIntegrationId(trigger.event);
   const selectedConnected = isConnected(selectedIntegrationId);
   const selectedIntegration = getIntegration(selectedIntegrationId);

@@ -38,8 +38,6 @@ export type IntegrationEntry = {
   oauth?: {
     scopes: string[];
     exampleAccount: string;
-    /** When set, Connect redirects here instead of simulating (MVP: live OAuth flow). */
-    authorizeUrl?: string;
   };
   webhook?: {
     events: string[];
@@ -213,7 +211,6 @@ export const INTEGRATIONS: IntegrationEntry[] = [
     oauth: {
       scopes: ["drive.readonly"],
       exampleAccount: "james.oldham0604@gmail.com",
-      authorizeUrl: "/api/integrations/google-drive/authorize",
     },
     events: [{ id: "gdrive.file.created", label: "New file in folder" }],
   },

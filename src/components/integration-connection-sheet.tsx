@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ArrowUpRight,
   Check,
-  Copy,
   KeyRound,
   LogOut,
   Plug,
@@ -12,10 +11,7 @@ import {
   Webhook,
 } from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Sheet,
@@ -26,24 +22,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { getIntegration } from "@/lib/integrations-catalog";
 import {
-  getIntegration,
-  methodLabel,
-  type AuthMethod,
-  type IntegrationEntry,
-} from "@/lib/integrations-catalog";
-import { useIntegrationsStore, type Connection } from "@/lib/integrations-store";
+  useConnections,
+  type ConnectionRow,
+} from "@/lib/connections/use-connections";
 
 type Props = {
   integrationId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-};
-
-const methodIcon: Record<AuthMethod, typeof KeyRound> = {
-  api_key: KeyRound,
-  oauth: ShieldCheck,
-  webhook: Webhook,
 };
 
 export function IntegrationConnectionSheet({
@@ -52,21 +40,11 @@ export function IntegrationConnectionSheet({
   onOpenChange,
 }: Props) {
   const integration = integrationId ? getIntegration(integrationId) : null;
-  const getConnection = useIntegrationsStore((s) => s.getConnection);
-  const connect = useIntegrationsStore((s) => s.connect);
-  const disconnect = useIntegrationsStore((s) => s.disconnect);
-  const connection = integrationId ? getConnection(integrationId) : undefined;
+  const { byIntegrationId, disconnect, refresh } = useConnections();
+  const connection = integrationId ? byIntegrationId(integrationId) : undefined;
 
-  const [activeMethod, setActiveMethod] = useState<AuthMethod | null>(null);
-  useEffect(() => {
-    if (!integration) {
-      setActiveMethod(null);
-      return;
-    }
-    // When opening: prefer the method they're already connected with,
-    // otherwise the first method the provider supports.
-    setActiveMethod(connection?.method ?? integration.methods[0] ?? null);
-  }, [integration, connection?.method, open]);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!integration) {
     return (
@@ -78,6 +56,57 @@ export function IntegrationConnectionSheet({
       </Sheet>
     );
   }
+
+  const handleConnect = async () => {
+    setError(null);
+    setConnecting(true);
+    try {
+      // 1. Ask our server for a Nango Connect Session token.
+      const sessionRes = await fetch("/api/nango/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ integrationId: integration.id }),
+      });
+      if (!sessionRes.ok) {
+        const { error } = (await sessionRes.json()) as { error?: string };
+        throw new Error(error ?? "Failed to create Connect session");
+      }
+      const { token } = (await sessionRes.json()) as { token: string };
+
+      // 2. Dynamically import the frontend SDK so it doesn't land in SSR bundles.
+      const mod = await import("@nangohq/frontend");
+      const NangoCtor = mod.default;
+      const nango = new NangoCtor({ connectSessionToken: token });
+
+      // 3. Open Nango's hosted Connect UI. It handles the OAuth bounce /
+      //    API-key form and our webhook persists the connection.
+      await new Promise<void>((resolve, reject) => {
+        const controller = nango.openConnectUI({
+          onEvent: (event) => {
+            if (event.type === "connect") {
+              resolve();
+            } else if (event.type === "close") {
+              resolve();
+            }
+          },
+        });
+        // Safety timeout if the UI never fires an event.
+        setTimeout(() => {
+          controller?.close?.();
+          resolve();
+        }, 5 * 60_000);
+      });
+
+      // 4. Refetch connections — our webhook should have written the row by now.
+      // Small delay in case the webhook races the redirect.
+      await new Promise((r) => setTimeout(r, 400));
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -111,86 +140,33 @@ export function IntegrationConnectionSheet({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {connection && (
-            <CurrentConnectionCard
-              connection={connection}
-              integration={integration}
+          {connection ? (
+            <CurrentConnectionCard connection={connection} />
+          ) : (
+            <EmptyStateInstructions
+              scopes={integration.oauth?.scopes ?? []}
+              providerName={integration.name}
             />
           )}
 
-          {/* Method tabs — only show if multiple methods supported OR not yet connected */}
-          {integration.methods.length > 1 && (
-            <div className="mb-4 flex items-center gap-1 rounded-lg border border-border bg-card/30 p-1">
-              {integration.methods.map((m) => {
-                const Icon = methodIcon[m];
-                const active = activeMethod === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setActiveMethod(m)}
-                    className={cn(
-                      "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors",
-                      active
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                    )}
-                  >
-                    <Icon className="size-3.5" />
-                    {methodLabel(m)}
-                  </button>
-                );
-              })}
+          {error && (
+            <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+              {error}
             </div>
           )}
 
-          {activeMethod === "api_key" && integration.apiKey && (
-            <ApiKeyForm
-              integration={integration}
-              existing={
-                connection?.method === "api_key" ? connection : undefined
-              }
-              onConnect={(key) => {
-                connect({
-                  integrationId: integration.id,
-                  method: "api_key",
-                  apiKey: key,
-                });
-                onOpenChange(false);
-              }}
-            />
-          )}
-
-          {activeMethod === "oauth" && integration.oauth && (
-            <OAuthForm
-              integration={integration}
-              existing={connection?.method === "oauth" ? connection : undefined}
-              onConnect={() => {
-                if (!integration.oauth) return;
-                connect({
-                  integrationId: integration.id,
-                  method: "oauth",
-                  account: integration.oauth.exampleAccount,
-                  scopes: integration.oauth.scopes,
-                });
-                onOpenChange(false);
-              }}
-            />
-          )}
-
-          {activeMethod === "webhook" && integration.webhook && (
-            <WebhookForm
-              integration={integration}
-              existing={
-                connection?.method === "webhook" ? connection : undefined
-              }
-              onConnect={() => {
-                connect({
-                  integrationId: integration.id,
-                  method: "webhook",
-                });
-              }}
-            />
+          {!connection && (
+            <Button
+              onClick={handleConnect}
+              size="sm"
+              disabled={connecting}
+              className="btn-shine mt-5 w-full bg-primary text-white hover:bg-primary/90"
+            >
+              <Plug className="size-4" />
+              {connecting
+                ? `Opening ${integration.name}…`
+                : `Connect ${integration.name}`}
+            </Button>
           )}
         </div>
 
@@ -200,8 +176,8 @@ export function IntegrationConnectionSheet({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  disconnect(integration.id);
+                onClick={async () => {
+                  await disconnect(connection.provider_config_key);
                   onOpenChange(false);
                 }}
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -227,17 +203,10 @@ export function IntegrationConnectionSheet({
 
 // ────────────────────────── Current connection card ──────────────────────────
 
-function CurrentConnectionCard({
-  connection,
-  integration,
-}: {
-  connection: Connection;
-  integration: IntegrationEntry;
-}) {
-  const Icon = methodIcon[connection.method];
+function CurrentConnectionCard({ connection }: { connection: ConnectionRow }) {
   return (
     <div
-      className="mb-6 rounded-xl border border-[rgba(10,148,82,.25)] p-4"
+      className="rounded-xl border border-[rgba(10,148,82,.25)] p-4"
       style={{
         background:
           "linear-gradient(160deg, rgba(12,191,106,.08) 0%, rgba(12,191,106,.02) 60%, rgba(255,255,255,.01) 100%)",
@@ -246,15 +215,15 @@ function CurrentConnectionCard({
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="flex size-8 items-center justify-center rounded-md bg-primary/15 text-primary">
-            <Icon className="size-4" />
+            <ShieldCheck className="size-4" />
           </div>
           <div>
             <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
-              Connected via {methodLabel(connection.method)}
+              Connected via Nango
               <Check className="size-3.5 text-primary" />
             </div>
             <div className="text-[11px] text-muted-foreground">
-              Since {new Date(connection.connectedAt).toLocaleDateString()}
+              Since {new Date(connection.connected_at).toLocaleDateString()}
             </div>
           </div>
         </div>
@@ -266,339 +235,96 @@ function CurrentConnectionCard({
           Live
         </Badge>
       </div>
-      {connection.method === "api_key" && connection.apiKeyMasked && (
-        <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-background/30 px-2.5 py-1.5 font-mono text-[11.5px] text-foreground/80">
-          {integration.apiKey?.placeholder.slice(0, 4)}
-          {connection.apiKeyMasked}
+
+      {connection.display_name && (
+        <div className="mt-3 text-[11.5px] text-muted-foreground">
+          Account:{" "}
+          <span className="text-foreground">{connection.display_name}</span>
         </div>
       )}
-      {connection.method === "oauth" && (
-        <div className="mt-3 space-y-1.5 text-[11.5px] text-muted-foreground">
-          <div>
-            Account:{" "}
-            <span className="text-foreground">{connection.oauthAccount}</span>
-          </div>
-          {connection.oauthScopes && (
-            <div className="flex flex-wrap items-center gap-1">
-              <span>Scopes:</span>
-              {connection.oauthScopes.map((s) => (
-                <code
-                  key={s}
-                  className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground/80"
-                >
-                  {s}
-                </code>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {connection.method === "webhook" && connection.webhookUrl && (
-        <div className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background/30 px-2.5 py-1.5 font-mono text-[11px] text-foreground/80">
-          <code className="truncate">{connection.webhookUrl}</code>
-        </div>
-      )}
+
+      <div className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background/30 px-2.5 py-1.5 font-mono text-[10.5px] text-foreground/70">
+        <span className="text-muted-foreground">connection id</span>
+        <code className="truncate">{connection.nango_connection_id}</code>
+      </div>
     </div>
   );
 }
 
-// ────────────────────────── API Key form ──────────────────────────
+// ────────────────────────── Empty state ──────────────────────────
 
-function ApiKeyForm({
-  integration,
-  existing,
-  onConnect,
+function EmptyStateInstructions({
+  providerName,
+  scopes,
 }: {
-  integration: IntegrationEntry;
-  existing?: Connection;
-  onConnect: (apiKey: string) => void;
+  providerName: string;
+  scopes: string[];
 }) {
-  const [apiKey, setApiKey] = useState("");
-  const [show, setShow] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = () => {
-    if (!apiKey.trim()) {
-      setError("Paste an API key to continue.");
-      return;
-    }
-    onConnect(apiKey.trim());
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <Label className="text-[12px] font-medium text-foreground">
-          {existing ? "Replace API key" : "API key"}
-        </Label>
-        <div className="mt-1.5 flex items-stretch gap-2">
-          <Input
-            type={show ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={integration.apiKey?.placeholder}
-            className="flex-1 bg-input/40 font-mono text-[12.5px]"
-            autoComplete="off"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShow((s) => !s)}
-            className="shrink-0"
-          >
-            {show ? "Hide" : "Show"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-2 rounded-md border border-border bg-card/40 px-3 py-2.5">
-        <KeyRound className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-        <div className="text-[11.5px] leading-relaxed text-muted-foreground">
-          <div>Where to find it:</div>
-          <div className="mt-0.5 text-foreground/90">
-            {integration.apiKey?.where}
-          </div>
-          {integration.apiKey?.docsUrl && (
-            <a
-              href={integration.apiKey.docsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              Open docs <ArrowUpRight className="size-3" />
-            </a>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
-          {error}
-        </div>
-      )}
-
-      <Button
-        onClick={submit}
-        size="sm"
-        className="btn-shine w-full bg-primary text-white hover:bg-primary/90"
-      >
-        <Plug className="size-4" />
-        {existing ? "Update key" : `Connect ${integration.name}`}
-      </Button>
-      <p className="text-center text-[10.5px] text-muted-foreground">
-        Stored locally in dev. In production, keys are encrypted at rest.
-      </p>
-    </div>
-  );
-}
-
-// ────────────────────────── OAuth form ──────────────────────────
-
-function OAuthForm({
-  integration,
-  existing,
-  onConnect,
-}: {
-  integration: IntegrationEntry;
-  existing?: Connection;
-  onConnect: () => void;
-}) {
-  const [connecting, setConnecting] = useState(false);
-  const live = integration.oauth?.authorizeUrl;
-
-  const handleConnect = () => {
-    setConnecting(true);
-    if (live) {
-      // Real OAuth: redirect to our authorize endpoint; the callback will
-      // write the connection row server-side. When user lands back on
-      // /integrations, the sheet rehydrates from the store.
-      window.location.href = live;
-      return;
-    }
-    // Fallback: simulated flow for integrations not yet wired to real OAuth
-    setTimeout(() => {
-      setConnecting(false);
-      onConnect();
-    }, 900);
-  };
-
-  if (existing) {
-    return (
-      <div className="text-[12.5px] text-muted-foreground">
-        Already connected via OAuth. Disconnect and reconnect to change the
-        account or re-authorize scopes.
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-xl border border-border bg-card/40 p-4">
         <div className="mb-3 flex items-center gap-2">
           <ShieldCheck className="size-4 text-primary" />
           <div className="text-[12.5px] font-semibold text-foreground">
-            Scopes requested
+            What happens next
           </div>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {integration.oauth?.scopes.map((s) => (
-            <code
-              key={s}
-              className="rounded border border-border bg-background/30 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground/80"
-            >
-              {s}
-            </code>
-          ))}
-        </div>
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-          You&apos;ll be redirected to {integration.name} to sign in. Rawgrowth
-          will only receive the scopes listed above. You can revoke access at
-          any time from their settings.
-        </p>
-      </div>
-
-      <Button
-        onClick={handleConnect}
-        size="sm"
-        disabled={connecting}
-        className="btn-shine w-full bg-primary text-white hover:bg-primary/90"
-      >
-        <ShieldCheck className="size-4" />
-        {connecting ? `Redirecting to ${integration.name}…` : `Connect with ${integration.name}`}
-      </Button>
-      <p className="text-center text-[10.5px] text-muted-foreground">
-        {live
-          ? "Live OAuth flow — you'll be redirected to Google."
-          : "OAuth flow is mocked in dev. Production wires to the real provider."}
-      </p>
-    </div>
-  );
-}
-
-// ────────────────────────── Webhook form ──────────────────────────
-
-function WebhookForm({
-  integration,
-  existing,
-  onConnect,
-}: {
-  integration: IntegrationEntry;
-  existing?: Connection;
-  onConnect: () => void;
-}) {
-  // Generate preview values only if not connected yet so the preview matches
-  // what will actually be saved on Connect.
-  const preview = useMemo(() => {
-    if (existing?.webhookUrl && existing.webhookSecret) {
-      return { url: existing.webhookUrl, secret: existing.webhookSecret };
-    }
-    return {
-      url: `https://aios.rawgrowth.ai/api/webhooks/${integration.id}/${Math.random()
-        .toString(36)
-        .slice(2, 14)}`,
-      secret: `whsec_${Math.random().toString(36).slice(2, 30)}`,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existing?.id]);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <Label className="text-[12px] font-medium text-foreground">
-          Webhook URL
-        </Label>
-        <CopyableField value={preview.url} className="mt-1.5 font-mono" />
-      </div>
-
-      <div>
-        <Label className="text-[12px] font-medium text-foreground">
-          Signing secret
-        </Label>
-        <CopyableField value={preview.secret} className="mt-1.5 font-mono" />
-        <p className="mt-1.5 text-[11px] text-muted-foreground">
-          Use this to verify incoming request signatures on our end.
-        </p>
-      </div>
-
-      <div className="flex items-start gap-2 rounded-md border border-border bg-card/40 px-3 py-2.5">
-        <Webhook className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-        <div className="text-[11.5px] leading-relaxed text-muted-foreground">
-          <div className="font-medium text-foreground/90">
-            How to wire it up
+        <ol className="flex flex-col gap-1.5 text-[11.5px] leading-relaxed text-muted-foreground [counter-reset:steps]">
+          <li className="flex gap-2">
+            <StepNumber n={1} />
+            Click Connect → Nango opens {providerName}&apos;s sign-in screen.
+          </li>
+          <li className="flex gap-2">
+            <StepNumber n={2} />
+            You approve the requested scopes.
+          </li>
+          <li className="flex gap-2">
+            <StepNumber n={3} />
+            Nango returns with an access token and notifies us via webhook.
+          </li>
+          <li className="flex gap-2">
+            <StepNumber n={4} />
+            The connection appears here and your agents can use it immediately.
+          </li>
+        </ol>
+        {scopes.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+              <KeyRound className="size-3" />
+              Scopes requested
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {scopes.map((s) => (
+                <code
+                  key={s}
+                  className="rounded border border-border bg-background/30 px-1.5 py-0.5 font-mono text-[10px] text-foreground/80"
+                >
+                  {s}
+                </code>
+              ))}
+            </div>
           </div>
-          <div className="mt-0.5">{integration.webhook?.instructions}</div>
-          {integration.webhook?.docsUrl && (
-            <a
-              href={integration.webhook.docsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              Open docs <ArrowUpRight className="size-3" />
-            </a>
-          )}
-        </div>
+        )}
       </div>
-
-      {!existing && (
-        <Button
-          onClick={onConnect}
-          size="sm"
-          className="btn-shine w-full bg-primary text-white hover:bg-primary/90"
-        >
-          <Plug className="size-4" />
-          Save webhook connection
-        </Button>
-      )}
+      <a
+        href="https://docs.nango.dev/integrate/guides/authorize-an-api"
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 self-start text-[11px] text-primary hover:underline"
+      >
+        Nango Connect docs <ArrowUpRight className="size-3" />
+      </a>
     </div>
   );
 }
 
-// ────────────────────────── Copyable field ──────────────────────────
-
-function CopyableField({
-  value,
-  className,
-}: {
-  value: string;
-  className?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* no-op */
-    }
-  };
+function StepNumber({ n }: { n: number }) {
   return (
-    <div className="flex items-stretch gap-2">
-      <div
-        className={cn(
-          "flex flex-1 items-center rounded-md border border-border bg-input/40 px-2.5 py-1.5 text-[11.5px] text-foreground/80",
-          className,
-        )}
-      >
-        <code className="truncate">{value}</code>
-      </div>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={copy}
-        className="shrink-0 gap-1"
-      >
-        {copied ? (
-          <>
-            <Check className="size-3.5" /> Copied
-          </>
-        ) : (
-          <>
-            <Copy className="size-3.5" /> Copy
-          </>
-        )}
-      </Button>
-    </div>
+    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/15 font-mono text-[9px] font-semibold text-primary">
+      {n}
+    </span>
   );
 }
+
+// Also re-export Webhook icon ref so lint doesn't flag an unused import
+void Webhook;

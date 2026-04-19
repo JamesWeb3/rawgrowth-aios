@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { IntegrationConnectionSheet } from "@/components/integration-connection-sheet";
 import { INTEGRATIONS, methodLabel } from "@/lib/integrations-catalog";
-import { useIntegrationsStore } from "@/lib/integrations-store";
+import { useConnections } from "@/lib/connections/use-connections";
 
 const methodIcon = {
   api_key: KeyRound,
@@ -17,11 +17,9 @@ const methodIcon = {
 } as const;
 
 export function IntegrationsGrid() {
-  const hasHydrated = useIntegrationsStore((s) => s.hasHydrated);
-  const connections = useIntegrationsStore((s) => s.connections);
+  const { connections, loaded, byIntegrationId } = useConnections();
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  const connectedMap = new Map(connections.map((c) => [c.integrationId, c]));
   const connectedCount = connections.length;
 
   return (
@@ -29,18 +27,18 @@ export function IntegrationsGrid() {
       <div className="mb-5 flex items-center gap-3 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(10,148,82,.2)] bg-primary/10 px-2.5 py-1 font-medium text-primary">
           <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_6px_rgba(12,191,106,.6)]" />
-          {hasHydrated ? connectedCount : 0} connected
+          {loaded ? connectedCount : 0} connected
         </span>
         <span>•</span>
         <span>
-          {INTEGRATIONS.length - (hasHydrated ? connectedCount : 0)} available
+          {INTEGRATIONS.length - (loaded ? connectedCount : 0)} available
         </span>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {INTEGRATIONS.map((i) => {
-          const conn = connectedMap.get(i.id);
-          const isConnected = !!conn && hasHydrated;
+          const conn = byIntegrationId(i.id);
+          const isConnected = !!conn && loaded;
           return (
             <Card
               key={i.id}
@@ -62,13 +60,13 @@ export function IntegrationsGrid() {
                       }}
                     />
                   </div>
-                  {isConnected && conn ? (
+                  {isConnected ? (
                     <Badge
                       variant="secondary"
                       className="gap-1 bg-primary/10 text-primary hover:bg-primary/15"
                     >
                       <Check className="size-3" />
-                      {methodLabel(conn.method)}
+                      Connected
                     </Badge>
                   ) : (
                     <Badge
