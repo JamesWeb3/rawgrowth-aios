@@ -14,6 +14,7 @@ import {
   Plus,
   BookOpen,
   Activity,
+  Building2,
 } from "lucide-react";
 
 import {
@@ -41,7 +42,9 @@ type NavItem = {
   badge?: string;
 };
 
-const navSections: { label: string; items: NavItem[] }[] = [
+type NavSection = { label: string; items: NavItem[]; adminOnly?: boolean };
+
+const navSections: NavSection[] = [
   {
     label: "Overview",
     items: [
@@ -66,6 +69,13 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { label: "Costs", href: "/costs", icon: DollarSign },
       { label: "Integrations", href: "/integrations", icon: Plug },
       { label: "Company", href: "/company", icon: Settings2 },
+    ],
+  },
+  {
+    label: "Admin",
+    adminOnly: true,
+    items: [
+      { label: "Clients", href: "/admin/clients", icon: Building2 },
     ],
   },
 ];
@@ -115,7 +125,9 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        {navSections.map((section) => (
+        {navSections
+          .filter((s) => !s.adminOnly || isAdmin)
+          .map((section) => (
           <SidebarGroup key={section.label}>
             <SidebarGroupLabel className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
               {section.label}

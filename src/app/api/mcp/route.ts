@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { callTool, listTools } from "@/lib/mcp/registry";
-import { currentOrganizationId } from "@/lib/supabase/constants";
+import {
+  parseBearer,
+  resolveOrgFromToken,
+} from "@/lib/mcp/token-resolver";
 
 // Force the tools/ modules to register themselves on cold start.
 import "@/lib/mcp/tools";
@@ -8,16 +11,16 @@ import "@/lib/mcp/tools";
 /**
  * Streamable HTTP MCP endpoint (stateless variant).
  *
- * Claude Desktop / Cursor / Claude Code / any MCP-compatible client
- * POSTs JSON-RPC 2.0 here. We support three methods:
+ * Claude Desktop / Cursor / Claude Code / any MCP-compatible client POSTs
+ * JSON-RPC 2.0 here. Authentication is **per-tenant**: the Authorization
+ * header carries a bearer token from rgaios_organizations.mcp_token, which
+ * resolves to the caller's organization id. Tools operate scoped to that
+ * org — no cross-tenant leakage is possible.
+ *
+ * Supported JSON-RPC methods:
  *   - initialize
  *   - tools/list
  *   - tools/call
- *
- * Every request is independent — no session state. Bearer auth via
- * MCP_BEARER_TOKEN in the Authorization header. In production, the
- * token maps to an organization; for MVP we use currentOrganizationId()
- * which returns the seeded default org.
  */
 
 export const runtime = "nodejs";
@@ -44,15 +47,10 @@ function replyError(
   return { jsonrpc: "2.0" as const, id: id ?? null, error: { code, message } };
 }
 
-function isAuthorized(req: NextRequest) {
-  const expected = process.env.MCP_BEARER_TOKEN;
-  if (!expected) return true; // no token set → open mode (local dev only)
-  const header = req.headers.get("authorization");
-  return header === `Bearer ${expected}`;
-}
-
 export async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  const token = parseBearer(req.headers.get("authorization"));
+  const org = token ? await resolveOrgFromToken(token) : null;
+  if (!org) {
     return NextResponse.json(
       replyError(null, -32001, "Unauthorized"),
       { status: 401 },
@@ -72,8 +70,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(replyError(msg.id, -32600, "Invalid Request"));
   }
 
-  const organizationId = await currentOrganizationId();
-
   try {
     switch (msg.method) {
       case "initialize":
@@ -81,12 +77,11 @@ export async function POST(req: NextRequest) {
           reply(msg.id, {
             protocolVersion: PROTOCOL_VERSION,
             capabilities: { tools: {} },
-            serverInfo: { name: "rawgrowth-aios", version: "0.2.0" },
+            serverInfo: { name: `rawgrowth-aios (${org.name})`, version: "0.3.0" },
           }),
         );
 
       case "notifications/initialized":
-        // Notification; no response expected
         return new NextResponse(null, { status: 204 });
 
       case "tools/list":
@@ -95,7 +90,9 @@ export async function POST(req: NextRequest) {
       case "tools/call": {
         const name = String(msg.params?.name ?? "");
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-        const result = await callTool(name, args, { organizationId });
+        const result = await callTool(name, args, {
+          organizationId: org.id,
+        });
         return NextResponse.json(reply(msg.id, result));
       }
 
@@ -111,11 +108,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Many MCP clients probe GET first. Return a small banner.
+// Many MCP clients probe GET first. Return a small banner (no auth).
 export async function GET() {
   return NextResponse.json({
     server: "rawgrowth-aios",
-    version: "0.2.0",
+    version: "0.3.0",
     transport: "streamable-http",
     protocolVersion: PROTOCOL_VERSION,
   });

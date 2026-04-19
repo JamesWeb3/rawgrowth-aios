@@ -20,6 +20,7 @@ export type Database = {
           id: string;
           name: string;
           slug: string;
+          mcp_token: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -27,6 +28,7 @@ export type Database = {
           id?: string;
           name: string;
           slug: string;
+          mcp_token?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_organizations"]["Row"]>;
         Relationships: [];
