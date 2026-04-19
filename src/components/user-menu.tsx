@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronsUpDown, LogOut } from "lucide-react";
+import { signOut } from "next-auth/react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -73,6 +74,7 @@ export function UserMenu({ name, email }: UserMenuProps) {
         <div className="flex flex-col py-1">
           <button
             type="button"
+            onClick={() => signOut({ callbackUrl: "/auth/signin" })}
             className="flex items-center gap-2 px-3 py-2 text-left text-[13px] text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
             <LogOut className="size-4" />

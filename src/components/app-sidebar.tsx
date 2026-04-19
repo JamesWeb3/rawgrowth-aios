@@ -11,7 +11,7 @@ import {
   DollarSign,
   Settings2,
   Plug,
-  Workflow,
+  Plus,
   BookOpen,
 } from "lucide-react";
 
@@ -28,6 +28,9 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { UserMenu } from "@/components/user-menu";
+import { ChangeClientPopover } from "@/components/change-client-popover";
+
+type Org = { id: string; name: string };
 
 type NavItem = {
   label: string;
@@ -41,7 +44,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
-      { label: "Blueprint", href: "/blueprint", icon: Workflow, badge: "Temp" },
+      { label: "Custom Feature", href: "/custom-feature", icon: Plus },
     ],
   },
   {
@@ -64,20 +67,48 @@ const navSections: { label: string; items: NavItem[] }[] = [
   },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({
+  orgName,
+  isAdmin = false,
+  isImpersonating = false,
+  homeOrgId = null,
+  activeOrgId = null,
+  orgs = [],
+}: {
+  orgName?: string;
+  isAdmin?: boolean;
+  isImpersonating?: boolean;
+  homeOrgId?: string | null;
+  activeOrgId?: string | null;
+  orgs?: Org[];
+}) {
   const pathname = usePathname();
+  const displayName = orgName ?? "Rawgrowth";
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+    <Sidebar
+      collapsible="none"
+      className="sticky top-0 h-svh border-r border-sidebar-border"
+    >
       <SidebarHeader className="border-b border-sidebar-border p-4">
         <Link href="/" className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
             <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(12,191,106,.6)]" />
           </span>
           <span className="font-serif text-[1.25rem] leading-none tracking-tight text-foreground group-data-[collapsible=icon]:hidden">
-            Rawgrowth<span className="text-primary">.</span>
+            {displayName}<span className="text-primary">.</span>
           </span>
         </Link>
+        {isAdmin && homeOrgId && (
+          <div className="mt-3">
+            <ChangeClientPopover
+              orgs={orgs}
+              homeOrgId={homeOrgId}
+              activeOrgId={activeOrgId}
+              isImpersonating={isImpersonating}
+            />
+          </div>
+        )}
       </SidebarHeader>
 
       <SidebarContent>

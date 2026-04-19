@@ -39,6 +39,7 @@ export type Database = {
           image: string | null;
           password_hash: string | null;
           email_verified: string | null;
+          organization_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -49,24 +50,27 @@ export type Database = {
           image?: string | null;
           password_hash?: string | null;
           email_verified?: string | null;
+          organization_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_users"]["Row"]>;
         Relationships: [];
       };
-      rgaios_organization_memberships: {
+      rgaios_password_resets: {
         Row: {
-          organization_id: string;
+          token_hash: string;
           user_id: string;
-          role: "owner" | "admin" | "member";
+          expires_at: string;
+          used_at: string | null;
           created_at: string;
         };
         Insert: {
-          organization_id: string;
+          token_hash: string;
           user_id: string;
-          role?: "owner" | "admin" | "member";
+          expires_at: string;
+          used_at?: string | null;
         };
         Update: Partial<
-          Database["public"]["Tables"]["rgaios_organization_memberships"]["Row"]
+          Database["public"]["Tables"]["rgaios_password_resets"]["Row"]
         >;
         Relationships: [];
       };
