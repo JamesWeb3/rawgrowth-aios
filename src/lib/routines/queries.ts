@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { ensureDefaultOrganization } from "@/lib/supabase/ensure-org";
 import {
   routineFromRows,
   triggerConfigFor,
@@ -77,6 +78,7 @@ export async function createRoutine(
   organizationId: string,
   input: RoutineCreateInput,
 ): Promise<Routine> {
+  await ensureDefaultOrganization();
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("rgaios_routines")
@@ -102,6 +104,7 @@ export async function createRoutine(
       enabled: t.enabled,
       config: triggerConfigFor(t),
       public_id: null,
+      last_fired_at: null,
       created_at: new Date().toISOString(),
     })),
   );

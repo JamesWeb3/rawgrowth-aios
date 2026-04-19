@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(replyError(msg.id, -32600, "Invalid Request"));
   }
 
-  const organizationId = currentOrganizationId();
+  const organizationId = await currentOrganizationId();
 
   try {
     switch (msg.method) {

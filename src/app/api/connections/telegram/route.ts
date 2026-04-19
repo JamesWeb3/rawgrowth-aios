@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const organizationId = currentOrganizationId();
+    const organizationId = await currentOrganizationId();
     const webhookSecret = crypto.randomBytes(24).toString("hex");
 
     const conn = await upsertConnection({

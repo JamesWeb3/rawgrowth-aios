@@ -11,7 +11,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const patch = await req.json();
-    const agent = await updateAgent(currentOrganizationId(), id, patch);
+    const agent = await updateAgent((await currentOrganizationId()), id, patch);
     return NextResponse.json({ agent });
   } catch (err) {
     return NextResponse.json(
@@ -27,7 +27,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await deleteAgent(currentOrganizationId(), id);
+    await deleteAgent((await currentOrganizationId()), id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

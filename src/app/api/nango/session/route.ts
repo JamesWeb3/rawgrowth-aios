@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const organizationId = currentOrganizationId();
+    const organizationId = await currentOrganizationId();
 
     const session = await nango().createConnectSession({
       // End-user identifier Nango attaches to the connection; we use the

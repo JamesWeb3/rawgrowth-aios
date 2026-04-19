@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { ensureDefaultOrganization } from "@/lib/supabase/ensure-org";
 import type { Database } from "@/lib/supabase/types";
 import {
   agentFromRow,
@@ -25,6 +26,7 @@ export async function createAgent(
   organizationId: string,
   input: AgentCreateInput,
 ): Promise<Agent> {
+  await ensureDefaultOrganization();
   const { data, error } = await supabaseAdmin()
     .from("rgaios_agents")
     .insert({

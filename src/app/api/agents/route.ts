@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const agents = await listAgentsForOrg(currentOrganizationId());
+    const agents = await listAgentsForOrg((await currentOrganizationId()));
     return NextResponse.json({ agents });
   } catch (err) {
     return NextResponse.json(
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const agent = await createAgent(currentOrganizationId(), {
+    const agent = await createAgent((await currentOrganizationId()), {
       name: String(body.name ?? "").trim(),
       title: String(body.title ?? "").trim(),
       role: body.role,

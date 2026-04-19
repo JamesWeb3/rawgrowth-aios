@@ -189,6 +189,7 @@ export type Database = {
           enabled: boolean;
           config: Record<string, unknown>;
           public_id: string | null;
+          last_fired_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -199,6 +200,7 @@ export type Database = {
           enabled?: boolean;
           config?: Record<string, unknown>;
           public_id?: string | null;
+          last_fired_at?: string | null;
         };
         Update: Partial<
           Database["public"]["Tables"]["rgaios_routine_triggers"]["Row"]

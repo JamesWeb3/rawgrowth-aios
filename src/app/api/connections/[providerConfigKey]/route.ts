@@ -17,7 +17,7 @@ export async function DELETE(
 ) {
   try {
     const { providerConfigKey } = await params;
-    const organizationId = currentOrganizationId();
+    const organizationId = await currentOrganizationId();
     const existing = await getConnection(organizationId, providerConfigKey);
     if (!existing) {
       return NextResponse.json({ ok: true, already: "disconnected" });

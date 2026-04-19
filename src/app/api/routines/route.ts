@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const routines = await listRoutinesForOrg(currentOrganizationId());
+    const routines = await listRoutinesForOrg((await currentOrganizationId()));
     return NextResponse.json({ routines });
   } catch (err) {
     return NextResponse.json(
@@ -20,7 +20,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const routine = await createRoutine(currentOrganizationId(), {
+    const routine = await createRoutine((await currentOrganizationId()), {
       title: String(body.title ?? "").trim(),
       description: String(body.description ?? "").trim(),
       assigneeAgentId: body.assigneeAgentId ?? null,

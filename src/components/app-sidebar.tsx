@@ -13,6 +13,7 @@ import {
   Plug,
   Plus,
   BookOpen,
+  Activity,
 } from "lucide-react";
 
 import {
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/sidebar";
 import { UserMenu } from "@/components/user-menu";
 import { ChangeClientPopover } from "@/components/change-client-popover";
+import { ActivityNavBadge } from "@/components/activity-nav-badge";
 
 type Org = { id: string; name: string };
 
@@ -48,10 +50,11 @@ const navSections: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
-    label: "Agents",
+    label: "Agent Organization",
     items: [
       { label: "Agents", href: "/agents", icon: Bot },
       { label: "Routines", href: "/routines", icon: Repeat },
+      { label: "Activity", href: "/activity", icon: Activity },
       { label: "Knowledge", href: "/knowledge", icon: BookOpen },
       { label: "Issues", href: "/issues", icon: CircleDot },
       { label: "Goals", href: "/goals", icon: Target },
@@ -133,6 +136,7 @@ export function AppSidebar({
                       >
                         <item.icon className="size-4" />
                         <span>{item.label}</span>
+                        {item.href === "/activity" && <ActivityNavBadge />}
                         {item.badge && (
                           <span className="ml-auto rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-amber-400 group-data-[collapsible=icon]:hidden">
                             {item.badge}

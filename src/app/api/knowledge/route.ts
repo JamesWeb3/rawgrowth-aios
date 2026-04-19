@@ -11,7 +11,7 @@ export const maxDuration = 30;
 
 export async function GET() {
   try {
-    const organizationId = currentOrganizationId();
+    const organizationId = (await currentOrganizationId());
     const files = await listKnowledgeFilesForOrg(organizationId);
     return NextResponse.json({ files });
   } catch (err) {
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       .filter(Boolean);
 
     const row = await createKnowledgeFile({
-      organizationId: currentOrganizationId(),
+      organizationId: (await currentOrganizationId()),
       title,
       tags,
       content,

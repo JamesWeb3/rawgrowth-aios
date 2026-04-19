@@ -15,7 +15,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const organizationId = currentOrganizationId();
+    const organizationId = (await currentOrganizationId());
     const row = await getKnowledgeFile(organizationId, id);
     if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
     const content = row.storage_path
@@ -36,7 +36,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await deleteKnowledgeFile(currentOrganizationId(), id);
+    await deleteKnowledgeFile((await currentOrganizationId()), id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
@@ -57,7 +57,7 @@ export async function PATCH(
       return NextResponse.json({ error: "tags[] required" }, { status: 400 });
     }
     const row = await updateKnowledgeFileTags(
-      currentOrganizationId(),
+      (await currentOrganizationId()),
       id,
       body.tags.map((t) => String(t).trim()).filter(Boolean),
     );

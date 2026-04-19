@@ -26,14 +26,14 @@ export async function PATCH(
       Object.keys(body).length === 1
     ) {
       const r = await setRoutineStatus(
-        currentOrganizationId(),
+        (await currentOrganizationId()),
         id,
         body.status,
       );
       return NextResponse.json({ routine: r });
     }
 
-    const routine = await updateRoutine(currentOrganizationId(), id, {
+    const routine = await updateRoutine((await currentOrganizationId()), id, {
       title: body.title,
       description: body.description,
       assigneeAgentId: body.assigneeAgentId,
@@ -55,7 +55,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await deleteRoutine(currentOrganizationId(), id);
+    await deleteRoutine((await currentOrganizationId()), id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
