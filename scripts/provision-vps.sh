@@ -33,6 +33,7 @@ HOST=""
 DOMAIN=""
 EMAIL=""
 ORG=""
+SLUG=""
 SSH_USER="root"
 REPO="${RAWGROWTH_REPO:-https://github.com/JamesWeb3/rawgrowth-aios.git}"
 TARGET="/opt/rawgrowth"
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
     --domain)   DOMAIN="$2"; shift 2 ;;
     --email)    EMAIL="$2"; shift 2 ;;
     --org)      ORG="$2"; shift 2 ;;
+    --slug)     SLUG="$2"; shift 2 ;;
     --ssh-user) SSH_USER="$2"; shift 2 ;;
     --repo)     REPO="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
@@ -130,7 +132,7 @@ NANGO_PUBLIC_KEY=${NANGO_PUBLIC_KEY:-}
 NANGO_WEBHOOK_SECRET=${NANGO_WEBHOOK_SECRET:-}
 
 SEED_ORG_NAME=${ESCAPED_ORG}
-SEED_ORG_SLUG=$(printf '%s' "$ORG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
+SEED_ORG_SLUG=${SLUG:-$(printf '%s' "$ORG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')}
 SEED_ADMIN_EMAIL=${EMAIL}
 SEED_ADMIN_PASSWORD=
 SEED_ADMIN_NAME=Owner

@@ -1,0 +1,458 @@
+{
+  "northStar": {
+    "ownerName": "Wylie Hawkins",
+    "businessName": "Wylie Hawkins Organization (life insurance distributor under a carrier umbrella)",
+    "industry": "Life Insurance Distribution (final expense, IUL/mortgage protection, trucker policies)",
+    "yearsOperating": "~4+ (since 2022 per testimony — 18K month 1, 47K month 2, ascended from there)",
+    "revenueRange": "$14M/yr issued premium across the org ($11M from Mahmoud's team, $3M outside). Wylie personal take-home ~$100K net ($250K gross minus $150K business expenses).",
+    "businessModel": "MLM-style insurance distribution. Wylie contracts at 140% with carriers. Recruits agents under him at 85%→90%→95%→...→145% ascending grid. Earns override on spread between his contract and downline contracts.",
+    "description": "Sells life insurance (final expense, IUL, mortgage protection, trucker) via 336 agents across 3 physical offices. Agents dial by hand on purchased leads (Goat Leads, $20/lead). Commission economics: $1,200 annual premium → agent 85% ($1,020) → 75% upfront, 25% trail months 10-12 → 30% cancellation rate baked in.",
+    "vision": "Become the #1 distributor with a self-running org where the owner's direct downline catches up to Mahmoud's team, unlocks override economics, and vertically integrates to own its own lead supply.",
+    "idealDay": "Focus on recruiting + building leaders, not firefighting duct-taped processes. Wylie explicitly wants to be 'above the trenches' so he can 'use AI properly'.",
+    "successDefinition": "Lift the 277 sub-$15K/mo agents past the $15K contract-grid threshold back-to-back, triggering ascension and override compounding.",
+    "timeframe": "V1 dashboard in 8 weeks. V2+ (AI coach, simulator, recruiting pipeline) in 16-20 weeks. V3 (own lead-gen) in 6-9 months."
+  },
+  "valueStream": {
+    "stages": [
+      {
+        "name": "1. Recruiting",
+        "description": "Bringing new insurance agents into the org. Each of 3 office managers runs their own recruiting.",
+        "owner": "Office managers (decentralized, no central system)",
+        "tools": ["Word of mouth", "Community networks (Mahmoud's Palestinian community)", "Ad hoc referrals"],
+        "cycleTime": "Unknown — unmeasured",
+        "waitTime": "Unknown",
+        "throughput": "Unmeasured. 26 direct downlines for Wylie; 336 total org size.",
+        "conversionRate": "Unmeasured — no intake tracking",
+        "painPoints": [
+          "No swim lanes (rep→manager→scaling steps undefined)",
+          "Managers 'doing their own thing, not in sync'",
+          "No unified intake form, no funnel, no source attribution"
+        ],
+        "waste": ["Unused talent — 3 managers duplicating recruiting effort", "Defects — new hires onboarded inconsistently"],
+        "notes": "Ed (manager) explicitly named recruiting as problem #1 of the core four."
+      },
+      {
+        "name": "2. Onboarding",
+        "description": "New agent from hire to first-dial readiness.",
+        "owner": "Managers + bootcamp leads",
+        "tools": ["GoHighLevel (CRM/marketing)", "Zoom bootcamp calls", "Unstructured 'piecemeal' modules"],
+        "cycleTime": "Variable — not systematized",
+        "waitTime": "Variable",
+        "throughput": "Unmeasured",
+        "conversionRate": "Unmeasured. Implied high washout given 277/336 stuck below $15K/mo.",
+        "painPoints": [
+          "Wylie quote: 'the bootcamp is just pieced together, basically... duct tape and super glue'",
+          "No week 1 / week 2 / week 3 progression",
+          "No graduation gates before dialer access",
+          "No standardized content library"
+        ],
+        "waste": ["Overprocessing (managers improvising each cohort)", "Defects (reps dial live before ready)", "Waiting (reps stall between informal steps)"],
+        "notes": "Wylie admits 'the fact that I'm in this position blows my mind' — attributes success to people magnetism, not systems."
+      },
+      {
+        "name": "3. Lead Acquisition",
+        "description": "Agents purchase leads to dial. Primary vendor Goat Leads.",
+        "owner": "Individual agents (each buys their own)",
+        "tools": ["Goat Leads (primary, $20/lead)", "Spreadsheets for tracking"],
+        "cycleTime": "Instant purchase",
+        "waitTime": "Leads sit unworked in spreadsheets",
+        "throughput": "Agents spend ~$3K/mo on leads typical",
+        "conversionRate": "Implied ~6-10% close rate based on 15K revenue / $3K lead spend model, but UNMEASURED",
+        "painPoints": [
+          "Wylie quote: 'leads is our biggest constraint... it's been our biggest constraint for five years'",
+          "$20/lead is high-cost, externally sourced, no control",
+          "Same leads sold to multiple agents",
+          "No intent scoring, no enrichment, no prioritization"
+        ],
+        "waste": ["Inventory — leads pile up unworked in spreadsheets", "Over-processing — agents re-dial blind because no history"],
+        "notes": "Leads IS the stated #1 pain, but 59 top agents close the same leads fine — suggests the real issue is downstream, not the leads themselves."
+      },
+      {
+        "name": "4. Dialing / Sales Call",
+        "description": "Agent dials lead, pitches insurance, closes or objects.",
+        "owner": "Individual agents",
+        "tools": ["Phone (hand-dialing)", "Headsets/mics exist but not mic'd into any CRM", "No recording", "No transcript"],
+        "cycleTime": "Call itself: 15-45 min typical for insurance sales",
+        "waitTime": "N/A at call level, but massive coaching-loop lag",
+        "throughput": "Wylie-stated average rep ~$8K issued/mo — meaning ~6-7 deals/mo at $1,200 each",
+        "conversionRate": "277 of 336 agents (82%) under $15K/mo threshold; 59 (18%) above. Suggests bottom quintile conversion ~3-5%, top quintile 15-20%+.",
+        "painPoints": [
+          "Wylie quote: 'every single one of the guys dials by hand'",
+          "No CRM, no call recording, no transcript, no coaching loop",
+          "Top-performer patterns are invisible — can't be replicated",
+          "Underperformer mistakes are invisible — can't be corrected"
+        ],
+        "waste": [
+          "Defects — reps repeat same objection fails across months",
+          "Unused talent — 59 top reps' patterns not extracted to train the 277",
+          "Motion — reps switch between sheet, phone, notes with no integration"
+        ],
+        "notes": "This is the TRUE constraint zone. Same leads + same org + same training = 5x spread between top and bottom. The variable is agent execution, and we have zero visibility into it."
+      },
+      {
+        "name": "5. Sales Training",
+        "description": "Daily team training: Mon-Sat themes + KPI whiteboard ritual.",
+        "owner": "Wylie + office managers",
+        "tools": ["In-person whiteboard", "Zoom calls", "Wylie-built AI simulator (text, with rubric)"],
+        "cycleTime": "Daily",
+        "waitTime": "Zero when running, but inconsistent across 3 offices",
+        "throughput": "All 336 in theory",
+        "conversionRate": "Impact unmeasured — Wylie anecdotally reported uplift after he read names aloud on one call",
+        "painPoints": [
+          "No feedback loop from real calls (because no recording)",
+          "No personalization — same content to $20K and $5K reps",
+          "Training executed inconsistently across 3 offices",
+          "Leaderboard proven effective but not systematized"
+        ],
+        "waste": ["Over-processing (generic training for specialized problems)", "Inventory (content exists, isn't tagged or reused)"],
+        "notes": "Training ROUTINE is strong (Mon Intro, Tue Discovery, Wed Numbers, Thu Application, Fri Hot Topic). The gap is the instrumentation underneath it."
+      },
+      {
+        "name": "6. Policy Submission & Persistency",
+        "description": "Agent submits sold policy to carrier, commission earns through, residuals pay across 20 years.",
+        "owner": "Agents + back office",
+        "tools": ["Carrier systems (direct)", "GHL (partial)"],
+        "cycleTime": "Hours to days",
+        "waitTime": "Residuals lag 10-12 months",
+        "throughput": "70% persistency (30% cancellation) baked in",
+        "conversionRate": "70% of sold policies persist past the chargeback window",
+        "painPoints": [
+          "Churn rate untracked per-rep — can't flag reps selling unfit policies",
+          "No retention outreach from agent to client post-sale"
+        ],
+        "waste": ["Defects — chargebacks from cancellations go unanalysed", "Unused talent — retention could be a separate role"],
+        "notes": "Persistency is an existing carrier constraint. 30% is the industry norm; moving this needle is V3+ work."
+      },
+      {
+        "name": "7. Ascension (Contract Grid)",
+        "description": "Agent crosses $15K/mo back-to-back → bumps contract from 85% to 90% → continues up to 145% ceiling.",
+        "owner": "Carrier (automated)",
+        "tools": ["Carrier comp grid"],
+        "cycleTime": "Minimum 2 months back-to-back",
+        "waitTime": "Indefinite for 277 agents",
+        "throughput": "18% of org currently above threshold",
+        "conversionRate": "82% of agents STUCK below the ascension gate",
+        "painPoints": [
+          "No visibility to agents on how close they are",
+          "No playbook for crossing the threshold",
+          "No leaderboard making the ascension status public"
+        ],
+        "waste": ["Inventory — 277 trapped pre-ascension for months/years"],
+        "notes": "THIS is where the money lever sits. Every rep who crosses $15K back-to-back compounds Wylie's override AND reduces Wylie's dependency on Mahmoud's 80%."
+      }
+    ],
+    "systemMetrics": {
+      "endToEndCycleTime": "Recruit → first deal: weeks to months, unmeasured. Deal → Wylie override realized: 2-3 months (upfront advance) + trailing years on residuals.",
+      "processEfficiency": "Unknown — no CRM = no data. Estimated ~10-15% value-add time in dialing stage given ratio of wasted dials to closes.",
+      "totalConversion": "82% of agents fail to cross the $15K/mo threshold. Estimated lead-to-deal conversion ~3-8% across the org.",
+      "revenuePerLead": "At $20/lead and assumed 5% close rate with $1,200 avg premium → ~$60 gross revenue per lead, minus 85% to agent = ~$9 gross per lead to carrier/Wylie side. Highly sensitive to close rate."
+    }
+  },
+  "painPoints": [
+    {
+      "description": "277 of 336 agents stuck below $15K/mo — cannot cross the contract-grid ascension threshold",
+      "severity": "critical",
+      "frequency": "daily",
+      "impact": "Wylie's override doesn't compound. Agent churn. Wylie personally capped at ~$100K net despite running $14M org.",
+      "rootCauseHypothesis": "No coaching feedback loop — calls are not recorded/transcribed, so patterns between top and bottom performers are invisible and unfixable.",
+      "connectedTo": ["Dialing", "Sales Training", "Ascension"]
+    },
+    {
+      "description": "Agents dial by hand on their phones — zero call capture",
+      "severity": "critical",
+      "frequency": "daily",
+      "impact": "No transcripts, no objection analysis, no top-vs-bottom pattern diff, no coaching data.",
+      "rootCauseHypothesis": "Never invested in CRM/dialer infra because the business grew on Wylie's and Mahmoud's relational magnetism, not systems.",
+      "connectedTo": ["Dialing", "Sales Training"]
+    },
+    {
+      "description": "Mahmoud earns the same 145% as Wylie → zero override on 80% of org production",
+      "severity": "high",
+      "frequency": "monthly (structural)",
+      "impact": "Wylie's personal P&L decoupled from 80% of his own org's output. Only way out = grow direct downline faster.",
+      "rootCauseHypothesis": "Historical contract negotiation ceiling with the carrier. Structural, not fixable without renegotiation.",
+      "connectedTo": ["Ascension"]
+    },
+    {
+      "description": "Leads cost $20 each from Goat Leads, externally sourced",
+      "severity": "high",
+      "frequency": "daily",
+      "impact": "Agents spend ~$3K/mo personal cash on leads; reduces take-home; margin bleeds to vendor.",
+      "rootCauseHypothesis": "No in-house lead-gen capability. Industry norm to outsource, but Goat Leads markup is 3-5x their acquisition cost per Wylie.",
+      "connectedTo": ["Lead Acquisition"]
+    },
+    {
+      "description": "Onboarding is 'duct tape and super glue' — no week-by-week progression",
+      "severity": "high",
+      "frequency": "every new hire",
+      "impact": "New reps hit phones before ready → fail early → churn early → waste recruiting spend.",
+      "rootCauseHypothesis": "Never documented because growth outran systematization.",
+      "connectedTo": ["Onboarding", "Ascension"]
+    },
+    {
+      "description": "Recruiting has no unison across the 3 offices",
+      "severity": "high",
+      "frequency": "weekly",
+      "impact": "Each manager reinvents intake, quality varies, source attribution impossible.",
+      "rootCauseHypothesis": "No central hire pipeline tool. Each manager runs their own P&L, no shared funnel.",
+      "connectedTo": ["Recruiting", "Onboarding"]
+    },
+    {
+      "description": "No CRM — leads tracked in spreadsheets",
+      "severity": "high",
+      "frequency": "daily",
+      "impact": "Lead history lost, re-dialed blind, warm leads forgotten, disposition data non-existent.",
+      "rootCauseHypothesis": "Same as dialing gap — never invested.",
+      "connectedTo": ["Lead Acquisition", "Dialing"]
+    },
+    {
+      "description": "Leaderboard not systematized",
+      "severity": "medium",
+      "frequency": "weekly",
+      "impact": "Wylie manually reading names aloud once caused 'urgency spike' — proven lever, untooled.",
+      "rootCauseHypothesis": "No dashboard. No real-time visibility. Public accountability is cultural, not structural.",
+      "connectedTo": ["Sales Training", "Ascension"]
+    },
+    {
+      "description": "Wylie takes home ~$100K/yr despite running $14M org",
+      "severity": "high",
+      "frequency": "monthly",
+      "impact": "Wylie cannot fund the build out of the very infrastructure that would unlock more take-home.",
+      "rootCauseHypothesis": "Mahmoud cap + 82% of agents below ascension + generous spending habits (admitted). Not a revenue problem, a structural comp + margin problem.",
+      "connectedTo": ["Ascension"]
+    }
+  ],
+  "patterns": [
+    {
+      "observation": "Same leads + same org + same training produce 5x spread between top 59 and bottom 277 performers",
+      "evidence": [
+        "Wylie: 'I have 277 guys that are below 15,000 and I only have 59 guys above it'",
+        "All agents use Goat Leads source",
+        "All agents go through the same (inconsistent) bootcamp"
+      ],
+      "significance": "The binding variable is NOT leads or training content — it's agent execution and the ability to see/fix it. This reframes the constraint from 'lead supply' to 'coaching feedback loop'."
+    },
+    {
+      "observation": "Public accountability works — Wylie tested it once and got immediate lift",
+      "evidence": [
+        "Wylie: 'the other week I dropped on the call, I said, hey, here's your numbers. I read off every single name...'",
+        "'by the end of the call, everyone was dialing with more intention than we've seen'",
+        "'Guys are making more sales than they ever have'"
+      ],
+      "significance": "Public leaderboard is a tested, cheap, high-leverage lever. Should be V1 non-negotiable."
+    },
+    {
+      "observation": "Wylie's comp is structurally uncorrelated with 80% of his org's production",
+      "evidence": [
+        "Mahmoud produces $11M of $14M",
+        "Mahmoud contracted at 145% (= Wylie)",
+        "Wylie earns 'zero override' on Mahmoud's production"
+      ],
+      "significance": "The only way Wylie's take-home lifts is by growing his direct downline (currently the 277-agent struggle pool) past ascension. Strategic imperative: unstick the 277."
+    },
+    {
+      "observation": "Business grew on relationships, not systems",
+      "evidence": [
+        "Wylie: 'I think it's because I'm naturally just so good with people and attracting people'",
+        "Wylie: 'we do really best, relationship. What we do terrible at is system and processes'",
+        "Mahmoud hire tapped a community bloodline; org scaled by social graph, not funnel"
+      ],
+      "significance": "Core skill of the org is durable (relationships). Missing skill is systematic (ops). Dilan fills the exact gap — high odds of engagement success."
+    },
+    {
+      "observation": "Wylie has ALREADY built an AI sales simulator (text-based, with a rubric)",
+      "evidence": [
+        "Wylie: 'I have built a simulator to where they could practice by themselves with the AI'",
+        "'I have a certain rubric to grade their conversation'"
+      ],
+      "significance": "Existing asset to ingest, not rebuild. Upgrading to voice-to-voice is a V2 accelerator, not a greenfield build."
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption": "Leads are the #1 constraint",
+      "origin": "inherited",
+      "challenged": true,
+      "firstPrinciplesAlternative": "Leads are expensive but not the BINDING constraint. Same leads produce wildly different outcomes by rep. The binding constraint is the coaching feedback loop that would close the 5x spread between top and bottom agents."
+    },
+    {
+      "assumption": "Agents must buy their own leads",
+      "origin": "inherited",
+      "challenged": true,
+      "firstPrinciplesAlternative": "If org owned the lead supply, best leads route to own reps at cost, surplus is monetized. Vertical integration (V3)."
+    },
+    {
+      "assumption": "Sales training must be live/generic",
+      "origin": "inherited",
+      "challenged": true,
+      "firstPrinciplesAlternative": "Asynchronous + personalized training from the rep's own call data. Top-performer patterns as the curriculum. AI-driven per-rep weakness detection."
+    },
+    {
+      "assumption": "Hand-dialing is normal",
+      "origin": "accidental",
+      "challenged": true,
+      "firstPrinciplesAlternative": "Every other mature sales org runs on Close/Aircall/Twilio with auto-recording. This is a 1-week fix blocking years of coaching leverage."
+    },
+    {
+      "assumption": "Each manager runs their own recruiting/onboarding",
+      "origin": "accidental",
+      "challenged": true,
+      "firstPrinciplesAlternative": "Central pipeline + manager-specific credit/attribution. One system, many operators."
+    },
+    {
+      "assumption": "Mahmoud's contract can't be renegotiated",
+      "origin": "deliberate",
+      "challenged": false,
+      "firstPrinciplesAlternative": "Accept as structural cap. Grow around it."
+    }
+  ],
+  "firstPrinciplesInsights": [
+    {
+      "insight": "The product is the reps. If reps are the product, treat them like a product: instrument them, iterate on them, measure cohorts.",
+      "implication": "Every dashboard metric should be rep-level. Every feedback loop should be rep-specific. This is a B2B SaaS product with 336 'users' whose outputs you monetize."
+    },
+    {
+      "insight": "The 59 top performers are already selling the same leads successfully — they ARE the training curriculum, we just haven't captured them",
+      "implication": "Capture their calls first (even before building the simulator) → every top-performer transcript becomes a training asset → library compounds daily."
+    },
+    {
+      "insight": "Public visibility > private coaching at scale",
+      "implication": "A live leaderboard moves 336 agents simultaneously. 1:1 coaching moves 1. Leaderboard has the highest ratio of behavioral lift to operator time."
+    },
+    {
+      "insight": "The $15K threshold is a cliff, not a slope",
+      "implication": "Comp grid ascension is binary. Moving a rep from $13K → $15K is worth 10x moving from $8K → $10K. Target the agents closest to the cliff first."
+    },
+    {
+      "insight": "Leads are Wylie's subjective pain, not the objective constraint",
+      "implication": "Build the objective-constraint fix (coaching loop, CRM, leaderboard) in V1. Address leads in V3 once the org can actually convert what it already buys."
+    }
+  ],
+  "primaryConstraint": {
+    "constraint": "Absence of a coaching feedback loop — agents dial by hand on phones with no CRM, no call recording, no transcript, so there is no mechanism to see what the top 59 do differently from the bottom 277, which means the 277 cannot be coached past the $15K/mo ascension threshold.",
+    "type": "conversion",
+    "evidence": [
+      "277 of 336 agents below $15K/mo; 59 above — 5x spread on same leads + same org",
+      "Wylie quote: 'every single one of the guys dials by hand'",
+      "No CRM, no transcript, no call history",
+      "Wylie's own test: reading names aloud ONCE produced immediate lift — proving visibility alone changes behavior",
+      "Sales training routine is strong (Mon-Sat themed) but receives no signal back from actual calls"
+    ],
+    "cascadeEffects": [
+      "Ascension cliff untouched → 82% of agents stuck → Wylie's override doesn't compound",
+      "Agent churn — reps making $3,600/mo can't sustain, quit, eat recruiting cost",
+      "Manager time wasted on generic training that doesn't target actual failure points",
+      "Wylie personally capped at $100K net on $14M org",
+      "Dependency on Mahmoud deepens because Wylie's direct downline can't grow",
+      "Lead cost pain feels worse than it is — underconversion makes every $20 lead feel expensive",
+      "Recruiting quality deteriorates because no data exists on which sources produce $15K+ reps"
+    ],
+    "currentImpact": "Assuming moving even 30 of the 277 struggling agents past the $15K ascension threshold: 30 × ($15K - $8K avg lift) = $210K/mo additional issued premium × 12 months × Wylie's effective override spread (~10-15%) = $250-375K/yr in recoverable owner comp, not counting retention improvements, recruiting ROI, and compounding residuals.",
+    "hypothesis": "Installing a CRM + dialer + recording + transcript pipeline + visible leaderboard breaks this constraint by making execution visible and coachable. Every top-performer call becomes training material; every bottom-performer call becomes a diagnostic. The $15K ascension rate should double within 6 months of instrumented coaching."
+  },
+  "rootCause": {
+    "description": "The business scaled on relational magnetism (Wylie + Mahmoud's community) without ever building the operational instrumentation that coaching at scale requires.",
+    "type": "structural",
+    "whyItPersists": "Growth outran systematization. Every time ops capacity was needed, the founders found a relational workaround (hire another warm body, tap another community, throw more energy at the whiteboard). The workarounds worked well enough to mask the structural gap.",
+    "whatPreventsFixing": "No technical operator in leadership (Wylie admits: 'what we do terrible at is system and processes'). No ops-focused hire because the margin squeeze from Mahmoud cap + lead costs has kept Wylie's take-home thin enough that the infrastructure investment felt unaffordable. Classic catch-22: can't afford to fix the thing that's keeping comp low.",
+    "issueTreeBranches": [
+      "BRANCH A — Lead supply (Wylie's stated cause): DISPROVEN. Same leads produce 5x variance across reps.",
+      "BRANCH B — Training content: DISPROVEN. Training routine is rich; the gap is the signal back, not the content.",
+      "BRANCH C — Agent quality at intake: PARTIAL. Recruiting has no funnel, but top performers exist across all recruitment sources — quality isn't the binding issue.",
+      "BRANCH D — Coaching feedback loop absence: CONFIRMED. No CRM, no recording, no transcript, no diff engine between top and bottom performers. This is the root cause.",
+      "BRANCH E — Wylie's comp structure (Mahmoud cap): CONSTRAINT but not ROOT CAUSE. Structural, unfixable without renegotiation. Can only be grown around."
+    ]
+  },
+  "stressTests": {
+    "doubleDemand": "If lead volume doubled tomorrow, the 59 top performers would absorb it productively; the 277 would burn through more $20 leads at the same 3-5% close rate. Output would rise, but rep economics would not. Confirms leads are not the constraint.",
+    "removeOwner": "If Wylie were removed, Mahmoud's 80% continues (self-sufficient). The 3-office structure and the 277 struggling agents would collapse within months — no one is systematizing them. The recruitment pipeline (such as it is) dries up. Business contracts to Mahmoud's $11M book, potentially worse.",
+    "removeTopChannel": "If Goat Leads cut Wylie off, the entire dialing apparatus halts within days. Confirms severe external dependency. Further argument for vertical integration in V3.",
+    "competitorThreat": "A well-instrumented competitor (better CRM, better coaching, better retention) can peel agents off one-by-one by offering more take-home at the same grid level. Wylie's retention is currently 100% relational and 0% structural."
+  },
+  "futureState": {
+    "constraintRemoved": "Every call recorded and transcribed. Every rep's performance visible on a live leaderboard. AI-generated coaching report per rep each week diffs their calls against the top 59's patterns. Managers spend time on personalized coaching, not generic zoom training. Reps can see exactly how close they are to the $15K ascension cliff.",
+    "whatChanges": "Expected: $15K ascension rate doubles (from ~18% → ~35%+ of org) within 6-9 months. Rep churn drops as previously-stuck agents start progressing. Manager time reallocates from broadcast training to precision coaching. Recruiting gains source attribution so channels that produce $15K+ reps get doubled down on. Wylie's override lifts as his direct downline ascends. Dependency on Mahmoud decreases in relative terms.",
+    "nextConstraint": "Lead supply becomes the binding constraint. With conversion fixed, the org can absorb more leads profitably, and Goat Leads' $20/lead cost + marketplace scarcity becomes the new cap. This is the V3 vertical-integration trigger: build own lead-gen once conversion is fixed and capital is available from the lifted override."
+  },
+  "processOptimization": {
+    "processes": [
+      {"name": "Agent Recruiting Intake", "valueStreamStage": "1. Recruiting", "description": "Capture applicant data from warm referrals + sources", "owner": "Each office manager (decentralized)", "frequency": "weekly", "timePerOccurrence": "2-3 hrs/applicant", "totalTimePerWeek": "10-20 hrs across managers", "category": "systemize", "categoryReasoning": "No central pipeline exists; needs an SOP + intake form + funnel tool BEFORE delegation makes sense.", "priorityTier": "supporting", "implementationNotes": "Build centralized Typeform/Tally intake → Supabase → managers see their own pipeline + attribution."},
+      {"name": "Agent Interview & Culture-Fit", "valueStreamStage": "1. Recruiting", "description": "Interview applicants, decide yes/no", "owner": "Managers + Wylie on edge cases", "frequency": "weekly", "timePerOccurrence": "45 min", "totalTimePerWeek": "3-8 hrs", "category": "keep", "categoryReasoning": "Human judgment + Wylie's relational radar is the moat — don't automate. AI can augment via pre-call summaries in V2.", "priorityTier": "supporting"},
+      {"name": "Onboarding Bootcamp Delivery", "valueStreamStage": "2. Onboarding", "description": "Walk new hire through weeks 1-4 of training", "owner": "Managers ad hoc", "frequency": "weekly (per cohort)", "timePerOccurrence": "~20 hrs over 4 weeks per cohort", "totalTimePerWeek": "varies", "category": "systemize", "categoryReasoning": "Currently 'duct tape'; needs week 1/2/3/4 milestones, graduation gates, standard content library.", "priorityTier": "constraint-zone", "implementationNotes": "Tie graduation to Training Hub completion + supervised-dial count."},
+      {"name": "Dialer Queue Setup per Agent", "valueStreamStage": "3. Lead Acquisition", "description": "Load Goat Leads CSV into whatever each agent uses", "owner": "Individual agents", "frequency": "daily", "timePerOccurrence": "15 min", "totalTimePerWeek": "~1.5 hrs × 336 = 500+ hrs org-wide", "category": "automate", "categoryReasoning": "Rule-based, done daily, identical every time. Pipe Goat Leads API → CRM → auto-populate rep dialer queue.", "priorityTier": "constraint-zone"},
+      {"name": "Live Dialing (Value-Add)", "valueStreamStage": "4. Dialing / Sales Call", "description": "Talking to the lead, pitching, closing", "owner": "Individual agents", "frequency": "daily", "timePerOccurrence": "15-45 min/call × 40-80 calls/day/agent", "totalTimePerWeek": "~25-35 hrs/agent", "category": "keep", "categoryReasoning": "THE value-creating activity. Humans close insurance. Do NOT automate the call itself.", "priorityTier": "constraint-zone"},
+      {"name": "Call Recording & Transcription", "valueStreamStage": "4. Dialing / Sales Call", "description": "Capture every dial, transcribe, store against lead + rep", "owner": "Currently NO ONE (doesn't exist)", "frequency": "daily", "timePerOccurrence": "0 (automated when set up)", "totalTimePerWeek": "0", "category": "automate", "categoryReasoning": "Core missing infra. Twilio/Aircall/Close + Deepgram/Whisper. No human involvement after setup.", "priorityTier": "constraint-zone", "implementationNotes": "V1 week 4-6 build."},
+      {"name": "Post-Call Disposition Logging", "valueStreamStage": "4. Dialing / Sales Call", "description": "Mark outcome (sold / callback / no-contact / dead)", "owner": "Agents in spreadsheet today", "frequency": "after each call", "timePerOccurrence": "30 sec", "totalTimePerWeek": "~2-3 hrs/agent", "category": "systemize", "categoryReasoning": "Has to stay with agent (they know context), but needs to move out of spreadsheet into CRM with dropdown discipline.", "priorityTier": "constraint-zone"},
+      {"name": "Lead History Lookup Before Dial", "valueStreamStage": "4. Dialing / Sales Call", "description": "Check if this lead's been dialed, what happened", "owner": "Agents (today: often skipped, re-dialed blind)", "frequency": "before each call", "timePerOccurrence": "1-2 min", "totalTimePerWeek": "lost time × 336 agents", "category": "systemize", "categoryReasoning": "CRM makes this instant — the 'process' becomes 'look at the lead card'.", "priorityTier": "constraint-zone"},
+      {"name": "Daily KPI Whiteboard Ritual", "valueStreamStage": "5. Sales Training", "description": "Public call-out: sale? gym? reel? Bible? 4/4 shout-out", "owner": "Wylie + managers", "frequency": "daily", "timePerOccurrence": "15 min", "totalTimePerWeek": "1.5 hrs", "category": "keep", "categoryReasoning": "Cultural ritual, high-morale, low-cost. Keep the in-person — just mirror it in the dashboard for remote visibility.", "priorityTier": "constraint-zone"},
+      {"name": "Monday-Saturday Themed Training", "valueStreamStage": "5. Sales Training", "description": "Mon intro, Tue discovery, Wed numbers, Thu app, Fri hot topic", "owner": "Wylie + managers", "frequency": "daily", "timePerOccurrence": "30-60 min", "totalTimePerWeek": "3-6 hrs delivered, 18-36 hrs received across agents", "category": "systemize", "categoryReasoning": "Routine is strong but content isn't tagged/stored/searchable. Systemize into Training Hub with theme tags.", "priorityTier": "constraint-zone"},
+      {"name": "Reading Names Aloud on Group Call (Accountability)", "valueStreamStage": "5. Sales Training", "description": "Wylie names every agent + their numbers publicly", "owner": "Wylie (tested once)", "frequency": "currently ad hoc", "timePerOccurrence": "30 min", "totalTimePerWeek": "0.5 hrs when done", "category": "automate", "categoryReasoning": "Replace Wylie reading 336 names aloud with a live leaderboard visible to all. Same behavioral lift, 0% operator time.", "priorityTier": "constraint-zone"},
+      {"name": "AI Sales Simulator Practice", "valueStreamStage": "5. Sales Training", "description": "Rep runs text-based AI role-play session", "owner": "Individual rep (Wylie built the tool)", "frequency": "ad hoc", "timePerOccurrence": "15-30 min", "totalTimePerWeek": "varies", "category": "keep", "categoryReasoning": "Existing asset. Upgrade to voice-to-voice in V2 — still rep-operated, just augmented.", "priorityTier": "supporting", "implementationNotes": "Ingest Wylie's rubric into the new build."},
+      {"name": "Top-vs-Bottom Call Diff Analysis", "valueStreamStage": "5. Sales Training", "description": "Compare top 59 vs bottom 277 call patterns, extract coaching", "owner": "Currently NO ONE (doesn't exist — calls aren't recorded)", "frequency": "weekly", "timePerOccurrence": "0 (automated)", "totalTimePerWeek": "0", "category": "automate", "categoryReasoning": "Pure AI job. LLM classifies top patterns, diffs against bottom, generates per-rep report.", "priorityTier": "constraint-zone", "implementationNotes": "V2 build, 2-4 weeks after call recording live."},
+      {"name": "Per-Rep Weekly Coaching Report", "valueStreamStage": "5. Sales Training", "description": "Deliver personalized coaching based on rep's last N calls", "owner": "Today: not done / Future: AI + manager review", "frequency": "weekly", "timePerOccurrence": "Today 2-3 hrs/rep manual impossible at scale / Future 5 min review", "totalTimePerWeek": "Would be 700-1000 hrs manual across 336 reps", "category": "automate", "categoryReasoning": "Impossible at human scale; perfect LLM job.", "priorityTier": "constraint-zone"},
+      {"name": "Leaderboard Maintenance", "valueStreamStage": "5. Sales Training", "description": "Pull rep sales data, rank, display", "owner": "Currently NO ONE / Future: dashboard", "frequency": "real-time", "timePerOccurrence": "0 when automated", "totalTimePerWeek": "0", "category": "automate", "categoryReasoning": "Trivial automation once CRM exists.", "priorityTier": "constraint-zone"},
+      {"name": "Lead Purchase from Goat Leads", "valueStreamStage": "3. Lead Acquisition", "description": "Select + pay for leads", "owner": "Individual agents", "frequency": "daily/weekly", "timePerOccurrence": "10-20 min", "totalTimePerWeek": "1-2 hrs/agent", "category": "systemize", "categoryReasoning": "Until V3 vertical integration, purchasing stays with reps — but needs an SOP + recommended lead-type framework so reps stop choosing badly.", "priorityTier": "supporting"},
+      {"name": "Policy Application Submission", "valueStreamStage": "6. Policy Submission", "description": "Submit to carrier after close", "owner": "Agent", "frequency": "per deal", "timePerOccurrence": "20-40 min", "totalTimePerWeek": "varies", "category": "systemize", "categoryReasoning": "Has to stay with agent but checklists + templates cut error rate and chargebacks.", "priorityTier": "peripheral"},
+      {"name": "Post-Sale Persistency Outreach", "valueStreamStage": "6. Policy Submission", "description": "Check in with client to reduce 30-day cancel", "owner": "Currently NOT DONE by most", "frequency": "per deal", "timePerOccurrence": "10 min", "totalTimePerWeek": "varies", "category": "automate", "categoryReasoning": "SMS/email automation. Reduces 30% cancel rate by even 2-3 points = massive override uplift.", "priorityTier": "peripheral", "implementationNotes": "V2+."},
+      {"name": "Office-Level 1:1s with Top Performers", "valueStreamStage": "5. Sales Training", "description": "Managers catch up with top 59", "owner": "Managers", "frequency": "weekly", "timePerOccurrence": "30 min", "totalTimePerWeek": "5-10 hrs/manager", "category": "keep", "categoryReasoning": "Retention of top performers is leverage. Do not automate relational time.", "priorityTier": "supporting"},
+      {"name": "Cross-Office Manager Sync", "valueStreamStage": "7. Ascension", "description": "Align managers on process", "owner": "Wylie", "frequency": "weekly (spotty)", "timePerOccurrence": "1 hr", "totalTimePerWeek": "1 hr", "category": "keep", "categoryReasoning": "Owner function — cross-site alignment can't be delegated.", "priorityTier": "supporting"},
+      {"name": "Agent Compensation Tracking", "valueStreamStage": "7. Ascension", "description": "Know where each rep sits on contract grid", "owner": "Today: unclear / Future: dashboard", "frequency": "monthly", "timePerOccurrence": "0 when automated", "totalTimePerWeek": "~2 hrs manual today", "category": "automate", "categoryReasoning": "Straight calc from issued premium → auto-surface ascension candidates.", "priorityTier": "supporting"},
+      {"name": "Ad-hoc Coaching Zoom Calls", "valueStreamStage": "5. Sales Training", "description": "Emergency training sessions when Wylie/managers spot issue", "owner": "Wylie + managers", "frequency": "weekly ad hoc", "timePerOccurrence": "30-60 min", "totalTimePerWeek": "3-5 hrs", "category": "keep", "categoryReasoning": "Keeps Wylie close to the game. Reduce frequency as systems kick in.", "priorityTier": "peripheral"},
+      {"name": "Generic Zoom Training for Bottom Performers", "valueStreamStage": "5. Sales Training", "description": "One-size-fits-all training for reps below $15K", "owner": "Managers", "frequency": "weekly", "timePerOccurrence": "1-2 hrs", "totalTimePerWeek": "4-10 hrs", "category": "remove", "categoryReasoning": "Generic coaching at a population with individualized failure modes. Replace entirely with AI-personalized coaching reports. Fails 4 of 5 removal tests (customer: no; revenue: weakly; risk: no; enablement: partially; decision: no).", "priorityTier": "constraint-zone"},
+      {"name": "Manual Leaderboard Shout-outs in Group Chats", "valueStreamStage": "5. Sales Training", "description": "Wylie manually messages top performers", "owner": "Wylie", "frequency": "weekly", "timePerOccurrence": "30 min", "totalTimePerWeek": "30 min", "category": "automate", "categoryReasoning": "LLM drafts in Wylie's voice from leaderboard data; Wylie approves + sends.", "priorityTier": "peripheral"},
+      {"name": "Lead Spreadsheet Maintenance", "valueStreamStage": "3. Lead Acquisition", "description": "Keep the spreadsheets Wylie showed Dilan up to date", "owner": "Agents + managers", "frequency": "daily", "timePerOccurrence": "15-30 min/day per user", "totalTimePerWeek": "3-4 hrs/user × many users = 50+ hrs org-wide", "category": "remove", "categoryReasoning": "Replaced entirely by CRM. Fails all 5 removal tests once CRM exists.", "priorityTier": "constraint-zone"}
+    ],
+    "summary": {
+      "totalProcesses": 25,
+      "automate": 8,
+      "delegate": 0,
+      "systemize": 8,
+      "keep": 7,
+      "remove": 2,
+      "ownerTimeRecovered": "Wylie: ~4-6 hrs/week direct; ~10-15 hrs/week once systems stabilize (less firefighting)",
+      "totalTimeRecovered": "Org-wide: 550-700+ hrs/week once CRM replaces spreadsheets and AI replaces generic zoom training"
+    }
+  },
+  "dashboard": {
+    "constraintMetric": {
+      "name": "% of Agents Above $15K Issued Premium (Trailing 30 days)",
+      "formula": "count(agents with issued_premium_last_30d >= 15000) / count(all active agents) × 100",
+      "dataSource": "CRM → policies table (once live). Pre-CRM: manual from carrier reports.",
+      "frequency": "daily",
+      "greenThreshold": "≥ 25% (target: double from today's 18%)",
+      "amberThreshold": "18-24% (holding pattern)",
+      "redThreshold": "< 18% (regression)"
+    },
+    "metrics": [
+      {"name": "% Agents Above $15K (Hero)", "function": "operations", "type": "lagging", "formula": "see constraintMetric", "dataSource": "CRM + carrier feed", "frequency": "daily", "greenThreshold": "≥25%", "amberThreshold": "18-24%", "redThreshold": "<18%", "accountable": "Wylie (owner)", "actionWhenRed": "Trigger TOC review — which manager/office regressed, why, pull their top-vs-bottom diff reports"},
+      {"name": "New Applicants This Week", "function": "marketing", "type": "leading", "formula": "count(recruits where applied_at in current week)", "dataSource": "Recruiting intake form", "frequency": "weekly", "greenThreshold": "≥15", "amberThreshold": "8-14", "redThreshold": "<8", "accountable": "Managers", "actionWhenRed": "Activate referral bonuses + community outreach"},
+      {"name": "Applicant → Live Dialer Conversion", "function": "marketing", "type": "lagging", "formula": "count(agents reached dialer graduation in period) / count(applicants in period)", "dataSource": "Onboarding checklist table", "frequency": "weekly", "greenThreshold": "≥60%", "amberThreshold": "40-59%", "redThreshold": "<40%", "accountable": "Office managers", "actionWhenRed": "Review onboarding stall points — which step are washouts happening at"},
+      {"name": "Dials Per Rep Per Day (Activity)", "function": "sales", "type": "leading", "formula": "avg(calls per active agent in last 24h)", "dataSource": "Dialer/CRM calls table", "frequency": "daily", "greenThreshold": "≥80", "amberThreshold": "50-79", "redThreshold": "<50", "accountable": "Office managers", "actionWhenRed": "Check activity drop — motivation, tool issue, or burnout"},
+      {"name": "Rep Close Rate (Contact → Sale)", "function": "sales", "type": "lagging", "formula": "sum(sold) / sum(contacted) in period, per rep and rolled up", "dataSource": "CRM dispositions", "frequency": "weekly", "greenThreshold": "≥8%", "amberThreshold": "4-7%", "redThreshold": "<4%", "accountable": "Rep + manager", "actionWhenRed": "Auto-trigger AI call coach report for rep"},
+      {"name": "Calls Recorded & Transcribed (Coverage)", "function": "delivery", "type": "leading", "formula": "count(calls with transcript) / count(calls total) in period", "dataSource": "CRM + transcription service", "frequency": "daily", "greenThreshold": "≥95%", "amberThreshold": "80-94%", "redThreshold": "<80%", "accountable": "Dev / ops", "actionWhenRed": "Check integration health — Twilio/Aircall webhook, Deepgram quota"},
+      {"name": "AI Coaching Reports Delivered", "function": "delivery", "type": "lagging", "formula": "count(reps who received weekly AI coach report) / count(active reps)", "dataSource": "Coach pipeline logs", "frequency": "weekly", "greenThreshold": "≥95%", "amberThreshold": "80-94%", "redThreshold": "<80%", "accountable": "Dev / Dilan", "actionWhenRed": "Debug coaching pipeline"},
+      {"name": "Monthly Issued Premium — Wylie's Direct Downline", "function": "finance", "type": "lagging", "formula": "sum(issued_premium) across Wylie's direct downline (excludes Mahmoud's leg if needed for clarity)", "dataSource": "Carrier reports", "frequency": "monthly", "greenThreshold": "trending +10% MoM", "amberThreshold": "flat", "redThreshold": "declining", "accountable": "Wylie", "actionWhenRed": "Weekly 1:1s with managers, pull ascension candidate list"},
+      {"name": "Lead Cost Per Issued Deal", "function": "finance", "type": "lagging", "formula": "sum(lead spend) / count(issued policies) in period", "dataSource": "Goat Leads invoice + CRM policies", "frequency": "monthly", "greenThreshold": "≤$300", "amberThreshold": "$300-500", "redThreshold": ">$500", "accountable": "Wylie", "actionWhenRed": "Triggers V3 lead-gen conversation + per-vendor P&L review"},
+      {"name": "Leaderboard Top 10 Composition (Retention)", "function": "operations", "type": "leading", "formula": "% overlap of top 10 this week vs top 10 4 weeks ago", "dataSource": "Leaderboard snapshots", "frequency": "weekly", "greenThreshold": "60-80% overlap (healthy stability + mobility)", "amberThreshold": "<60% or >90%", "redThreshold": "<40% or =100%", "accountable": "Wylie", "actionWhenRed": "Too much turnover = top reps churning; too little = no mobility = stagnation. Both bad."},
+      {"name": "Agents on Ascension Watch ($12K-14.9K last 30d)", "function": "operations", "type": "lagging", "formula": "count(agents with 12000 ≤ issued_premium_last_30d < 15000)", "dataSource": "CRM + carrier feed", "frequency": "weekly", "greenThreshold": "≥40 (healthy cliff-push pipeline)", "amberThreshold": "20-39", "redThreshold": "<20", "accountable": "Office managers", "actionWhenRed": "Assign 1:1 push coaching to named reps; this is the cohort that flips the constraint metric"}
+    ]
+  },
+  "metadata": {
+    "sessionDate": "2026-04-15 (audit call) → 2026-04-18 (X-Ray written)",
+    "lastUpdated": "2026-04-18",
+    "completedStages": ["discovery (via transcript)", "diagnosis", "recommendations", "optimization"],
+    "clientQuotes": [
+      "I have 277 guys that are below 15,000 and I only have 59 guys above it.",
+      "Every single one of the guys dials by hand.",
+      "Our website sucks. Here's the big three things — can we have a training hub? Could we have a competitive leaderboard?",
+      "If we could make our own leads, that would be the best thing ever.",
+      "If there could be one thing, like if we could make our own leads, that would be the best thing ever... I got you, bro.",
+      "The bootcamp is just pieced together, basically. It's so, I kid you not, the fact that I'm in this position blows my mind... It's like duct tape and super glue.",
+      "What we do really best, Dilan, is relationship. What we do terrible at is system and processes.",
+      "I know that's the solution. I just, I've never had someone that I feel like could do it.",
+      "Leads is our biggest constraint, it's been our biggest constraint for five years.",
+      "The other week I dropped on the call, I said hey, here's your numbers. I read off every single name... by the end of the call, everyone was dialing with more intention than we've seen. Guys are making more sales than they ever have."
+    ],
+    "notes": "Discovery was conducted through a recorded audit call (Fathom link in session-notes.md), not a live Business X-Ray discovery session. Dilan captured the business data in real-time during the conversation. Ed (one of the office managers) joined the last ~10 minutes and added the canonical four-problem framing: Recruiting → Onboarding → Leads → Sales Training."
+  }
+}

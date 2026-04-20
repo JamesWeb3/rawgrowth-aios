@@ -33,6 +33,7 @@ import { ChangeClientPopover } from "@/components/change-client-popover";
 import { ActivityNavBadge } from "@/components/activity-nav-badge";
 import { ApprovalsNavBadge } from "@/components/approvals-nav-badge";
 import { useConfig } from "@/lib/use-config";
+import { getClientModule } from "@/clients/registry";
 
 type Org = { id: string; name: string };
 
@@ -82,6 +83,7 @@ const navSections: NavSection[] = [
 
 export function AppSidebar({
   orgName,
+  orgSlug = null,
   isAdmin = false,
   isImpersonating = false,
   homeOrgId = null,
@@ -89,6 +91,7 @@ export function AppSidebar({
   orgs = [],
 }: {
   orgName?: string;
+  orgSlug?: string | null;
   isAdmin?: boolean;
   isImpersonating?: boolean;
   homeOrgId?: string | null;
@@ -100,12 +103,29 @@ export function AppSidebar({
   const displayName = orgName ?? "Rawgrowth";
 
   // Self-hosted clients drag local files into Claude Code directly — no storage backend needed.
-  const filteredSections = navSections.map((section) => ({
+  const filteredSections: NavSection[] = navSections.map((section) => ({
     ...section,
     items: section.items.filter(
       (item) => !(isSelfHosted && item.href === "/knowledge"),
     ),
   }));
+
+  // Per-client bespoke tabs — registered under src/clients/<slug>/ and
+  // appended only for the org whose slug matches. Renders between the
+  // platform groups and the footer so client work feels first-class.
+  const clientModule = getClientModule(orgSlug);
+  const clientSections: NavSection[] =
+    clientModule?.nav.map((s) => ({
+      label: s.label,
+      items: s.items.map((i) => ({
+        label: i.label,
+        href: i.href,
+        icon: i.icon,
+        comingSoon: i.comingSoon,
+      })),
+    })) ?? [];
+
+  const allSections = [...filteredSections, ...clientSections];
 
   return (
     <Sidebar
@@ -134,7 +154,7 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        {filteredSections
+        {allSections
           .filter((s) => !s.adminOnly || isAdmin)
           .map((section) => (
           <SidebarGroup key={section.label}>

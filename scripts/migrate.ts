@@ -118,14 +118,45 @@ async function main() {
   );
   const applied = new Set(rows.map((r) => r.filename));
 
-  const entries = (await readdir(MIGRATIONS_DIR))
+  const platformEntries = (await readdir(MIGRATIONS_DIR))
     .filter((f) => f.endsWith(".sql"))
-    .sort();
+    .sort()
+    .map((f) => ({ file: f, full: path.join(MIGRATIONS_DIR, f) }));
+
+  // Per-client migrations live under supabase/migrations/clients/<slug>/.
+  // They only run on the VPS whose SEED_ORG_SLUG matches that directory —
+  // so Wylie's tables never create themselves on Nature Baby's VPS.
+  const clientSlug = process.env.SEED_ORG_SLUG ?? "";
+  const clientsDir = path.join(MIGRATIONS_DIR, "clients");
+  let clientEntries: { file: string; full: string }[] = [];
+  if (clientSlug) {
+    const clientMigrationsDir = path.join(clientsDir, clientSlug);
+    try {
+      const files = await readdir(clientMigrationsDir);
+      clientEntries = files
+        .filter((f) => f.endsWith(".sql"))
+        .sort()
+        .map((f) => ({
+          // Namespace the tracking key so two clients can both have an
+          // `0001_agents.sql` without colliding in rgaios_schema_migrations.
+          file: `clients/${clientSlug}/${f}`,
+          full: path.join(clientMigrationsDir, f),
+        }));
+      if (clientEntries.length > 0) {
+        console.log(
+          `[migrate] client "${clientSlug}": ${clientEntries.length} migration(s) queued`,
+        );
+      }
+    } catch {
+      // No client-specific directory — that's fine, nothing bespoke to run.
+    }
+  }
+
+  const entries = [...platformEntries, ...clientEntries];
 
   let appliedCount = 0;
-  for (const file of entries) {
+  for (const { file, full } of entries) {
     if (applied.has(file)) continue;
-    const full = path.join(MIGRATIONS_DIR, file);
     const sql = await readFile(full, "utf8");
     console.log(`[migrate] applying ${file}`);
     try {

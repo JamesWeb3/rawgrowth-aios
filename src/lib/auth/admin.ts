@@ -14,6 +14,7 @@ export type OrgContext = {
   homeOrgId: string | null;
   activeOrgId: string | null;
   activeOrgName: string | null;
+  activeOrgSlug: string | null;
   isImpersonating: boolean;
 };
 
@@ -47,13 +48,15 @@ export async function getOrgContext(): Promise<OrgContext | null> {
   }
 
   let activeOrgName: string | null = null;
+  let activeOrgSlug: string | null = null;
   if (activeOrgId) {
     const { data } = await supabaseAdmin()
       .from("rgaios_organizations")
-      .select("name")
+      .select("name, slug")
       .eq("id", activeOrgId)
       .maybeSingle();
     activeOrgName = data?.name ?? null;
+    activeOrgSlug = data?.slug ?? null;
   }
 
   return {
@@ -62,6 +65,7 @@ export async function getOrgContext(): Promise<OrgContext | null> {
     homeOrgId,
     activeOrgId,
     activeOrgName,
+    activeOrgSlug,
     isImpersonating,
   };
 }
