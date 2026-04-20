@@ -12,27 +12,30 @@ export async function GET() {
     Date.now() - 7 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const [agentsRes, failedRunsRes, approvalsRes, spendRes] = await Promise.all([
-    db
-      .from("rgaios_agents")
-      .select("id, status", { count: "exact" })
-      .eq("organization_id", orgId),
-    db
-      .from("rgaios_routine_runs")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId)
-      .eq("status", "failed")
-      .gte("created_at", sevenDaysAgo),
-    db
-      .from("rgaios_approvals")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId)
-      .eq("status", "pending"),
-    db
-      .from("rgaios_agents")
-      .select("spent_monthly_usd")
-      .eq("organization_id", orgId),
-  ]);
+  const [agentsRes, failedRunsRes, approvalsRes, completedRunsRes] =
+    await Promise.all([
+      db
+        .from("rgaios_agents")
+        .select("id, status", { count: "exact" })
+        .eq("organization_id", orgId),
+      db
+        .from("rgaios_routine_runs")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("status", "failed")
+        .gte("created_at", sevenDaysAgo),
+      db
+        .from("rgaios_approvals")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("status", "pending"),
+      db
+        .from("rgaios_routine_runs")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("status", "succeeded")
+        .gte("created_at", sevenDaysAgo),
+    ]);
 
   const agents = agentsRes.data ?? [];
   const totalAgents = agents.length;
@@ -41,17 +44,12 @@ export async function GET() {
   ).length;
   const activelyRunning = agents.filter((a) => a.status === "running").length;
 
-  const spendMonthUsd = (spendRes.data ?? []).reduce(
-    (sum, row) => sum + Number(row.spent_monthly_usd ?? 0),
-    0,
-  );
-
   return NextResponse.json({
     activeAgents: runningAgents,
     totalAgents,
     activelyRunning,
     openIssues: failedRunsRes.count ?? 0,
     pendingApprovals: approvalsRes.count ?? 0,
-    spendMonthUsd,
+    runsThisWeek: completedRunsRes.count ?? 0,
   });
 }

@@ -25,9 +25,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    # Not exposed to host in prod; uncomment for local psql:
-    # ports:
-    #   - "5432:5432"
+    # Bound to 127.0.0.1 only — reachable via SSH tunnel for pgAdmin/psql,
+    # NOT exposed to the public internet.
+    ports:
+      - "127.0.0.1:5432:5432"
 
   postgrest:
     image: postgrest/postgrest:v12.2.3

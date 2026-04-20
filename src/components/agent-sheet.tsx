@@ -15,7 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import {
   Sheet,
   SheetClose,
@@ -196,8 +195,8 @@ export function AgentSheet(props: Props) {
           </SheetTitle>
           <SheetDescription className="text-[13px] text-muted-foreground">
             {isEdit
-              ? "Update role, reporting line, runtime, or budget."
-              : "Every agent gets a role, a manager, a budget, and a runtime."}
+              ? "Update role, reporting line, runtime, or connectors."
+              : "Every agent gets a role, a manager, and a runtime."}
           </SheetDescription>
         </SheetHeader>
 
@@ -303,28 +302,6 @@ export function AgentSheet(props: Props) {
                 </Select>
               </Field>
             )}
-
-            <Field
-              label="Monthly budget"
-              hint="Agent stops when this limit is hit."
-            >
-              <div className="flex items-center gap-4">
-                <Slider
-                  min={50}
-                  max={5000}
-                  step={50}
-                  value={[form.budget]}
-                  onValueChange={(v) => {
-                    const budget = Array.isArray(v) ? (v[0] ?? form.budget) : v;
-                    setForm({ ...form, budget });
-                  }}
-                  className="flex-1"
-                />
-                <div className="min-w-21 rounded-md border border-border bg-input/40 px-3 py-1.5 text-right font-mono text-[13px] text-foreground">
-                  ${form.budget.toLocaleString()}
-                </div>
-              </div>
-            </Field>
 
             {isSelfHosted ? (
               <Field label="Connectors">

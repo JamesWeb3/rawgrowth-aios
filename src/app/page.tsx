@@ -9,7 +9,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 async function getPillarFlags() {
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId) {
-    return { marketing: true, sales: true, fulfilment: true, finance: true };
+    return { marketing: false, sales: false, fulfilment: false, finance: false };
   }
   const { data } = await supabaseAdmin()
     .from("rgaios_organizations")
@@ -17,10 +17,10 @@ async function getPillarFlags() {
     .eq("id", ctx.activeOrgId)
     .maybeSingle();
   return {
-    marketing: data?.marketing ?? true,
-    sales: data?.sales ?? true,
-    fulfilment: data?.fulfilment ?? true,
-    finance: data?.finance ?? true,
+    marketing: data?.marketing ?? false,
+    sales: data?.sales ?? false,
+    fulfilment: data?.fulfilment ?? false,
+    finance: data?.finance ?? false,
   };
 }
 
@@ -131,12 +131,45 @@ function PillarCard({
 
 export default async function DashboardPage() {
   const pillars = await getPillarFlags();
+  const anyPillarOn =
+    pillars.marketing || pillars.sales || pillars.fulfilment || pillars.finance;
   return (
     <PageShell
       title="Dashboard"
       description="Your AI company at a glance — goals, agents, tickets, spend."
     >
       <DashboardStats />
+
+      {!anyPillarOn && (
+        <Card className="border-border border-dashed bg-card/30">
+          <CardContent className="flex flex-col items-center gap-3 p-10 text-center">
+            <div className="flex size-11 items-center justify-center rounded-xl border border-border bg-card/60 text-muted-foreground">
+              <svg
+                className="size-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 3v18h18" />
+                <path d="M7 16l4-4 4 2 4-6" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-[14px] font-semibold text-foreground">
+                Dashboard analytics aren&apos;t configured yet
+              </h3>
+              <p className="mt-1 max-w-md text-[12.5px] leading-relaxed text-muted-foreground">
+                Charts for Marketing, Sales, Fulfilment, and Finance appear
+                here once we wire them to your data sources. Speak to the
+                team to configure the pillars that matter to your business.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Core business pillars — 2x2 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

@@ -143,10 +143,6 @@ function AgentCard({
   const role = roleMeta(agent.role);
   const Icon = roleIconMap[role.icon as RoleIconName] ?? Bot;
   const status = statusStyle[agent.status];
-  const pct =
-    agent.budgetMonthlyUsd > 0
-      ? Math.min(100, (agent.spentMonthlyUsd / agent.budgetMonthlyUsd) * 100)
-      : 0;
 
   return (
     <button
@@ -189,22 +185,10 @@ function AgentCard({
 
       <ConnectorsRow ids={Object.keys(agent.writePolicy ?? {})} />
 
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>
-            <span className="text-foreground">
-              ${agent.spentMonthlyUsd.toLocaleString()}
-            </span>{" "}
-            / ${agent.budgetMonthlyUsd.toLocaleString()}
-          </span>
-          <span className="font-mono">{initials(agent.name)}</span>
-        </div>
-        <div className="mt-1 h-0.75 overflow-hidden rounded-full bg-white/5">
-          <div
-            className="h-full rounded-full bg-primary/70"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+      <div className="mt-3 flex items-center justify-end">
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {initials(agent.name)}
+        </span>
       </div>
     </button>
   );
@@ -334,7 +318,6 @@ export function OrgChart() {
   );
 
   const tree = useMemo(() => buildTree(agents), [agents]);
-  const totalBudget = agents.reduce((sum, a) => sum + a.budgetMonthlyUsd, 0);
   const runningCount = agents.filter((a) => a.status === "running").length;
 
   if (!hasHydrated) {
@@ -369,13 +352,6 @@ export function OrgChart() {
               {runningCount}
             </span>{" "}
             running
-          </span>
-          <span className="text-border">•</span>
-          <span>
-            <span className="font-semibold text-foreground">
-              ${totalBudget.toLocaleString()}
-            </span>
-            /mo allocated
           </span>
         </div>
         <AgentSheet />

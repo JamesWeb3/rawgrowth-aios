@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   Repeat,
   Settings2,
-  Plug,
+  Radio,
   Plus,
   BookOpen,
   Activity,
@@ -73,7 +73,7 @@ const navSections: NavSection[] = [
   {
     label: "Settings",
     items: [
-      { label: "Integrations", href: "/integrations", icon: Plug },
+      { label: "Channels", href: "/channels", icon: Radio },
       { label: "MCP", href: "/settings/mcp", icon: KeyRound },
       { label: "Company", href: "/company", icon: Settings2 },
     ],

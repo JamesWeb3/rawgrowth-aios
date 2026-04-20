@@ -10,12 +10,8 @@ type Stats = {
   activelyRunning: number;
   openIssues: number;
   pendingApprovals: number;
-  spendMonthUsd: number;
+  runsThisWeek: number;
 };
-
-function formatUsd(n: number) {
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export function DashboardStats() {
   const { data } = useSWR<Stats>("/api/dashboard/stats", jsonFetcher, {
@@ -39,9 +35,9 @@ export function DashboardStats() {
       hint: data ? `${data.pendingApprovals} awaiting` : "loading…",
     },
     {
-      label: "Spend this month",
-      value: data ? formatUsd(data.spendMonthUsd) : "—",
-      hint: "across all agents",
+      label: "Runs this week",
+      value: data ? String(data.runsThisWeek) : "—",
+      hint: "completed (7d)",
     },
   ];
 

@@ -95,7 +95,7 @@ function emptyForm(): FormState {
     title: "",
     description: "",
     assigneeAgentId: NONE,
-    triggers: [newTrigger("integration")],
+    triggers: [newTrigger("manual")],
   };
 }
 
