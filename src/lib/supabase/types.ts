@@ -67,6 +67,39 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["rgaios_users"]["Row"]>;
         Relationships: [];
       };
+      rgaios_telegram_messages: {
+        Row: {
+          id: string;
+          organization_id: string;
+          connection_id: string;
+          chat_id: number;
+          sender_user_id: number | null;
+          sender_username: string | null;
+          sender_first_name: string | null;
+          message_id: number;
+          text: string | null;
+          received_at: string;
+          responded_at: string | null;
+          response_text: string | null;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          connection_id: string;
+          chat_id: number;
+          sender_user_id?: number | null;
+          sender_username?: string | null;
+          sender_first_name?: string | null;
+          message_id: number;
+          text?: string | null;
+          responded_at?: string | null;
+          response_text?: string | null;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["rgaios_telegram_messages"]["Row"]
+        >;
+        Relationships: [];
+      };
       rgaios_invites: {
         Row: {
           token_hash: string;

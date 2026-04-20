@@ -69,9 +69,27 @@ export async function POST(
   }
 
   const text = msg.text.trim();
+
+  // Log EVERY inbound message into the Telegram inbox so the client's
+  // Claude Code can read them via the telegram_inbox_read MCP tool.
+  // Slash commands also get logged (marked responded_at when the routine
+  // fires so they don't clutter the inbox).
+  await db.from("rgaios_telegram_messages").insert({
+    organization_id: organizationId,
+    connection_id: conn.id,
+    chat_id: msg.chat.id,
+    sender_user_id: msg.from?.id ?? null,
+    sender_username: msg.from?.username ?? null,
+    sender_first_name: msg.from?.first_name ?? null,
+    message_id: msg.message_id,
+    text,
+  });
+
   const command = text.split(/\s+/)[0] ?? "";
   if (!command.startsWith("/")) {
-    return NextResponse.json({ ok: true, skipped: "not a command" });
+    // Free-text message — stored in inbox above, no auto-response here.
+    // Client's Claude Code will respond via the MCP telegram_reply tool.
+    return NextResponse.json({ ok: true, inboxed: true });
   }
 
   // Strip any "@BotName" suffix Telegram may append in group chats.

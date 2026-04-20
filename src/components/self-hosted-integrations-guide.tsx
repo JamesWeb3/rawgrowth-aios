@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { Check, ArrowUpRight } from "lucide-react";
 import {
   SiGmail,
@@ -12,8 +13,12 @@ import {
   SiGithub,
   SiAsana,
   SiCanva,
+  SiTelegram,
 } from "react-icons/si";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { IntegrationConnectionSheet } from "@/components/integration-connection-sheet";
+import { useConnections } from "@/lib/connections/use-connections";
 
 /**
  * Self-hosted integrations view.
@@ -53,6 +58,13 @@ const COMMUNITY = [
 ];
 
 export function SelfHostedIntegrationsGuide() {
+  const { byIntegrationId } = useConnections();
+  const [telegramOpen, setTelegramOpen] = useState(false);
+  const telegramConn = byIntegrationId("telegram");
+  const telegramDisplay =
+    (telegramConn as { display_name?: string | null } | undefined)
+      ?.display_name ?? null;
+
   return (
     <div className="space-y-8">
       {/* Explainer */}
@@ -155,6 +167,61 @@ export function SelfHostedIntegrationsGuide() {
           ))}
         </div>
       </section>
+
+      {/* Telegram — special-cased because it's the only integration with server-side bot auth */}
+      <section>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h3 className="text-[13px] font-semibold text-foreground">
+            Talk to your agents via Telegram
+          </h3>
+        </div>
+        <p className="mb-3 text-[12px] text-muted-foreground">
+          Connect a Telegram bot and you can text your agents from your
+          phone. Messages are stored in Rawclaw; your Claude Code reads
+          them with the <code>telegram_inbox_read</code> tool and replies
+          with <code>telegram_reply</code>. Run the{" "}
+          <code>/rawgrowth-chat</code> slash command in Claude Code to
+          drain the inbox.
+        </p>
+        <Card className="border-border bg-card/50">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div
+              className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border"
+              style={{ backgroundColor: "#26A5E41a" }}
+            >
+              <SiTelegram className="size-6" style={{ color: "#26A5E4" }} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-foreground">
+                Telegram
+              </div>
+              <div className="text-[11.5px] text-muted-foreground">
+                {telegramConn
+                  ? `Connected${telegramDisplay ? ` · ${telegramDisplay}` : ""}`
+                  : "Not connected — click to set up a bot token"}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={telegramConn ? "secondary" : "default"}
+              className={
+                telegramConn
+                  ? "bg-white/5 text-foreground hover:bg-white/10"
+                  : "btn-shine bg-primary text-white hover:bg-primary/90"
+              }
+              onClick={() => setTelegramOpen(true)}
+            >
+              {telegramConn ? "Manage" : "Connect"}
+            </Button>
+          </CardContent>
+        </Card>
+      </section>
+
+      <IntegrationConnectionSheet
+        integrationId={telegramOpen ? "telegram" : null}
+        open={telegramOpen}
+        onOpenChange={setTelegramOpen}
+      />
 
       {/* Writing routines */}
       <Card className="border-border bg-card/30">

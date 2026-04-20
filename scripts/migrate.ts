@@ -62,6 +62,32 @@ async function reloadPostgrestSchema(client: Client) {
   await client.query(`notify pgrst, 'reload schema'`);
 }
 
+/**
+ * Hard invariant for self-hosted Rawclaw: one VPS holds exactly ONE org.
+ * Belt-and-suspenders — the seed + UI already produce a single-org state,
+ * but this trigger makes it impossible to corrupt even via direct SQL.
+ * Not applied to hosted Supabase (where multi-org is the whole point).
+ */
+async function enforceSingleOrg(client: Client) {
+  await client.query(`
+    create or replace function rgaios_enforce_single_org() returns trigger
+    language plpgsql as $$
+    begin
+      if (select count(*) from rgaios_organizations) > 1 then
+        raise exception
+          'Self-hosted Rawclaw supports exactly one organization per VPS. Provision a new VPS for additional clients.';
+      end if;
+      return new;
+    end;
+    $$;
+
+    drop trigger if exists rgaios_single_org_guard on rgaios_organizations;
+    create trigger rgaios_single_org_guard
+    after insert on rgaios_organizations
+    for each row execute function rgaios_enforce_single_org();
+  `);
+}
+
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -76,6 +102,8 @@ async function main() {
   if (SELF_HOSTED) {
     console.log("[migrate] bootstrapping self-hosted Postgres roles");
     await bootstrapSelfHostedRoles(client);
+    console.log("[migrate] enforcing single-org invariant");
+    await enforceSingleOrg(client);
   }
 
   await client.query(`

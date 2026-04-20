@@ -1,10 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { createClient, listClients } from "@/lib/clients/queries";
+import { isSelfHosted } from "@/lib/deploy-mode";
 
 export const runtime = "nodejs";
 
 async function requireAdmin() {
+  // Self-hosted VPSs are single-tenant. Multi-client admin endpoints
+  // are meaningless here and are hard-disabled.
+  if (isSelfHosted) return null;
   const ctx = await getOrgContext();
   if (!ctx?.isAdmin) {
     return null;

@@ -160,12 +160,13 @@ echo
 bold "════════════════════════════════════════════════════════════"
 bold "  Provision complete: ${ORG}"
 bold "════════════════════════════════════════════════════════════"
-echo "$LOG_OUTPUT" | sed -n '/First-boot bootstrap complete/,/────────────/p' || true
+echo "$LOG_OUTPUT" | sed -n '/Bootstrap complete/,/────────────/p' || true
 echo
-bold "  Sign-in URL:  https://${DOMAIN}/auth/signin"
 bold "════════════════════════════════════════════════════════════"
 echo
-echo "Next: on the client's laptop, run:"
+echo "  Email the client:"
+echo "    1. Their invite URL (they click → set password → signed in)"
+echo "    2. The one-liner below to connect their Claude Code:"
 echo
 echo "  curl -fsSL ${REPO%.git}/raw/main/scripts/cc-install.sh | \\"
 echo "    bash -s -- --token <MCP_TOKEN_FROM_ABOVE> --url https://${DOMAIN}"

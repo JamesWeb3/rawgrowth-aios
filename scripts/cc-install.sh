@@ -120,6 +120,21 @@ install_command "rawgrowth-help" \
 4. End with 2-3 example commands the user could give me right now.
 "
 
+install_command "rawgrowth-chat" \
+"Check my Telegram inbox via the rawgrowth MCP server and respond to every unanswered message.
+
+Steps:
+1. Call \`telegram_inbox_read\` to see unanswered messages.
+2. If none, say 'Inbox zero.' and stop.
+3. For each message, in order (oldest first):
+   a. Understand what the user is asking for.
+   b. Use the appropriate rawgrowth or native connector tools (Gmail, Slack, Drive, agents_*, routines_*, runs_*) to do the work.
+   c. Call \`telegram_reply\` with that message's id and a concise, helpful response.
+4. After all messages are answered, give me a one-line summary of what you handled.
+
+Keep replies terse — Telegram, not email.
+"
+
 echo
 bold "▸ Done."
 echo

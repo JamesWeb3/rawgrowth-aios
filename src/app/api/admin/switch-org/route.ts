@@ -3,8 +3,13 @@ import { cookies } from "next/headers";
 
 import { ADMIN_VIEW_COOKIE, getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { isSelfHosted } from "@/lib/deploy-mode";
 
 export async function POST(req: Request) {
+  // Single-tenant in self-hosted mode — nothing to switch to.
+  if (isSelfHosted) {
+    return NextResponse.json({ ok: false, error: "Not available" }, { status: 404 });
+  }
   const ctx = await getOrgContext();
   if (!ctx?.isAdmin) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
