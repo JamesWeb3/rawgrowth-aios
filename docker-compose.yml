@@ -62,6 +62,8 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      # Required when NextAuth runs behind a reverse proxy (our Caddy container).
+      AUTH_TRUST_HOST: "true"
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@rawgrowth.local}
       NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
