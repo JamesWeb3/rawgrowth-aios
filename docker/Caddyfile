@@ -10,3 +10,16 @@
 
   # Do not expose postgres or postgrest through the public origin.
 }
+
+# Internal-only PostgREST adapter: supabase-js hits /rest/v1/* which
+# bare PostgREST doesn't understand. Strip the prefix and forward.
+# Only reachable inside the docker network on port 3100.
+:3100 {
+  route /rest/v1/* {
+    uri strip_prefix /rest/v1
+    reverse_proxy postgrest:3000
+  }
+  route {
+    reverse_proxy postgrest:3000
+  }
+}

@@ -57,8 +57,8 @@ services:
     environment:
       DEPLOY_MODE: self_hosted
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rawgrowth}
-      # supabase-js talks to PostgREST, which we reach at http://postgrest:3000
-      NEXT_PUBLIC_SUPABASE_URL: http://postgrest:3000
+      # supabase-js expects /rest/v1/* paths — Caddy on :3100 strips that prefix and forwards to PostgREST.
+      NEXT_PUBLIC_SUPABASE_URL: http://caddy:3100
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
