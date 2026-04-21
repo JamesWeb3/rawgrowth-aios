@@ -33,6 +33,56 @@ export async function listSkillsForAgent(
 }
 
 /**
+ * Add one or more skills to an agent. Idempotent — existing rows are
+ * preserved; only the missing (agent_id, skill_id) pairs are inserted.
+ * Returns the list of skill ids that were newly added.
+ */
+export async function addSkillsToAgent(
+  organizationId: string,
+  agentId: string,
+  skillIds: string[],
+): Promise<string[]> {
+  if (skillIds.length === 0) return [];
+  const db = supabaseAdmin();
+
+  const { data: existingRows, error: readErr } = await db
+    .from("rgaios_agent_skills")
+    .select("skill_id")
+    .eq("organization_id", organizationId)
+    .eq("agent_id", agentId)
+    .in("skill_id", skillIds);
+  if (readErr) throw new Error(`addSkillsToAgent: ${readErr.message}`);
+
+  const existing = new Set((existingRows ?? []).map((r) => r.skill_id));
+  const toAdd = skillIds.filter((id) => !existing.has(id));
+  if (toAdd.length === 0) return [];
+
+  const rows = toAdd.map((skill_id) => ({
+    agent_id: agentId,
+    skill_id,
+    organization_id: organizationId,
+  }));
+  const { error } = await db.from("rgaios_agent_skills").insert(rows);
+  if (error) throw new Error(`addSkillsToAgent insert: ${error.message}`);
+  return toAdd;
+}
+
+/** Remove a single (agent_id, skill_id) pair. No-op if not present. */
+export async function removeSkillFromAgent(
+  organizationId: string,
+  agentId: string,
+  skillId: string,
+): Promise<void> {
+  const { error } = await supabaseAdmin()
+    .from("rgaios_agent_skills")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("agent_id", agentId)
+    .eq("skill_id", skillId);
+  if (error) throw new Error(`removeSkillFromAgent: ${error.message}`);
+}
+
+/**
  * Replace the full set of agents assigned to a given skill. Idempotent —
  * computes diff, deletes what's leaving, inserts what's joining.
  */
