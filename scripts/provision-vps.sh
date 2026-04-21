@@ -360,6 +360,7 @@ chown rawclaw:rawclaw /var/log/rawclaw-drain.log
 mkdir -p /opt/rawgrowth-tick
 cat > /opt/rawgrowth-tick/tick.mjs <<'JS'
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 
 const ENV_FILE = "/opt/rawgrowth/.env";
 const env = Object.fromEntries(
@@ -384,20 +385,44 @@ if (!url) {
   process.exit(0);
 }
 
+// Executor liveness: is rawclaw's claude CLI actually logged in right now?
+// If not, schedule-tick still runs (to sweep stale pendings) but doesn't
+// materialise new scheduled runs. This prevents pile-up during auth gaps.
+function isExecutorReady() {
+  try {
+    const out = execSync("sudo -iu rawclaw claude auth status 2>/dev/null", {
+      timeout: 5_000,
+    }).toString();
+    return /"loggedIn"\s*:\s*true/.test(out);
+  } catch {
+    return false;
+  }
+}
+
+const executorReady = isExecutorReady();
+
 try {
-  const res = await fetch(`${url}/api/cron/schedule-tick`, {
-    headers: secret ? { Authorization: `Bearer ${secret}` } : {},
-    signal: AbortSignal.timeout(15_000),
-  });
+  const res = await fetch(
+    `${url}/api/cron/schedule-tick?executor_ready=${executorReady ? 1 : 0}`,
+    {
+      headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
   if (!res.ok) {
     console.error(`tick: schedule-tick ${res.status}`);
     process.exit(0);
   }
   const body = await res.json();
   const fired = Array.isArray(body.fired) ? body.fired.length : 0;
+  const swept = Number(body.swept ?? 0);
   const pending = Number(body.pending_count ?? 0);
-  console.log(`tick ok fired=${fired} pending=${pending}`);
-  if (fired > 0 || pending > 0) {
+  console.log(
+    `tick ok executor=${executorReady ? "ready" : "offline"} fired=${fired} swept=${swept} pending=${pending}`,
+  );
+  // Only poke the drain daemon if the executor is alive AND there's
+  // something for it to do.
+  if (executorReady && (fired > 0 || pending > 0)) {
     await fetch("http://127.0.0.1:9876/triage", {
       method: "POST",
       signal: AbortSignal.timeout(1_000),

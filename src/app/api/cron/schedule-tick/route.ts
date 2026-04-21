@@ -21,6 +21,8 @@ export const maxDuration = 300;
  * `Bearer ${CRON_SECRET}`. Set CRON_SECRET in Vercel env; the scheduler
  * sends it automatically.
  */
+const STALE_PENDING_MS = 10 * 60 * 1000;
+
 export async function GET(req: NextRequest) {
   const expected = process.env.CRON_SECRET;
   if (expected) {
@@ -30,8 +32,48 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // The self-hosted tick tells us whether its local claude executor is
+  // actually alive. If not, we skip firing new schedule runs entirely so
+  // the queue doesn't pile up and slam the user when auth returns.
+  // (Hosted mode doesn't pass this; the executor is always available.)
+  const executorReady = req.nextUrl.searchParams.get("executor_ready") !== "0";
+
   const db = supabaseAdmin();
   const now = new Date();
+
+  // Always sweep pendings that have been sitting too long — regardless of
+  // executor state. This covers telegram-triggered runs that pile up while
+  // the executor is down, and leftovers from past outages.
+  const staleCutoff = new Date(now.getTime() - STALE_PENDING_MS).toISOString();
+  const { data: sweptRows } = await db
+    .from("rgaios_routine_runs")
+    .update({
+      status: "failed",
+      error: "executor offline — run aged out before claim",
+      completed_at: now.toISOString(),
+    })
+    .eq("status", "pending")
+    .lt("created_at", staleCutoff)
+    .select("id");
+  const sweptCount = sweptRows?.length ?? 0;
+
+  // If the local executor isn't ready, stop here. Don't materialise new
+  // schedule runs — they'd just join the backlog. Sweep still ran above.
+  if (!executorReady) {
+    const { count: pendingCount } = await db
+      .from("rgaios_routine_runs")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    return NextResponse.json({
+      ok: true,
+      ts: now.toISOString(),
+      executor_ready: false,
+      swept: sweptCount,
+      fired: [],
+      skipped: [],
+      pending_count: pendingCount ?? 0,
+    });
+  }
 
   const { data: triggers, error } = await db
     .from("rgaios_routine_triggers")
@@ -185,6 +227,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     ts: now.toISOString(),
+    executor_ready: true,
+    swept: sweptCount,
     fired,
     skipped,
     pending_count: pendingCount ?? 0,
