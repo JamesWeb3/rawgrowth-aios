@@ -5,8 +5,6 @@ import useSWR from "swr";
 import {
   Check,
   Copy,
-  Eye,
-  EyeOff,
   KeyRound,
   Plus,
   RefreshCw,
@@ -27,7 +25,6 @@ import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
 import { ClaudeConnectionCard } from "@/components/connections/claude-card";
 import { IntegrationConnectionSheet } from "@/components/integration-connection-sheet";
 import { CreateClientSheet } from "@/components/admin/create-client-sheet";
@@ -247,7 +244,6 @@ function McpCard() {
     "/api/org/me",
     jsonFetcher,
   );
-  const [showToken, setShowToken] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -346,46 +342,6 @@ function McpCard() {
               />
               Rotate token
             </button>
-          </div>
-
-          <div>
-            <Label className="text-[11px] font-medium text-muted-foreground">
-              MCP server URL
-            </Label>
-            <CopyableRow value={mcpUrl} />
-          </div>
-
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <Label className="text-[11px] font-medium text-muted-foreground">
-                Bearer token
-              </Label>
-              <button
-                type="button"
-                onClick={() => setShowToken((s) => !s)}
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {showToken ? (
-                  <>
-                    <EyeOff className="size-3" /> Hide
-                  </>
-                ) : (
-                  <>
-                    <Eye className="size-3" /> Show
-                  </>
-                )}
-              </button>
-            </div>
-            <CopyableRow
-              value={
-                org.mcp_token
-                  ? showToken
-                    ? org.mcp_token
-                    : `${org.mcp_token.slice(0, 12)}${"•".repeat(30)}`
-                  : "(no token — click Rotate to mint one)"
-              }
-              copyValue={org.mcp_token ?? undefined}
-            />
           </div>
 
           <div>
@@ -489,46 +445,7 @@ function AnalyticsCard({ item }: { item: AnalyticsSource }) {
   );
 }
 
-// ─── Copyable row + block (lifted from old McpView) ────────────
-
-function CopyableRow({
-  value,
-  copyValue,
-}: {
-  value: string;
-  copyValue?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const toCopy = copyValue ?? value;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(toCopy);
-      toast.success("Copied");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
-    }
-  };
-  return (
-    <div className="mt-1 flex items-center gap-1.5 rounded-md border border-border bg-background/40 px-2.5 py-1.5 font-mono text-[12px] text-foreground/85">
-      <code className="flex-1 truncate">{value}</code>
-      {toCopy && (
-        <button
-          type="button"
-          onClick={copy}
-          className="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          {copied ? (
-            <Check className="size-3.5" />
-          ) : (
-            <Copy className="size-3.5" />
-          )}
-        </button>
-      )}
-    </div>
-  );
-}
+// ─── Copyable code block ───────────────────────────────────────
 
 function CopyBlock({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { currentOrganizationId } from "@/lib/supabase/constants";
+import { tryDecryptSecret } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -43,7 +44,7 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    token: meta.bot_token ?? null,
+    token: tryDecryptSecret(meta.bot_token) ?? null,
     webhook_secret: meta.webhook_secret ?? null,
   });
 }

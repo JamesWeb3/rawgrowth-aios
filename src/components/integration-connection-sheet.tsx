@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import useSWR from "swr";
 import {
   ArrowUpRight,
   Bot,
@@ -33,6 +34,52 @@ import {
   useConnections,
   type ConnectionRow,
 } from "@/lib/connections/use-connections";
+import { jsonFetcher } from "@/lib/swr";
+
+type TelegramStats = {
+  connected: boolean;
+  bot_id?: number | null;
+  bot_username?: string | null;
+  last_inbound_at?: string | null;
+  last_outbound_at?: string | null;
+  messages_today?: number;
+  pending?: number;
+};
+
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
+
+function Stat({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-[1px] text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={
+          "mt-0.5 font-mono text-[13px] " +
+          (highlight ? "text-amber-400" : "text-foreground")
+        }
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
 
 type Props = {
   integrationId: string | null;
@@ -402,14 +449,22 @@ function TelegramConnectedCard({
     }
   };
 
-  const maskedFromDisplay = (() => {
-    // Telegram tokens look like "1234567890:AAHxxxxxxxx". We stored display_name
-    // as the bot's @username, not the token. Best we can do without revealing
-    // is a fixed mask; once revealed we show real masked (last 4).
-    if (revealed) {
-      return `${"•".repeat(12)}${revealed.slice(-4)}`;
-    }
-    return "•".repeat(20);
+  const { data: stats } = useSWR<TelegramStats>(
+    "/api/connections/telegram/stats",
+    jsonFetcher,
+    { refreshInterval: 15_000 },
+  );
+
+  const botId = stats?.bot_id ?? null;
+
+  // Token format is "{bot_id}:{secret}". The bot_id half is public-ish
+  // (anyone who messages the bot sees it), so showing it is safe and
+  // gives the operator a recognisable preview without revealing the
+  // secret half. Once revealed, show the full token.
+  const tokenDisplay = (() => {
+    if (revealed) return revealed;
+    if (botId) return `${botId}:${"•".repeat(20)}`;
+    return "•".repeat(28);
   })();
 
   return (
@@ -453,17 +508,35 @@ function TelegramConnectedCard({
         )}
       </div>
 
+      {/* Activity panel — proves the bot is actually working */}
+      {stats && stats.connected && (
+        <div className="rounded-xl border border-border bg-card/30 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Webhook className="size-4 text-primary" />
+            <div className="text-[12.5px] font-semibold text-foreground">
+              Recent activity
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-[11.5px]">
+            <Stat label="Last message in" value={relativeTime(stats.last_inbound_at)} />
+            <Stat label="Last reply out" value={relativeTime(stats.last_outbound_at)} />
+            <Stat label="Today" value={`${stats.messages_today ?? 0}`} />
+            <Stat
+              label="Pending replies"
+              value={`${stats.pending ?? 0}`}
+              highlight={(stats.pending ?? 0) > 0}
+            />
+          </div>
+        </div>
+      )}
+
       <div>
         <Label className="text-[12px] font-medium text-foreground">
           Bot token
         </Label>
         <div className="mt-1.5 flex items-stretch gap-2">
           <div className="flex-1 rounded-md border border-border bg-input/40 px-3 py-2 font-mono text-[12.5px] text-foreground/80">
-            {revealed ? (
-              <span className="break-all">{revealed}</span>
-            ) : (
-              <span>{maskedFromDisplay}</span>
-            )}
+            <span className="break-all">{tokenDisplay}</span>
           </div>
           <Button
             variant="outline"

@@ -1,6 +1,7 @@
 import { registerTool, text, textError } from "../registry";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { sendMessage } from "@/lib/telegram/client";
+import { tryDecryptSecret } from "@/lib/crypto";
 
 /**
  * MCP tools for conversational Telegram. The client's Claude Code uses
@@ -135,7 +136,9 @@ registerTool({
         "Telegram isn't connected for this organization. Connect a bot in the Rawclaw UI first.",
       );
     }
-    const botToken = (conn.metadata as { bot_token?: string } | null)?.bot_token;
+    const botToken = tryDecryptSecret(
+      (conn.metadata as { bot_token?: string } | null)?.bot_token,
+    );
     if (!botToken) {
       return textError("Telegram bot token missing on the connection row.");
     }

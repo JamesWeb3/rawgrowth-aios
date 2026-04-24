@@ -71,6 +71,22 @@ export function sendMessage(
   });
 }
 
+/**
+ * Show a "typing…" bubble to the user. Auto-clears after 5s or when the
+ * next message is sent. Use it the moment a webhook arrives so the user
+ * gets immediate visual feedback while the agent thinks.
+ */
+export function sendChatAction(
+  token: string,
+  chatId: number | string,
+  action: "typing" | "upload_photo" = "typing",
+) {
+  return call<true>(token, "sendChatAction", {
+    chat_id: chatId,
+    action,
+  });
+}
+
 // Shape of the inbound webhook payload (only fields we care about).
 export type TgUpdate = {
   update_id: number;

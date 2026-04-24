@@ -3,6 +3,7 @@ import { nango } from "@/lib/nango/server";
 import { deleteConnection, getConnection } from "@/lib/connections/queries";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { deleteWebhook as deleteTelegramWebhook } from "@/lib/telegram/client";
+import { tryDecryptSecret } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -24,8 +25,9 @@ export async function DELETE(
     }
 
     if (providerConfigKey === "telegram") {
-      const token =
-        (existing.metadata as { bot_token?: string } | null)?.bot_token;
+      const token = tryDecryptSecret(
+        (existing.metadata as { bot_token?: string } | null)?.bot_token,
+      );
       if (token) {
         try {
           await deleteTelegramWebhook(token);

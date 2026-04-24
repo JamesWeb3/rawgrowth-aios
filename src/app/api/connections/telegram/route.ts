@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { upsertConnection } from "@/lib/connections/queries";
 import { getMe, setWebhook } from "@/lib/telegram/client";
+import { encryptSecret } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 
@@ -45,7 +46,9 @@ export async function POST(req: NextRequest) {
       displayName: me.username ? `@${me.username}` : me.first_name,
       metadata: {
         bot_id: me.id,
-        bot_token: token, // MVP: plaintext. Production: envelope encryption.
+        // Encrypted at rest with AES-256-GCM (key derived from JWT_SECRET).
+        // Decrypt with `tryDecryptSecret` from @/lib/crypto when reading.
+        bot_token: encryptSecret(token),
         webhook_secret: webhookSecret,
       },
     });

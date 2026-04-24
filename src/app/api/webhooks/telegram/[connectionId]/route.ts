@@ -1,9 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { sendMessage, type TgUpdate } from "@/lib/telegram/client";
+import {
+  sendChatAction,
+  sendMessage,
+  type TgUpdate,
+} from "@/lib/telegram/client";
 import { dispatchRun } from "@/lib/runs/dispatch";
 import { isHosted } from "@/lib/deploy-mode";
+import { tryDecryptSecret } from "@/lib/crypto";
+import { chatReply } from "@/lib/agent/chat";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -48,7 +54,7 @@ export async function POST(
   if (!meta.webhook_secret || headerSecret !== meta.webhook_secret) {
     return NextResponse.json({ error: "bad signature" }, { status: 401 });
   }
-  const token = meta.bot_token;
+  const token = tryDecryptSecret(meta.bot_token);
   if (!token) {
     return NextResponse.json({ error: "bot token missing" }, { status: 500 });
   }
@@ -87,15 +93,82 @@ export async function POST(
 
   const command = text.split(/\s+/)[0] ?? "";
   if (!command.startsWith("/")) {
-    // Free-text message — ping the rawclaw-drain server on the host so
-    // Claude Code spawns and responds. Fire-and-forget: never block the
-    // webhook response (Telegram retries aggressively on non-2xx).
-    const drainUrl = process.env.RAWCLAW_DRAIN_URL;
-    if (drainUrl) {
-      fetch(drainUrl, { method: "POST", signal: AbortSignal.timeout(500) })
-        .catch(() => { /* best-effort */ });
-    }
-    return NextResponse.json({ ok: true, inboxed: true });
+    // Free-text message → instant chat path.
+    // Hot path: direct Anthropic /v1/messages call from inside the
+    // Next.js process, with this org's MCP server wired in. Skips the
+    // 5-10s claude CLI cold-spawn and gives a real chatbot feel.
+    //
+    // We respond 200 to Telegram immediately and do the LLM call in
+    // after() so Telegram never retries on a slow upstream.
+    after(async () => {
+      // Show "typing…" the moment we start. Auto-clears in 5s or when
+      // the next message lands — whichever happens first.
+      sendChatAction(token, msg.chat.id, "typing").catch(() => {});
+
+      // Resolve the org's public-facing URL for MCP wiring.
+      const publicAppUrl =
+        process.env.NEXT_PUBLIC_APP_URL ??
+        process.env.NEXTAUTH_URL ??
+        new URL(req.url).origin;
+
+      // Look up org name (cosmetic, used in system prompt).
+      const { data: orgRow } = await supabaseAdmin()
+        .from("rgaios_organizations")
+        .select("name")
+        .eq("id", organizationId)
+        .maybeSingle();
+
+      const result = await chatReply({
+        organizationId,
+        organizationName: orgRow?.name ?? null,
+        chatId: msg.chat.id,
+        userMessage: text,
+        publicAppUrl: publicAppUrl.replace(/\/$/, ""),
+      });
+
+      if (!result.ok) {
+        // Fallback: if the dashboard doesn't yet have a Claude Max token
+        // (e.g. legacy clients still using a manually-written .credentials.json
+        // or `claude auth login`), keep the slow path alive — ping the drain
+        // daemon so the local `claude` CLI handles the reply. Better to be
+        // slow than silent.
+        const drainUrl = process.env.RAWCLAW_DRAIN_URL;
+        if (drainUrl) {
+          fetch(drainUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(500),
+          }).catch(() => {});
+          return;
+        }
+        await sendMessage(
+          token,
+          msg.chat.id,
+          `⚠️ ${result.error}`,
+        ).catch(() => {});
+        return;
+      }
+
+      try {
+        await sendMessage(token, msg.chat.id, result.reply);
+      } catch {
+        /* swallow — Telegram delivery failure is logged elsewhere */
+      }
+
+      // Mark the inbound row as responded so the diagnostics panel +
+      // pending-counts stay accurate. We track on the LATEST inbound
+      // for this chat id since we haven't piped the row id through.
+      await supabaseAdmin()
+        .from("rgaios_telegram_messages")
+        .update({
+          responded_at: new Date().toISOString(),
+          response_text: result.reply,
+        })
+        .eq("organization_id", organizationId)
+        .eq("chat_id", msg.chat.id)
+        .eq("message_id", msg.message_id);
+    });
+
+    return NextResponse.json({ ok: true, inboxed: true, path: "instant" });
   }
 
   // Strip any "@BotName" suffix Telegram may append in group chats.
