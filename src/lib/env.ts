@@ -2,24 +2,15 @@
  * Runtime env-var validation. Fails fast at server boot when a required
  * variable is missing so we get a loud error instead of a mysterious 500
  * from some route down the line.
- *
- * Usage: import the pre-computed `env` object anywhere in the app. It
- * throws synchronously on first access if a hard requirement is missing.
- * Optional vars simply return undefined.
- *
- * The check runs once per process (module cache) so it's cheap.
  */
 
-type RequiredFor = "hosted" | "self_hosted" | "v3" | "all";
+import { DEPLOY_MODE, type DeployMode } from "./deploy-mode";
 
-const DEPLOY_MODE =
-  (process.env.DEPLOY_MODE as "hosted" | "self_hosted" | "v3" | undefined) ??
-  "hosted";
+type RequiredFor = DeployMode | "all";
 
 type Spec = {
   key: string;
   required: RequiredFor;
-  /** Soft-required: missing just emits a warn (used for optional services). */
   soft?: boolean;
 };
 
@@ -31,12 +22,9 @@ const SPECS: Spec[] = [
   { key: "NEXTAUTH_SECRET", required: "all" },
   { key: "JWT_SECRET", required: "all" },
 
-  // v3-specific: onboarding chat + embeddings.
   { key: "OPENAI_API_KEY", required: "v3", soft: true },
-  // Path B runtime + voice Path A. Soft because the default is CLI.
   { key: "ANTHROPIC_API_KEY", required: "v3", soft: true },
 
-  // Optional integrations.
   { key: "NANGO_SECRET_KEY", required: "all", soft: true },
   { key: "RESEND_API_KEY", required: "all", soft: true },
   { key: "CRON_SECRET", required: "all", soft: true },
@@ -76,7 +64,6 @@ if (softMissing.length > 0 && process.env.NODE_ENV !== "test") {
 }
 
 export const env = {
-  DEPLOY_MODE,
   DATABASE_URL: process.env.DATABASE_URL,
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
