@@ -117,10 +117,19 @@ export function unpackState(state: string): UnpackedState | null {
  * The actual token exchange. THIS is the call that has to happen from
  * the VPS for the token to be usable from the VPS. The Anthropic-issued
  * code is pasted by the user, but we exchange it here, server-side.
+ *
+ * Anthropic's token endpoint quirks (verified via probe — 2026-04-24):
+ *   • Wants application/json, NOT form-urlencoded
+ *   • Wants the same `state` param sent on /authorize, in the body
+ *     (this is non-standard OAuth but Anthropic enforces it)
+ *
+ * Pasted codes from platform.claude.com/oauth/code/callback look like
+ * `<authorization-code>#<state>` — we split on `#` and use the first half.
  */
 export async function exchangeCodeForToken(input: {
   code: string;
   verifier: string;
+  state: string;
 }): Promise<
   | {
       ok: true;
@@ -130,27 +139,22 @@ export async function exchangeCodeForToken(input: {
     }
   | { ok: false; error: string; status?: number }
 > {
-  // Anthropic's hosted callback shows the code as `<authorization>#<state>`.
-  // The `#` is a session-state marker we ignore for the exchange — only the
-  // part before it is the OAuth code.
   const cleanCode = input.code.split("#")[0]?.trim() ?? "";
   if (!cleanCode) return { ok: false, error: "code is empty" };
-
-  // OAuth 2.0 token endpoints expect application/x-www-form-urlencoded.
-  const form = new URLSearchParams({
-    grant_type: "authorization_code",
-    code: cleanCode,
-    redirect_uri: CLAUDE_OAUTH_REDIRECT_URI,
-    client_id: CLAUDE_OAUTH_CLIENT_ID,
-    code_verifier: input.verifier,
-  });
 
   let res: Response;
   try {
     res = await fetch(CLAUDE_OAUTH_TOKEN_URL, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code: cleanCode,
+        redirect_uri: CLAUDE_OAUTH_REDIRECT_URI,
+        client_id: CLAUDE_OAUTH_CLIENT_ID,
+        code_verifier: input.verifier,
+        state: input.state,
+      }),
       signal: AbortSignal.timeout(15_000),
     });
   } catch (err) {

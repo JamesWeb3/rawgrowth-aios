@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
     const exchange = await exchangeCodeForToken({
       code,
       verifier: unpacked.verifier,
+      state, // Anthropic's token endpoint requires the same state we sent on /authorize
     });
     if (!exchange.ok) {
       return NextResponse.json(
