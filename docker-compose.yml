@@ -67,6 +67,11 @@ services:
       # supabase-js expects /rest/v1/* paths — Caddy on :3100 strips that prefix and forwards to PostgREST.
       NEXT_PUBLIC_SUPABASE_URL: http://caddy:3100
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      # Used for app-level secret-at-rest encryption (lib/crypto.ts) AND
+      # for entrypoint.sh to mint SUPABASE_SERVICE_ROLE_KEY when missing.
+      JWT_SECRET: ${JWT_SECRET}
+      # Bearer required by /api/cron/* endpoints (schedule-tick, claude-token).
+      CRON_SECRET: ${CRON_SECRET:-}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       # Required when NextAuth runs behind a reverse proxy (our Caddy container).
