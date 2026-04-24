@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
+  editMessageText,
   sendChatAction,
   sendMessage,
   type TgUpdate,
@@ -9,7 +10,86 @@ import {
 import { dispatchRun } from "@/lib/runs/dispatch";
 import { isHosted } from "@/lib/deploy-mode";
 import { tryDecryptSecret } from "@/lib/crypto";
-import { chatReply } from "@/lib/agent/chat";
+import { chatReply, CHAT_HANDOFF_SENTINEL_PREFIX } from "@/lib/agent/chat";
+
+/**
+ * Periodically refresh a placeholder Telegram message with elapsed-time
+ * progress while the drain daemon is grinding (could take 30-120s for
+ * tool-heavy work). Stops when responded_at fills in OR maxMs elapses.
+ */
+function startProgressUpdates(opts: {
+  token: string;
+  chatId: number;
+  messageId: number;
+  organizationId: string;
+  acknowledgement: string;
+  intervalMs?: number;
+  maxMs?: number;
+}) {
+  const intervalMs = opts.intervalMs ?? 15_000;
+  const maxMs = opts.maxMs ?? 5 * 60_000;
+  const startedAt = Date.now();
+
+  const tick = async () => {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+
+    // Done if drain has posted its real reply (responded_at filled in).
+    const { data } = await supabaseAdmin()
+      .from("rgaios_telegram_messages")
+      .select("responded_at")
+      .eq("organization_id", opts.organizationId)
+      .eq("chat_id", opts.chatId)
+      .order("received_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const replied = (data as { responded_at?: string | null } | null)
+      ?.responded_at;
+
+    if (replied) {
+      // Drain has replied as a new message. Replace the placeholder
+      // with a tidy "✓ done" so the chat scrollback doesn't have a
+      // dangling status bubble.
+      editMessageText(
+        opts.token,
+        opts.chatId,
+        opts.messageId,
+        `✓ ${opts.acknowledgement}`,
+      ).catch(() => {});
+      return;
+    }
+
+    if (Date.now() - startedAt > maxMs) {
+      editMessageText(
+        opts.token,
+        opts.chatId,
+        opts.messageId,
+        `⌛ ${opts.acknowledgement}\nThis is taking longer than expected — I'll keep working in the background.`,
+      ).catch(() => {});
+      return;
+    }
+
+    const elapsedStr =
+      elapsed < 60
+        ? `${elapsed}s`
+        : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+    await editMessageText(
+      opts.token,
+      opts.chatId,
+      opts.messageId,
+      `🔧 ${opts.acknowledgement}\n_${elapsedStr} elapsed…_`,
+    ).catch(() => {});
+
+    // Schedule the next tick.
+    setTimeout(() => {
+      void tick();
+    }, intervalMs);
+  };
+
+  // First tick fires after intervalMs (let the initial placeholder breathe).
+  setTimeout(() => {
+    void tick();
+  }, intervalMs);
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -101,17 +181,25 @@ export async function POST(
     // We respond 200 to Telegram immediately and do the LLM call in
     // after() so Telegram never retries on a slow upstream.
     after(async () => {
-      // Show "typing…" the moment we start. Auto-clears in 5s or when
-      // the next message lands — whichever happens first.
+      // Header "typing…" indicator (auto-clears in 5s).
       sendChatAction(token, msg.chat.id, "typing").catch(() => {});
 
-      // Resolve the org's public-facing URL for MCP wiring.
+      // Placeholder bubble — an actual message the user sees appear in
+      // the conversation instantly. We'll editMessageText it when the
+      // real reply is ready, so the "…" morphs into the final answer.
+      let placeholderId: number | null = null;
+      try {
+        const sent = await sendMessage(token, msg.chat.id, "…");
+        placeholderId = sent.message_id;
+      } catch {
+        placeholderId = null;
+      }
+
       const publicAppUrl =
         process.env.NEXT_PUBLIC_APP_URL ??
         process.env.NEXTAUTH_URL ??
         new URL(req.url).origin;
 
-      // Look up org name (cosmetic, used in system prompt).
       const { data: orgRow } = await supabaseAdmin()
         .from("rgaios_organizations")
         .select("name")
@@ -127,36 +215,95 @@ export async function POST(
       });
 
       if (!result.ok) {
-        // Fallback: if the dashboard doesn't yet have a Claude Max token
-        // (e.g. legacy clients still using a manually-written .credentials.json
-        // or `claude auth login`), keep the slow path alive — ping the drain
-        // daemon so the local `claude` CLI handles the reply. Better to be
-        // slow than silent.
+        // Edit the placeholder into an error breadcrumb only if we
+        // aren't falling back to the drain daemon (which will post its
+        // own reply in a moment).
         const drainUrl = process.env.RAWCLAW_DRAIN_URL;
         if (drainUrl) {
+          // Placeholder stays visible briefly, then the drain-path reply
+          // will be sent as a NEW message. Clean up the placeholder so
+          // the chat doesn't end up with a dangling "…".
+          if (placeholderId !== null) {
+            editMessageText(token, msg.chat.id, placeholderId, "💭 thinking…").catch(
+              () => {},
+            );
+          }
           fetch(drainUrl, {
             method: "POST",
             signal: AbortSignal.timeout(500),
           }).catch(() => {});
           return;
         }
-        await sendMessage(
-          token,
-          msg.chat.id,
-          `⚠️ ${result.error}`,
-        ).catch(() => {});
+        if (placeholderId !== null) {
+          await editMessageText(
+            token,
+            msg.chat.id,
+            placeholderId,
+            `⚠️ ${result.error}`,
+          ).catch(() => {});
+        } else {
+          await sendMessage(token, msg.chat.id, `⚠️ ${result.error}`).catch(
+            () => {},
+          );
+        }
         return;
       }
 
-      try {
-        await sendMessage(token, msg.chat.id, result.reply);
-      } catch {
-        /* swallow — Telegram delivery failure is logged elsewhere */
+      // Tool-handoff sentinel: chatReply detected a request that needs
+      // MCP tools (which it doesn't have access to). Acknowledge in the
+      // placeholder, fire the drain daemon, and keep the user informed
+      // with periodic progress updates while drain grinds.
+      if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
+        const acknowledgement = result.reply
+          .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
+          .replace(/^\s*[—-]\s*/, "")
+          .trim() || "Working on it";
+
+        if (placeholderId !== null) {
+          await editMessageText(
+            token,
+            msg.chat.id,
+            placeholderId,
+            `🔧 ${acknowledgement}`,
+          ).catch(() => {});
+        } else {
+          await sendMessage(token, msg.chat.id, `🔧 ${acknowledgement}`).catch(
+            () => {},
+          );
+        }
+
+        const drainUrl = process.env.RAWCLAW_DRAIN_URL;
+        if (drainUrl) {
+          fetch(drainUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(500),
+          }).catch(() => {});
+
+          if (placeholderId !== null) {
+            startProgressUpdates({
+              token,
+              chatId: msg.chat.id,
+              messageId: placeholderId,
+              organizationId,
+              acknowledgement,
+            });
+          }
+        }
+        // Don't mark responded — drain will do that when it finishes.
+        return;
       }
 
-      // Mark the inbound row as responded so the diagnostics panel +
-      // pending-counts stay accurate. We track on the LATEST inbound
-      // for this chat id since we haven't piped the row id through.
+      // Plain chat reply — swap the placeholder for the real text.
+      try {
+        if (placeholderId !== null) {
+          await editMessageText(token, msg.chat.id, placeholderId, result.reply);
+        } else {
+          await sendMessage(token, msg.chat.id, result.reply);
+        }
+      } catch {
+        /* Telegram delivery failure — logged elsewhere */
+      }
+
       await supabaseAdmin()
         .from("rgaios_telegram_messages")
         .update({
@@ -210,6 +357,14 @@ export async function POST(
     after(async () => {
       sendChatAction(token, msg.chat.id, "typing").catch(() => {});
 
+      let placeholderId: number | null = null;
+      try {
+        const sent = await sendMessage(token, msg.chat.id, "…");
+        placeholderId = sent.message_id;
+      } catch {
+        placeholderId = null;
+      }
+
       const publicAppUrl = (
         process.env.NEXT_PUBLIC_APP_URL ??
         process.env.NEXTAUTH_URL ??
@@ -233,19 +388,85 @@ export async function POST(
       if (!result.ok) {
         const drainUrl = process.env.RAWCLAW_DRAIN_URL;
         if (drainUrl) {
+          if (placeholderId !== null) {
+            editMessageText(
+              token,
+              msg.chat.id,
+              placeholderId,
+              "💭 thinking…",
+            ).catch(() => {});
+          }
           fetch(drainUrl, {
             method: "POST",
             signal: AbortSignal.timeout(500),
           }).catch(() => {});
           return;
         }
-        await sendMessage(token, msg.chat.id, `⚠️ ${result.error}`).catch(
-          () => {},
-        );
+        if (placeholderId !== null) {
+          await editMessageText(
+            token,
+            msg.chat.id,
+            placeholderId,
+            `⚠️ ${result.error}`,
+          ).catch(() => {});
+        } else {
+          await sendMessage(token, msg.chat.id, `⚠️ ${result.error}`).catch(
+            () => {},
+          );
+        }
         return;
       }
 
-      await sendMessage(token, msg.chat.id, result.reply).catch(() => {});
+      // Tool-handoff sentinel (same as free-text branch).
+      if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
+        const acknowledgement = result.reply
+          .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
+          .replace(/^\s*[—-]\s*/, "")
+          .trim() || "Working on it";
+
+        if (placeholderId !== null) {
+          await editMessageText(
+            token,
+            msg.chat.id,
+            placeholderId,
+            `🔧 ${acknowledgement}`,
+          ).catch(() => {});
+        } else {
+          await sendMessage(token, msg.chat.id, `🔧 ${acknowledgement}`).catch(
+            () => {},
+          );
+        }
+
+        const drainUrl = process.env.RAWCLAW_DRAIN_URL;
+        if (drainUrl) {
+          fetch(drainUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(500),
+          }).catch(() => {});
+
+          if (placeholderId !== null) {
+            startProgressUpdates({
+              token,
+              chatId: msg.chat.id,
+              messageId: placeholderId,
+              organizationId,
+              acknowledgement,
+            });
+          }
+        }
+        return;
+      }
+
+      try {
+        if (placeholderId !== null) {
+          await editMessageText(token, msg.chat.id, placeholderId, result.reply);
+        } else {
+          await sendMessage(token, msg.chat.id, result.reply);
+        }
+      } catch {
+        /* telegram delivery failure logged elsewhere */
+      }
+
       await supabaseAdmin()
         .from("rgaios_telegram_messages")
         .update({

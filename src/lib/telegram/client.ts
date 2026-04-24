@@ -59,12 +59,20 @@ export function deleteWebhook(token: string) {
   return call<true>(token, "deleteWebhook");
 }
 
+/** The subset of the Telegram Message object we actually use. */
+export type TgSentMessage = {
+  message_id: number;
+  chat: { id: number };
+  date: number;
+  text?: string;
+};
+
 export function sendMessage(
   token: string,
   chatId: number | string,
   text: string,
 ) {
-  return call<unknown>(token, "sendMessage", {
+  return call<TgSentMessage>(token, "sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "Markdown",
@@ -72,9 +80,45 @@ export function sendMessage(
 }
 
 /**
- * Show a "typing…" bubble to the user. Auto-clears after 5s or when the
- * next message is sent. Use it the moment a webhook arrives so the user
- * gets immediate visual feedback while the agent thinks.
+ * Replace the contents of a message we previously sent. Use this to turn
+ * a placeholder ("…") into the real agent reply once it arrives — Telegram
+ * animates the swap, so from the user's side it looks like a speech bubble
+ * that was thinking and then finished.
+ *
+ * Retries without parse_mode if Markdown validation fails (common when the
+ * model emits stray asterisks or underscores).
+ */
+export async function editMessageText(
+  token: string,
+  chatId: number | string,
+  messageId: number,
+  text: string,
+) {
+  try {
+    return await call<TgSentMessage>(token, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (/parse|markdown|entities/i.test(msg)) {
+      return await call<TgSentMessage>(token, "editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+      });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Show a "typing…" bubble in the chat HEADER (not inline). Auto-clears
+ * after 5s or when the next message is sent. Use it for instant feedback
+ * while the agent thinks — pairs well with the placeholder-then-edit
+ * pattern in the webhook handler.
  */
 export function sendChatAction(
   token: string,

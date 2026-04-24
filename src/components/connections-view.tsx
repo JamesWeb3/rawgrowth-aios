@@ -134,48 +134,11 @@ export function ConnectionsView() {
           subtitle="Where your agents listen for inbound messages from the outside world."
         />
 
-        <Card className="mb-3 border-border bg-card/50">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div
-              className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border"
-              style={{ backgroundColor: "#26A5E41a" }}
-            >
-              <SiTelegram className="size-6" style={{ color: "#26A5E4" }} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-foreground">
-                  Telegram
-                </span>
-                {telegramConn && (
-                  <Badge
-                    variant="secondary"
-                    className="bg-primary/15 text-[10px] text-primary"
-                  >
-                    Connected
-                  </Badge>
-                )}
-              </div>
-              <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                {telegramConn
-                  ? `Active${telegramDisplay ? ` · ${telegramDisplay}` : ""}`
-                  : "Not connected — click to set up a bot token"}
-              </div>
-            </div>
-            <Button
-              size="sm"
-              variant={telegramConn ? "secondary" : "default"}
-              className={
-                telegramConn
-                  ? "bg-white/5 text-foreground hover:bg-white/10"
-                  : "btn-shine bg-primary text-white hover:bg-primary/90"
-              }
-              onClick={() => setTelegramOpen(true)}
-            >
-              {telegramConn ? "Manage" : "Connect"}
-            </Button>
-          </CardContent>
-        </Card>
+        <TelegramCard
+          connected={Boolean(telegramConn)}
+          displayName={telegramDisplay}
+          onOpen={() => setTelegramOpen(true)}
+        />
 
         <div className="grid gap-3 sm:grid-cols-2">
           {COMING_SOON_MESSAGING.map((m) => (
@@ -370,6 +333,103 @@ function McpCard() {
         />
       )}
     </>
+  );
+}
+
+// ─── Telegram card ─────────────────────────────────────────────
+
+type TelegramStats = {
+  connected: boolean;
+  bot_id?: number | null;
+  bot_username?: string | null;
+  last_inbound_at?: string | null;
+  messages_today?: number;
+};
+
+function TelegramCard({
+  connected,
+  displayName,
+  onOpen,
+}: {
+  connected: boolean;
+  displayName: string | null;
+  onOpen: () => void;
+}) {
+  const { data: stats } = useSWR<TelegramStats>(
+    connected ? "/api/connections/telegram/stats" : null,
+    jsonFetcher,
+    { refreshInterval: 30_000 },
+  );
+
+  const botId = stats?.bot_id ?? null;
+  const preview = botId ? `${botId}:${"•".repeat(20)}` : null;
+
+  return (
+    <Card className="mb-3 border-border bg-card/50">
+      <CardContent className="flex items-center gap-4 p-4">
+        <div
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border"
+          style={{ backgroundColor: "#26A5E41a" }}
+        >
+          <SiTelegram className="size-6" style={{ color: "#26A5E4" }} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold text-foreground">
+              Telegram
+            </span>
+            {connected && (
+              <Badge
+                variant="secondary"
+                className="bg-primary/15 text-[10px] text-primary"
+              >
+                Connected
+              </Badge>
+            )}
+          </div>
+          {connected ? (
+            <div className="mt-1 space-y-1">
+              <div className="text-[11.5px] text-muted-foreground">
+                {displayName ?? "Active"}
+                {typeof stats?.messages_today === "number" && (
+                  <span className="ml-2 text-muted-foreground/70">
+                    · {stats.messages_today} message
+                    {stats.messages_today === 1 ? "" : "s"} today
+                  </span>
+                )}
+              </div>
+              {preview && (
+                <code className="block truncate rounded border border-border bg-background/40 px-2 py-1 font-mono text-[11px] text-foreground/80">
+                  {preview}
+                </code>
+              )}
+            </div>
+          ) : (
+            <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+              Not connected — click to set up a bot token
+            </div>
+          )}
+        </div>
+        {connected ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onOpen}
+            className="bg-white/5 text-foreground hover:bg-white/10"
+          >
+            Manage
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            onClick={onOpen}
+            className="btn-shine bg-primary text-white hover:bg-primary/90"
+          >
+            Connect
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -120,6 +120,15 @@ async function loadRecentHistory(
 const CLAUDE_CODE_PREFIX =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 
+/**
+ * Sentinel reply chatReply must produce when the user asks for an action
+ * that requires Rawgrowth MCP tools. The webhook handler watches for this
+ * exact prefix and hands off to the drain daemon, which has full tool
+ * access. Keep the prefix stable — the handler does a literal startsWith.
+ */
+export const CHAT_HANDOFF_SENTINEL_PREFIX =
+  "[handoff] Give me a moment while I work on that";
+
 function buildSystemPrompt(
   orgName: string | null,
   persona: RawgrowthAgent | null,
@@ -141,8 +150,22 @@ function buildSystemPrompt(
     "",
     "You are talking to the operator over Telegram. Reply concisely — Telegram has a small screen and people read these on phones. Three to five short sentences max for normal answers; one sentence is often best.",
     "Use plain text or simple Markdown (bold, italics, code). No tables, no headings, no long bullet lists.",
-    "If the operator asks you to do something that requires data, use the Rawgrowth MCP tools available to you (agents, routines, runs, telegram inbox, knowledge, etc.).",
-    "If the operator just wants to chat, chat — don't over-engineer the reply.",
+    "",
+    "IMPORTANT — TOOL ACCESS:",
+    "You do NOT have access to any tools in this conversation. You cannot create, update, delete, or list anything in the workspace (agents, routines, skills, departments, runs, approvals, knowledge, telegram inbox, etc.). You also cannot send Gmail / Slack / Notion / Drive / etc.",
+    "",
+    "If the operator asks you to DO something (create an agent, set up a department, schedule a routine, send an email, list things, look up data, etc.) — reply with exactly this single line and nothing else, optionally followed by a one-sentence personalised acknowledgement of what they asked for:",
+    "",
+    `${CHAT_HANDOFF_SENTINEL_PREFIX} — <one short sentence describing what you'll do>.`,
+    "",
+    "Examples:",
+    `  ${CHAT_HANDOFF_SENTINEL_PREFIX} — spinning up your marketing department now.`,
+    `  ${CHAT_HANDOFF_SENTINEL_PREFIX} — hiring Linus as your CTO with code-review skills.`,
+    `  ${CHAT_HANDOFF_SENTINEL_PREFIX} — pulling your latest pending approvals.`,
+    "",
+    "Do NOT pretend you've already done the action. Do NOT make up agent names, IDs, or counts. The system will pick up the handoff and the actual work will be done by another path; the operator will get a follow-up message with the real result.",
+    "",
+    "If the operator just wants to chat or ask a general question (greetings, advice, opinions, explanations, anything that doesn't require touching workspace state) — answer directly without the handoff line.",
   );
   return lines.join("\n");
 }

@@ -6,8 +6,9 @@ import {
   updateAgent,
 } from "@/lib/agents/queries";
 import { AGENT_ROLES, type AgentRole } from "@/lib/agents/constants";
-import { listAssignments } from "@/lib/skills/queries";
+import { addSkillsToAgent, listAssignments } from "@/lib/skills/queries";
 import { getSkill, installCommand } from "@/lib/skills/catalog";
+import { autoPickSkillsForAgent } from "@/lib/skills/rank";
 
 /**
  * MCP tools for the agent lifecycle. Let clients create, list, update, and
@@ -101,7 +102,7 @@ function integrationsToPolicy(
 registerTool({
   name: "agents_create",
   description:
-    "Hire a new agent. Required: name. Optional: title (e.g. 'Head of Growth'), role (one of: ceo, cto, engineer, marketer, sdr, ops, designer, general — default: general), description (what the agent is responsible for), reports_to (id of another agent), budget_monthly_usd (default 500), integrations (array of connector ids the agent uses — e.g. ['gmail','notion','slack']), department (one of: marketing, sales, fulfilment, finance).",
+    "Hire a new agent. Required: name. Optional: title (e.g. 'Head of Growth'), role (one of: ceo, cto, engineer, marketer, sdr, ops, designer, general — default: general), description (what the agent is responsible for), reports_to (id of another agent), budget_monthly_usd (default 500), integrations (array of connector ids the agent uses — e.g. ['gmail','notion','slack']), department (one of: marketing, sales, fulfilment, finance), skill_ids (optional explicit list of skill catalog ids — if omitted the tool auto-picks 1-3 relevant skills based on role/title/description/department). Pass skill_ids: [] to explicitly skip auto-assignment.",
   isWrite: true,
   inputSchema: {
     type: "object",
@@ -135,6 +136,12 @@ registerTool({
         type: "string",
         description:
           "One of: marketing, sales, fulfilment, finance. Groups this agent under that pillar on the Departments page.",
+      },
+      skill_ids: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Optional skill catalog ids to assign at creation (e.g. ['rawclaw-react-patterns','rawclaw-brand-voice']). Omit the field to auto-pick 1-3 based on role/title/description. Pass [] to skip auto-assignment.",
       },
     },
     required: ["name"],
@@ -177,7 +184,48 @@ registerTool({
       writePolicy,
     });
 
+    // Skills assignment. Three paths:
+    //   • caller passed skill_ids: use those verbatim (even if [])
+    //   • caller passed nothing: auto-pick 1-3 relevant skills
+    //   • auto-pick finds nothing → leave skills empty
+    let assignedSkillIds: string[] = [];
+    const explicitSkills = args.skill_ids;
+    if (Array.isArray(explicitSkills)) {
+      const ids = explicitSkills
+        .map((v) => String(v ?? "").trim())
+        .filter((v) => v.length > 0);
+      const unknown = ids.filter((id) => !getSkill(id));
+      if (unknown.length > 0) {
+        // Agent was already created — don't fail; just skip the unknowns
+        // and report. The caller can always assign manually later.
+        assignedSkillIds = ids.filter((id) => getSkill(id));
+      } else {
+        assignedSkillIds = ids;
+      }
+    } else {
+      assignedSkillIds = autoPickSkillsForAgent({
+        role: agent.role,
+        title: agent.title ?? null,
+        description: agent.description ?? null,
+        department: agent.department ?? null,
+      });
+    }
+
+    if (assignedSkillIds.length > 0) {
+      await addSkillsToAgent(
+        ctx.organizationId,
+        agent.id,
+        assignedSkillIds,
+      );
+    }
+
     const integrations = Object.keys(agent.writePolicy ?? {});
+    const skillsLine = assignedSkillIds.length
+      ? `- skills: ${assignedSkillIds
+          .map((id) => getSkill(id)?.name ?? id)
+          .join(", ")}${Array.isArray(explicitSkills) ? "" : " (auto-picked)"}`
+      : `- skills: (none — use \`skills_assign\` later if you want some)`;
+
     return text(
       [
         `Hired **${agent.name}**${agent.title ? ` — ${agent.title}` : ""}.`,
@@ -188,6 +236,7 @@ registerTool({
         integrations.length
           ? `- connectors: ${integrations.join(", ")}`
           : `- connectors: (none)`,
+        skillsLine,
       ].join("\n"),
     );
   },
