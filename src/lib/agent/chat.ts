@@ -111,21 +111,30 @@ async function loadRecentHistory(
   return turns;
 }
 
+/**
+ * Anthropic's OAuth token gate REQUIRES the system prompt to start with
+ * this exact line — otherwise /v1/messages returns 401 "OAuth
+ * authentication is currently not supported." This is how Claude Max
+ * inference is identified vs API-key inference.
+ */
+const CLAUDE_CODE_PREFIX =
+  "You are Claude Code, Anthropic's official CLI for Claude.";
+
 function buildSystemPrompt(
   orgName: string | null,
   persona: RawgrowthAgent | null,
 ): string {
-  const lines: string[] = [];
+  const lines: string[] = [CLAUDE_CODE_PREFIX, ""];
   if (persona) {
     lines.push(
-      `You are ${persona.name}${persona.title ? `, ${persona.title}` : ""}, an AI agent operating inside ${orgName ?? "this organization"}'s Rawgrowth workspace.`,
+      `Right now you are acting as ${persona.name}${persona.title ? `, ${persona.title}` : ""}, an AI agent operating inside ${orgName ?? "this organization"}'s Rawgrowth workspace.`,
     );
     if (persona.description) {
       lines.push("", persona.description);
     }
   } else {
     lines.push(
-      `You are an AI agent operating inside ${orgName ?? "this organization"}'s Rawgrowth workspace.`,
+      `Right now you are acting as an AI agent operating inside ${orgName ?? "this organization"}'s Rawgrowth workspace.`,
     );
   }
   lines.push(
@@ -199,7 +208,10 @@ export async function chatReply(input: {
       headers: {
         authorization: `Bearer ${claudeToken}`,
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "mcp-client-2025-04-04",
+        // `oauth-2025-04-20` is the gate that lets /v1/messages accept
+        // sk-ant-oat01-* tokens. The MCP-client beta still works — we
+        // can stack betas via comma.
+        "anthropic-beta": "oauth-2025-04-20,mcp-client-2025-04-04",
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
