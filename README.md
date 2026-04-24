@@ -1,37 +1,37 @@
-# rawclaw v3 — backup pessoal
+# rawclaw v3 — personal backup
 
-**Esse repo não é oficial. Serve só pra salvar os commits do trial enquanto não tenho push access no repo de verdade.**
+**This repo is not official. Exists only to save commits from the CTO trial while I wait for push access to the real one.**
 
-Repo canônico: `github.com/Rawgrowth-Consulting/rawclaw` branch `v3`. Aguardando Chris liberar write access. Até lá, esse aqui evita perder o trabalho se o laptop pifar.
+Canonical: `github.com/Rawgrowth-Consulting/rawclaw` branch `v3`. Waiting on Chris to grant write access. Until then, this keeps the work safe if the laptop dies.
 
-## pra que serve
+## what it's for
 
-- Checkpoint dos 14 dias de trial enquanto espero access.
-- Revisar diff do celular ou outra máquina.
-- Backup antes de dormir, antes de viajar, antes de qualquer `rm -rf` acidental.
+- Checkpoint the 14 days of trial work while I wait for access.
+- Review diffs from my phone or another machine.
+- Backup before sleep, before travel, before any accidental `rm -rf`.
 
-## pra que NÃO serve
+## what it's NOT for
 
-- Review. Chris / Scan / Ali não olham aqui.
-- CI, deploy, Vercel, Hetzner — nada wired.
-- PRs. Só no repo oficial, depois do access.
-- Histórico permanente — vai tomar force-push toda vez que eu re-sync.
+- Review. Chris / Scan / Ali don't look here.
+- CI, deploy, Vercel, Hetzner — nothing wired.
+- PRs. Only on the canonical repo, after access.
+- Permanent history — gets force-pushed every time I re-sync.
 
-## onde tá o resto
+## where the rest lives
 
-- **Briefs (PDFs)** em `~/Downloads/`:
-  - `Rawclaw v3 — Developer Brief (Pedro).pdf` — brief original do Chris
-  - `rawclaw-v3-cto-brief.pdf` — CTO brief que mandei pro Chris
-  - `rawclaw-v3-day1-reply.pdf` — brief técnico pro Ali
-  - `rawclaw-v3-execution-plan.pdf` — plano dia-a-dia D1-D14
-- **Canonical:** `github.com/Rawgrowth-Consulting/rawclaw` branch `v3` (pendente push access)
-- **Working tree local:** `~/rawclaw-research/rawclaw`
+- **Briefs (PDFs)** in `~/Downloads/`:
+  - `Rawclaw v3 — Developer Brief (Pedro).pdf` — Chris's original brief
+  - `rawclaw-v3-cto-brief.pdf` — CTO brief I sent Chris
+  - `rawclaw-v3-day1-reply.pdf` — engineering brief for Ali
+  - `rawclaw-v3-execution-plan.pdf` — day-by-day plan D1-D14
+- **Canonical:** `github.com/Rawgrowth-Consulting/rawclaw` branch `v3` (pending push access)
+- **Local working tree:** `~/rawclaw-research/rawclaw`
 
 ## commits
 
-Um por dia, D1 → D14:
+One per day, D1 → D14:
 
-| dia | o quê |
+| day | what |
 | --- | --- |
 | D1  | deploy mode + RLS migration + compose stack |
 | D2  | port portal onboarding + 6 schema migrations |
@@ -47,8 +47,8 @@ Um por dia, D1 → D14:
 | D13 | Playwright smoke + deploy/arch docs |
 | D14 | build + lint pass prep |
 
-Detalhe técnico: `ARCHITECTURE-V3.md` + `DEPLOY-V3.md`.
+Technical detail: `ARCHITECTURE-V3.md` + `DEPLOY-V3.md`.
 
-## contribuir
+## contributing
 
-não.
+don't.
