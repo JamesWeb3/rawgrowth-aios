@@ -204,12 +204,63 @@ export async function POST(
   });
 
   if (!match || !match.rgaios_routines) {
-    await sendMessage(
-      token,
-      msg.chat.id,
-      `⚠️ No routine bound to \`${commandKey}\`.`,
-    );
-    return NextResponse.json({ ok: true, skipped: "no matching routine" });
+    // Unbound slash command — fall through to the instant chat path so
+    // the agent handles it naturally (e.g. /start, /help, anything the
+    // user types with a slash prefix that isn't an explicit routine).
+    after(async () => {
+      sendChatAction(token, msg.chat.id, "typing").catch(() => {});
+
+      const publicAppUrl = (
+        process.env.NEXT_PUBLIC_APP_URL ??
+        process.env.NEXTAUTH_URL ??
+        new URL(req.url).origin
+      ).replace(/\/$/, "");
+
+      const { data: orgRow } = await supabaseAdmin()
+        .from("rgaios_organizations")
+        .select("name")
+        .eq("id", organizationId)
+        .maybeSingle();
+
+      const result = await chatReply({
+        organizationId,
+        organizationName: orgRow?.name ?? null,
+        chatId: msg.chat.id,
+        userMessage: text,
+        publicAppUrl,
+      });
+
+      if (!result.ok) {
+        const drainUrl = process.env.RAWCLAW_DRAIN_URL;
+        if (drainUrl) {
+          fetch(drainUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(500),
+          }).catch(() => {});
+          return;
+        }
+        await sendMessage(token, msg.chat.id, `⚠️ ${result.error}`).catch(
+          () => {},
+        );
+        return;
+      }
+
+      await sendMessage(token, msg.chat.id, result.reply).catch(() => {});
+      await supabaseAdmin()
+        .from("rgaios_telegram_messages")
+        .update({
+          responded_at: new Date().toISOString(),
+          response_text: result.reply,
+        })
+        .eq("organization_id", organizationId)
+        .eq("chat_id", msg.chat.id)
+        .eq("message_id", msg.message_id);
+    });
+    return NextResponse.json({
+      ok: true,
+      inboxed: true,
+      path: "instant-fallthrough",
+    });
   }
 
   const routine = match.rgaios_routines;
