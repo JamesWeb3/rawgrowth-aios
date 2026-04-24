@@ -67,6 +67,57 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["rgaios_users"]["Row"]>;
         Relationships: [];
       };
+      rgaios_slack_bindings: {
+        Row: {
+          id: string;
+          organization_id: string;
+          slack_team_id: string;
+          slack_channel_id: string;
+          slack_channel_name: string | null;
+          agent_id: string;
+          trigger_type:
+            | "new_message"
+            | "new_file"
+            | "app_mention"
+            | "transcript";
+          output_type:
+            | "slack_thread"
+            | "slack_channel"
+            | "dm_user"
+            | "gmail";
+          output_config: Record<string, unknown>;
+          prompt_template: string | null;
+          enabled: boolean;
+          created_at: string;
+          last_fired_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          slack_team_id: string;
+          slack_channel_id: string;
+          slack_channel_name?: string | null;
+          agent_id: string;
+          trigger_type:
+            | "new_message"
+            | "new_file"
+            | "app_mention"
+            | "transcript";
+          output_type:
+            | "slack_thread"
+            | "slack_channel"
+            | "dm_user"
+            | "gmail";
+          output_config?: Record<string, unknown>;
+          prompt_template?: string | null;
+          enabled?: boolean;
+          last_fired_at?: string | null;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["rgaios_slack_bindings"]["Row"]
+        >;
+        Relationships: [];
+      };
       rgaios_telegram_messages: {
         Row: {
           id: string;

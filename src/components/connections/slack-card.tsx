@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { jsonFetcher } from "@/lib/swr";
 
 type SlackStatus = {
@@ -231,6 +232,7 @@ export function SlackConnectionCard() {
                 </div>
               </div>
             </div>
+            <SlackBindingsPanel />
             <button
               type="button"
               onClick={() => setWizardOpen(true)}
@@ -428,5 +430,428 @@ export function SlackConnectionCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Bindings panel ─────────────────────────────────────────────────
+
+type SlackBinding = {
+  id: string;
+  slack_team_id: string;
+  slack_channel_id: string;
+  slack_channel_name: string | null;
+  agent_id: string;
+  trigger_type: "new_message" | "new_file" | "app_mention" | "transcript";
+  output_type: "slack_thread" | "slack_channel" | "dm_user" | "gmail";
+  output_config: Record<string, unknown>;
+  prompt_template: string | null;
+  enabled: boolean;
+  last_fired_at: string | null;
+};
+
+type SlackChannelLite = {
+  id: string;
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+};
+
+type AgentLite = {
+  id: string;
+  name: string;
+  title: string | null;
+  role: string;
+};
+
+const TRIGGER_LABELS: Record<SlackBinding["trigger_type"], string> = {
+  new_message: "Any new message in channel",
+  app_mention: "Bot mentioned (@bot ...)",
+  new_file: "Any file uploaded",
+  transcript: "Transcript file uploaded",
+};
+
+const OUTPUT_LABELS: Record<SlackBinding["output_type"], string> = {
+  slack_thread: "Reply in a thread (same channel)",
+  slack_channel: "Post to a different Slack channel",
+  dm_user: "DM the user who triggered it",
+  gmail: "Email (coming soon)",
+};
+
+function SlackBindingsPanel() {
+  const { data: bindings, mutate } = useSWR<{ bindings: SlackBinding[] }>(
+    "/api/connections/slack/bindings",
+    jsonFetcher,
+  );
+  const [adding, setAdding] = useState(false);
+
+  const rows = bindings?.bindings ?? [];
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[12px] font-semibold text-foreground">
+          Channel bindings
+          {rows.length > 0 && (
+            <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+              ({rows.length})
+            </span>
+          )}
+        </div>
+        {!adding && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setAdding(true)}
+            className="bg-white/5 text-foreground hover:bg-white/10"
+          >
+            + Add binding
+          </Button>
+        )}
+      </div>
+
+      {rows.length === 0 && !adding && (
+        <p className="text-[11.5px] text-muted-foreground">
+          No bindings yet. Pick a channel, an agent, a trigger — agents will
+          listen on Slack and respond per your rules.
+        </p>
+      )}
+
+      {rows.map((b) => (
+        <BindingRow key={b.id} binding={b} onChange={() => mutate()} />
+      ))}
+
+      {adding && (
+        <BindingForm
+          onCancel={() => setAdding(false)}
+          onSaved={() => {
+            setAdding(false);
+            void mutate();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function BindingRow({
+  binding,
+  onChange,
+}: {
+  binding: SlackBinding;
+  onChange: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+
+  const destroy = async () => {
+    if (!confirm("Delete this binding?")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/connections/slack/bindings/${binding.id}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error("delete failed");
+      toast.success("Binding deleted");
+      onChange();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const toggle = async () => {
+    try {
+      const res = await fetch(
+        `/api/connections/slack/bindings/${binding.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: !binding.enabled }),
+        },
+      );
+      if (!res.ok) throw new Error("toggle failed");
+      onChange();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-border bg-background/40 px-3 py-2 text-[11.5px]">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-foreground">
+          <span className="font-mono">
+            #{binding.slack_channel_name ?? binding.slack_channel_id}
+          </span>
+          <span className="text-muted-foreground">·</span>
+          <span>{TRIGGER_LABELS[binding.trigger_type]}</span>
+          <span className="text-muted-foreground">→</span>
+          <span>{OUTPUT_LABELS[binding.output_type]}</span>
+          {!binding.enabled && (
+            <Badge
+              variant="secondary"
+              className="bg-white/5 text-[10px] text-muted-foreground"
+            >
+              disabled
+            </Badge>
+          )}
+        </div>
+        {binding.prompt_template && (
+          <div className="mt-0.5 truncate text-muted-foreground">
+            <em>{binding.prompt_template}</em>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={toggle}
+          className="rounded px-2 py-1 text-[10.5px] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+        >
+          {binding.enabled ? "Disable" : "Enable"}
+        </button>
+        <button
+          type="button"
+          onClick={destroy}
+          disabled={deleting}
+          className="rounded px-2 py-1 text-[10.5px] text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+        >
+          <X className="size-3" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BindingForm({
+  onCancel,
+  onSaved,
+}: {
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const { data: channels } = useSWR<{ channels: SlackChannelLite[] }>(
+    "/api/connections/slack/channels",
+    jsonFetcher,
+  );
+  const { data: agents } = useSWR<{ agents: AgentLite[] }>(
+    "/api/agents",
+    jsonFetcher,
+  );
+
+  const [channelId, setChannelId] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [triggerType, setTriggerType] =
+    useState<SlackBinding["trigger_type"]>("new_message");
+  const [outputType, setOutputType] =
+    useState<SlackBinding["output_type"]>("slack_thread");
+  const [outputChannel, setOutputChannel] = useState("");
+  const [outputEmail, setOutputEmail] = useState("");
+  const [promptTemplate, setPromptTemplate] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const channelList = channels?.channels ?? [];
+  const agentList = agents?.agents ?? [];
+
+  const save = async () => {
+    if (!channelId || !agentId) {
+      toast.error("Pick a channel and an agent");
+      return;
+    }
+    setSaving(true);
+    const chanObj = channelList.find((c) => c.id === channelId);
+    const output_config: Record<string, unknown> = {};
+    if (outputType === "slack_channel" && outputChannel) {
+      output_config.channel_id = outputChannel;
+    }
+    if (outputType === "gmail" && outputEmail) {
+      output_config.email = outputEmail;
+    }
+    try {
+      const res = await fetch("/api/connections/slack/bindings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          slack_channel_id: channelId,
+          slack_channel_name: chanObj?.name ?? null,
+          agent_id: agentId,
+          trigger_type: triggerType,
+          output_type: outputType,
+          output_config,
+          prompt_template: promptTemplate || null,
+        }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? "save failed");
+      toast.success("Binding created");
+      onSaved();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded border border-primary/30 bg-primary/5 p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Channel
+          </Label>
+          <select
+            value={channelId}
+            onChange={(e) => setChannelId(e.target.value)}
+            className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
+          >
+            <option value="">— select channel —</option>
+            {channelList.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.is_private ? "🔒" : "#"}
+                {c.name}
+                {!c.is_member ? " (bot not a member)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Agent
+          </Label>
+          <select
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
+          >
+            <option value="">— select agent —</option>
+            {agentList.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.title ? ` — ${a.title}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Trigger
+          </Label>
+          <select
+            value={triggerType}
+            onChange={(e) =>
+              setTriggerType(e.target.value as SlackBinding["trigger_type"])
+            }
+            className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
+          >
+            {(Object.keys(TRIGGER_LABELS) as SlackBinding["trigger_type"][]).map(
+              (k) => (
+                <option key={k} value={k}>
+                  {TRIGGER_LABELS[k]}
+                </option>
+              ),
+            )}
+          </select>
+        </div>
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Send output to
+          </Label>
+          <select
+            value={outputType}
+            onChange={(e) =>
+              setOutputType(e.target.value as SlackBinding["output_type"])
+            }
+            className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
+          >
+            {(Object.keys(OUTPUT_LABELS) as SlackBinding["output_type"][]).map(
+              (k) => (
+                <option key={k} value={k}>
+                  {OUTPUT_LABELS[k]}
+                </option>
+              ),
+            )}
+          </select>
+        </div>
+      </div>
+
+      {outputType === "slack_channel" && (
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Output channel
+          </Label>
+          <select
+            value={outputChannel}
+            onChange={(e) => setOutputChannel(e.target.value)}
+            className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
+          >
+            <option value="">— select channel —</option>
+            {channelList.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.is_private ? "🔒" : "#"}
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {outputType === "gmail" && (
+        <div>
+          <Label className="text-[11px] font-medium text-muted-foreground">
+            Email address
+          </Label>
+          <Input
+            type="email"
+            value={outputEmail}
+            onChange={(e) => setOutputEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="mt-1 text-[12px]"
+          />
+          <p className="mt-1 text-[10.5px] text-muted-foreground">
+            Note: Gmail sending isn&apos;t wired up yet — for now the reply
+            gets posted as a Slack thread note instead.
+          </p>
+        </div>
+      )}
+
+      <div>
+        <Label className="text-[11px] font-medium text-muted-foreground">
+          Prompt template (optional)
+        </Label>
+        <Textarea
+          value={promptTemplate}
+          onChange={(e) => setPromptTemplate(e.target.value)}
+          placeholder="e.g. Extract concrete developer tasks from this transcript as a bullet list"
+          className="mt-1 text-[12px]"
+          rows={2}
+        />
+        <p className="mt-1 text-[10.5px] text-muted-foreground">
+          Prepended to the message / file content. Leave empty to let the
+          agent freestyle per its persona.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          onClick={save}
+          disabled={saving}
+          className="btn-shine bg-primary text-white hover:bg-primary/90"
+        >
+          {saving ? "Saving…" : "Create binding"}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={onCancel}
+          disabled={saving}
+          className="bg-white/5 text-foreground hover:bg-white/10"
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
