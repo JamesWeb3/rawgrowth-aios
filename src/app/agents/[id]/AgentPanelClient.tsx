@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
@@ -41,20 +41,34 @@ type Telegram = {
   metadata: Record<string, unknown> | null;
 } | null;
 
-type Tab = "overview" | "memory" | "tasks" | "settings";
+type AgentFile = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+};
+
+type Tab = "overview" | "memory" | "files" | "tasks" | "settings";
 
 export function AgentPanelClient({
   agent,
   memory,
   tasks,
   telegram,
+  files,
 }: {
   agent: Agent;
   memory: MemoryEntry[];
   tasks: Task[];
   telegram: Telegram;
+  files: AgentFile[];
 }) {
   const [tab, setTab] = useState<Tab>("overview");
+  const [fileList, setFileList] = useState<AgentFile[]>(files);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFlash, setUploadFlash] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const [draftDescription, setDraftDescription] = useState(
     agent.description ?? "",
   );
@@ -62,6 +76,64 @@ export function AgentPanelClient({
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [tgOpen, setTgOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function uploadFiles(picked: FileList | File[]) {
+    const arr = Array.from(picked);
+    if (arr.length === 0) return;
+    setUploading(true);
+    setUploadFlash(null);
+    let okCount = 0;
+    let totalChunks = 0;
+    const errs: string[] = [];
+    const fresh: AgentFile[] = [];
+    for (const f of arr) {
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+        fd.append("agent_id", agent.id);
+        const res = await fetch("/api/agent-files/upload", {
+          method: "POST",
+          body: fd,
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          file_id?: string;
+          chunk_count?: number;
+          error?: string;
+        };
+        if (!res.ok) {
+          errs.push(`${f.name}: ${j.error ?? res.statusText}`);
+          continue;
+        }
+        okCount += 1;
+        totalChunks += j.chunk_count ?? 0;
+        if (j.file_id) {
+          fresh.push({
+            id: j.file_id,
+            filename: f.name,
+            mime_type: f.type || "application/octet-stream",
+            size_bytes: f.size,
+            uploaded_at: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        errs.push(`${f.name}: ${(err as Error).message}`);
+      }
+    }
+    setFileList((prev) => [...fresh, ...prev]);
+    const okMsg = okCount > 0 ? `${okCount} file(s) . ${totalChunks} chunks` : "";
+    const errMsg = errs.length > 0 ? errs.join("; ") : "";
+    setUploadFlash([okMsg, errMsg].filter(Boolean).join(" / ") || null);
+    setUploading(false);
+  }
+
+  function formatSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024)
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
 
   async function savePersona() {
     setSaving(true);
@@ -101,7 +173,7 @@ export function AgentPanelClient({
 
       <nav className="shrink-0 border-b border-[var(--line)] px-6">
         <div className="flex gap-6 text-sm">
-          {(["overview", "memory", "tasks", "settings"] as Tab[]).map((t) => (
+          {(["overview", "memory", "files", "tasks", "settings"] as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -206,6 +278,92 @@ export function AgentPanelClient({
               </li>
             ))}
           </ul>
+        )}
+
+        {tab === "files" && (
+          <div className="space-y-4">
+            <div
+              onDragEnter={(e: DragEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragOver={(e: DragEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(e: DragEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                setDragActive(false);
+                if (e.dataTransfer.files?.length) {
+                  void uploadFiles(e.dataTransfer.files);
+                }
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              className={
+                "flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-6 py-8 text-center transition-colors " +
+                (dragActive
+                  ? "border-primary bg-[var(--brand-surface-2)]"
+                  : "border-[var(--line-strong)] bg-[var(--brand-surface)] hover:border-primary")
+              }
+            >
+              <p className="text-sm text-[var(--text-strong)]">
+                {uploading
+                  ? "Uploading..."
+                  : "Drop files here, or click to browse"}
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                PDF / DOCX / MD / TXT / CSV / image . up to 100 MB
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.docx,.md,.markdown,.txt,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain,text/csv,image/*"
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void uploadFiles(e.target.files);
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </div>
+
+            {uploadFlash && (
+              <div className="rounded-md border border-[var(--line)] bg-[var(--brand-surface)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                {uploadFlash}
+              </div>
+            )}
+
+            {fileList.length === 0 ? (
+              <p className="rounded-md border border-[var(--line)] bg-[var(--brand-surface)] p-4 text-sm text-[var(--text-muted)]">
+                No files attached. Drop a PDF/DOCX/MD/TXT/CSV/image to give this
+                agent context.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {fileList.map((f) => (
+                  <li
+                    key={f.id}
+                    className="flex items-center justify-between rounded-md border border-[var(--line)] bg-[var(--brand-surface)] p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-[var(--text-strong)]">
+                        {f.filename}
+                      </p>
+                      <p className="font-mono text-[11px] text-[var(--text-muted)]">
+                        {f.mime_type} . {formatSize(f.size_bytes)}
+                      </p>
+                    </div>
+                    <time className="ml-3 shrink-0 text-[11px] text-[var(--text-muted)]">
+                      {new Date(f.uploaded_at).toLocaleString()}
+                    </time>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {tab === "tasks" && (

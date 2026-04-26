@@ -57,6 +57,15 @@ export default async function AgentDetailPage({
     .eq("provider_config_key", "telegram")
     .maybeSingle();
 
+  // Files attached to this agent (brief §7 per-agent panel).
+  const { data: files } = await db
+    .from("rgaios_agent_files")
+    .select("id, filename, mime_type, size_bytes, uploaded_at")
+    .eq("organization_id", orgId)
+    .eq("agent_id", id)
+    .order("uploaded_at", { ascending: false })
+    .limit(100);
+
   return (
     <AgentPanelClient
       agent={agent as unknown as Parameters<typeof AgentPanelClient>[0]["agent"]}
@@ -65,6 +74,7 @@ export default async function AgentDetailPage({
       telegram={
         (telegram as unknown as Parameters<typeof AgentPanelClient>[0]["telegram"]) ?? null
       }
+      files={files ?? []}
     />
   );
 }
