@@ -12,6 +12,8 @@ import {
   Building2,
   Activity,
   Sparkles,
+  BookOpen,
+  FolderOpen,
 } from "lucide-react";
 
 import {
@@ -49,6 +51,7 @@ const navSections: NavSection[] = [
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
       { label: "Departments", href: "/departments", icon: Building2 },
+      { label: "Knowledge", href: "/knowledge", icon: BookOpen },
     ],
   },
   {
@@ -56,6 +59,7 @@ const navSections: NavSection[] = [
     items: [
       { label: "Agents", href: "/agents", icon: Bot },
       { label: "Routines", href: "/routines", icon: Repeat },
+      { label: "Files", href: "/knowledge", icon: FolderOpen },
       { label: "Activity", href: "/activity", icon: Activity },
       { label: "Approvals", href: "/approvals", icon: ShieldCheck },
     ],
