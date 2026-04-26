@@ -77,7 +77,9 @@ export async function GET(req: NextRequest) {
 
   const { data: triggers, error } = await db
     .from("rgaios_routine_triggers")
-    .select("*, rgaios_routines!inner(id, organization_id, status, title)")
+    .select(
+      "*, rgaios_routines!inner(id, organization_id, status, title, assignee_agent_id, assignee:rgaios_agents!assignee_agent_id(reports_to))",
+    )
     .eq("kind", "schedule")
     .eq("enabled", true);
   if (error) {
@@ -96,6 +98,8 @@ export async function GET(req: NextRequest) {
       organization_id: string;
       status: string;
       title: string;
+      assignee_agent_id: string | null;
+      assignee: { reports_to: string | null } | null;
     } | null;
   };
 
@@ -111,6 +115,17 @@ export async function GET(req: NextRequest) {
           trigger_id: row.id,
           reason: `routine ${row.rgaios_routines?.status ?? "missing"}`,
         });
+        continue;
+      }
+
+      // Brief §9.6: sub-agents do NOT run on heartbeat; only when pinged.
+      // A routine assigned to an agent fires only if that agent is a manager
+      // (reports_to IS NULL). Routines with no assignee fire as before.
+      if (
+        row.rgaios_routines.assignee_agent_id &&
+        row.rgaios_routines.assignee?.reports_to
+      ) {
+        skipped.push({ trigger_id: row.id, reason: "sub-agent (heartbeat blocked)" });
         continue;
       }
 

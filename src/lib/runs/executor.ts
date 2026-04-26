@@ -69,7 +69,8 @@ export async function executeRun(runId: string): Promise<void> {
       writePolicy,
     );
 
-    const systemPrompt = buildSystemPrompt(routine.title, routine.description, agent);
+    const brandVoice = await loadBrandVoice(run.organization_id);
+    const systemPrompt = buildSystemPrompt(routine.title, routine.description, agent, brandVoice);
     const userMessage = buildUserMessage(run, trigger);
 
     const result = await generateText({
@@ -116,16 +117,30 @@ export async function executeRun(runId: string): Promise<void> {
 
 // ─── System prompt ──────────────────────────────────────────────────
 
+async function loadBrandVoice(organizationId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin()
+    .from("rgaios_brand_profiles")
+    .select("content")
+    .eq("organization_id", organizationId)
+    .eq("status", "approved")
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const content = (data as { content: string | null } | null)?.content;
+  return content && content.trim().length > 0 ? content.trim() : null;
+}
+
 function buildSystemPrompt(
   routineTitle: string,
   routineInstructions: string | null,
   agent: RunContext["agent"],
+  brandVoice: string | null,
 ): string {
   const agentIntro = agent
     ? `You are ${agent.name}${agent.title ? `, ${agent.title}` : ""}, an AI employee at this organization. Role: ${agent.role}.${agent.description ? `\n\nYour responsibilities: ${agent.description}` : ""}`
     : `You are an autonomous AI agent running a routine for this organization.`;
 
-  return [
+  const lines = [
     agentIntro,
     "",
     `You are currently executing the routine "${routineTitle}". The user's instructions are below. Follow them precisely.`,
@@ -135,10 +150,23 @@ function buildSystemPrompt(
     "- Tools that write (draft emails, create docs, etc.) are labelled as such; prefer draft-first tools over direct-send when both exist.",
     "- When the routine is complete, return a short plain-text summary of what you did and any links (draft URLs, file ids, etc.) the user needs.",
     "- Stop after at most a dozen tool calls. If you need more, ask for approval instead of looping.",
+  ];
+
+  if (brandVoice) {
+    lines.push(
+      "",
+      "**Brand profile (use this voice in all user-facing copy):**",
+      brandVoice,
+    );
+  }
+
+  lines.push(
     "",
     "**Routine instructions:**",
     routineInstructions ?? "(no instructions provided)",
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 function buildUserMessage(

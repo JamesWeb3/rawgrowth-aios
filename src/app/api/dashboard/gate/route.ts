@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
+import { seedTelegramConnectionsForDefaults } from "@/lib/connections/telegram-seed";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { isScrapeComplete } from "@/lib/scrape/worker";
 
@@ -42,6 +43,12 @@ export async function GET() {
   const scrapeDone = await isScrapeComplete(orgId);
 
   const ready = onboardingDone && brandProfileApproved && scrapeDone;
+
+  if (brandProfileApproved) {
+    seedTelegramConnectionsForDefaults(orgId).catch((err) =>
+      console.error("[dashboard/gate] telegram seed retry failed:", err),
+    );
+  }
 
   return NextResponse.json(
     {

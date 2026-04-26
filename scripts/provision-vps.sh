@@ -559,13 +559,19 @@ StandardOutput=append:/var/log/rawgrowth-tick.log
 StandardError=append:/var/log/rawgrowth-tick.log
 UNIT
 
-cat > /etc/systemd/system/rawgrowth-tick.timer <<'UNIT'
+HEARTBEAT_INTERVAL_SEC=${HEARTBEAT_INTERVAL_SEC:-600}
+if ! [[ "$HEARTBEAT_INTERVAL_SEC" =~ ^[0-9]+$ ]] || [ "$HEARTBEAT_INTERVAL_SEC" -lt 10 ]; then
+  red "HEARTBEAT_INTERVAL_SEC must be an integer >= 10 (got: $HEARTBEAT_INTERVAL_SEC)"
+  exit 1
+fi
+
+cat > /etc/systemd/system/rawgrowth-tick.timer <<UNIT
 [Unit]
-Description=Rawgrowth minute tick timer
+Description=Rawgrowth heartbeat tick timer
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=60s
+OnUnitActiveSec=${HEARTBEAT_INTERVAL_SEC}s
 AccuracySec=5s
 Unit=rawgrowth-tick.service
 

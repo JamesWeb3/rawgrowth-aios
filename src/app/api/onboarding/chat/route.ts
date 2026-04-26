@@ -6,6 +6,7 @@ import type {
 } from "openai/resources/chat/completions";
 
 import { getOrgContext } from "@/lib/auth/admin";
+import { seedTelegramConnectionsForDefaults } from "@/lib/connections/telegram-seed";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   QUESTIONNAIRE_SECTIONS,
@@ -599,6 +600,15 @@ async function approveBrandProfile(userId: string) {
     .update({ onboarding_step: 4, updated_at: new Date().toISOString() })
     .eq("id", userId);
   if (clientErr) return { ok: false, error: clientErr.message };
+
+  try {
+    const seedResult = await seedTelegramConnectionsForDefaults(userId);
+    console.info(
+      `[approve_brand_profile] telegram seed: seeded=${seedResult.seeded} skipped=${seedResult.skipped}`,
+    );
+  } catch (err) {
+    console.error("[approve_brand_profile] telegram seed failed:", err);
+  }
 
   return { ok: true };
 }

@@ -80,5 +80,15 @@ export async function seedTelegramConnectionsForDefaults(
     }
   }
 
+  if (seeded > 0) {
+    await db.from("rgaios_audit_log").insert({
+      organization_id: organizationId,
+      kind: "telegram_connections_seeded",
+      actor_type: "system",
+      actor_id: "approve_brand_profile",
+      detail: { seeded, skipped, agent_ids: target.map((a) => a.id) },
+    });
+  }
+
   return { seeded, skipped };
 }
