@@ -32,7 +32,7 @@ export default async function AgentTreePage() {
     title: a.title,
     role: a.role,
     department: a.department ?? null,
-    reportsTo: (a as { reports_to?: string | null }).reports_to ?? null,
+    reportsTo: a.reportsTo ?? null,
     telegramStatus: telegramByAgent.get(a.id) ?? null,
   }));
 

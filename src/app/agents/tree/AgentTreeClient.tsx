@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 import ReactFlow, {
   Background,
   Controls,
@@ -14,6 +15,7 @@ import "reactflow/dist/style.css";
 
 import { AddSubAgentModal } from "@/components/agents/AddSubAgentModal";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
+import { wouldCreateCycle } from "@/lib/tree";
 
 type AgentNode = {
   id: string;
@@ -34,6 +36,11 @@ type NodeData = {
     role: "manager" | "sub-agent",
   ) => void;
 };
+
+// Default footprint when reactflow hasn't measured a node yet (first paint).
+// Matches the min width on the card and a generous vertical estimate.
+const DEFAULT_NODE_W = 220;
+const DEFAULT_NODE_H = 110;
 
 // ── layout ──────────────────────────────────────────────────────────────
 function layout(agents: AgentNode[]): {
@@ -188,12 +195,97 @@ export function AgentTreeClient({
     return { nodes, edges };
   }, [agents, onAddSub, onAttachTelegram]);
 
+  // ── drag-to-reorganize ───────────────────────────────────────────────
+  // When a node is dropped, find which other node's bounding box contains
+  // its centre. If we land on another node, reparent under it. If we land
+  // on empty canvas, promote to root. Cycles are blocked locally and on
+  // the server. Updates are optimistic; we revert on PATCH failure.
+  const onNodeDragStop = useCallback(
+    async (_event: unknown, dropped: Node<NodeData>) => {
+      // reactflow v11 populates width/height after measurement. Fall back
+      // to the card's intrinsic min size for the very first interaction.
+      const droppedW = dropped.width ?? DEFAULT_NODE_W;
+      const droppedH = dropped.height ?? DEFAULT_NODE_H;
+      const cx = dropped.position.x + droppedW / 2;
+      const cy = dropped.position.y + droppedH / 2;
+
+      // Iterate the latest graph snapshot, skipping the dragged node.
+      let target: Node<NodeData> | null = null;
+      for (const candidate of graph.nodes) {
+        if (candidate.id === dropped.id) continue;
+        const w = candidate.width ?? DEFAULT_NODE_W;
+        const h = candidate.height ?? DEFAULT_NODE_H;
+        const x0 = candidate.position.x;
+        const y0 = candidate.position.y;
+        if (cx >= x0 && cx <= x0 + w && cy >= y0 && cy <= y0 + h) {
+          target = candidate;
+          break;
+        }
+      }
+
+      const newParentId: string | null = target ? target.id : null;
+      const current = agents.find((a) => a.id === dropped.id);
+      if (!current) return;
+      if (current.reportsTo === newParentId) return;
+
+      // Local cycle guard before we even touch the network.
+      if (newParentId !== null) {
+        const tree = agents.map((a) => ({
+          id: a.id,
+          parentId: a.reportsTo,
+        }));
+        if (wouldCreateCycle(tree, dropped.id, newParentId)) {
+          toast.error("Cannot reparent: would create a reporting cycle.");
+          // Bump state to force the layout to re-snap the dragged node.
+          setAgents((prev) => [...prev]);
+          return;
+        }
+      }
+
+      // Optimistic update. Snapshot the prior parent so we can revert.
+      const prevParent = current.reportsTo;
+      setAgents((prev) =>
+        prev.map((a) =>
+          a.id === dropped.id ? { ...a, reportsTo: newParentId } : a,
+        ),
+      );
+
+      try {
+        const res = await fetch(`/api/agents/${dropped.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reports_to: newParentId }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
+        toast.success(
+          newParentId
+            ? `Reassigned to report to ${target?.data.agent.name}.`
+            : "Promoted to root.",
+        );
+      } catch (err) {
+        setAgents((prev) =>
+          prev.map((a) =>
+            a.id === dropped.id ? { ...a, reportsTo: prevParent } : a,
+          ),
+        );
+        toast.error(`Reparent failed: ${(err as Error).message}`);
+      }
+    },
+    [agents, graph.nodes],
+  );
+
   return (
     <div className="h-full w-full">
       <ReactFlow
         nodes={graph.nodes}
         edges={graph.edges}
         nodeTypes={nodeTypes}
+        onNodeDragStop={onNodeDragStop}
         fitView
         proOptions={{ hideAttribution: true }}
       >
