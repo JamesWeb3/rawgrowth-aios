@@ -9,9 +9,12 @@ type SubAgent = { name: string; title: string };
 
 /**
  * Client form for "Add department". Creates manager + N sub-agents via
- * /api/agents, then seeds a pending_token Telegram connection for the
- * new manager. Per brief §5: a new department's manager gets a bot slot
- * automatically; sub-agents stay opt-in.
+ * POST /api/agents, then calls POST /api/connections/telegram/seed-agent
+ * to insert a pending_token rgaios_connections row for the new manager.
+ * Per brief §5: a new department's manager gets a bot slot automatically
+ * so the user can paste a BotFather token from the dashboard. Sub-agents
+ * stay opt-in (no seed). Seed failure does NOT block the redirect - the
+ * agents are already created and the seed can be retried from the UI.
  */
 export function NewDepartmentForm() {
   const [deptName, setDeptName] = useState("");
@@ -55,6 +58,28 @@ export function NewDepartmentForm() {
       const managerJson = await managerRes.json();
       if (!managerRes.ok) throw new Error(managerJson.error ?? "Manager create failed");
       const managerId = managerJson.agent.id as string;
+      const managerName = (managerJson.agent.name as string) ?? `${deptName} Manager`;
+
+      // Seed a pending_token Telegram connection row for the new manager
+      // so it appears under "Add to Telegram" on the dashboard. Best-
+      // effort: log on failure but never block the redirect - the
+      // manager and sub-agents are already persisted.
+      try {
+        const seedRes = await fetch("/api/connections/telegram/seed-agent", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agentId: managerId,
+            displayName: managerName,
+          }),
+        });
+        if (!seedRes.ok) {
+          const j = await seedRes.json().catch(() => ({}));
+          console.error("[departments/new] telegram seed failed:", j.error);
+        }
+      } catch (seedErr) {
+        console.error("[departments/new] telegram seed threw:", seedErr);
+      }
 
       for (const sub of subs) {
         if (!sub.name.trim()) continue;
