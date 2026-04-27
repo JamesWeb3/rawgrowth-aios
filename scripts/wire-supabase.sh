@@ -77,6 +77,27 @@ sed -i \
   "$TARGET"
 
 green "✓ Supabase wired into $TARGET"
+
+# ── Create the agent-files storage bucket if it doesn't exist ──
+# Per-agent RAG (D10) needs this bucket. Without it, upload silently
+# returns 500. Free-tier project file_size_limit caps at 50MB; a paid
+# project can be raised by editing the bucket later.
+bold "▸ Provisioning storage bucket 'agent-files' (50MB cap)"
+BUCKET_RES=$(curl -fsS -o /tmp/bucket-res.json -w "%{http_code}" \
+  -X POST "$PUBLIC_URL/storage/v1/bucket" \
+  -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "authorization: Bearer $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" \
+  -d '{"id":"agent-files","name":"agent-files","public":false,"file_size_limit":52428800}' \
+  || true)
+if [ "$BUCKET_RES" = "200" ] || [ "$BUCKET_RES" = "201" ]; then
+  green "✓ Bucket 'agent-files' created"
+elif grep -q "already exists" /tmp/bucket-res.json 2>/dev/null; then
+  green "✓ Bucket 'agent-files' already present"
+else
+  red "⚠  Bucket create returned $BUCKET_RES — check /tmp/bucket-res.json. Per-agent file uploads will 500 until this exists."
+fi
+
 echo
 bold "Next steps:"
 echo "  1. Open $TARGET, fill ANTHROPIC_API_KEY + OPENAI_API_KEY (+ RESEND, NANGO if used)."
