@@ -308,10 +308,27 @@ async function runAnthropicCli(req: ChatRequest): Promise<ChatResponse> {
       `[llm/provider] anthropic-cli mode ignores ${req.tools.length} request-time tool(s); register MCP server in ~/.claude/claude_desktop_config.json instead`,
     );
   }
-  const userBlock = req.messages
-    .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
-    .join("\n\n");
-  const merged = `${req.system}\n\n---\n\n${userBlock}`;
+  // XML tags instead of "User:"/"Assistant:" labels so Claude doesn't
+  // continue the pattern with a fake user turn ("User: telegram") at the
+  // end of its reply. The CLI sees a single message; reply is whatever
+  // comes after the closing </conversation> tag in the model's stream.
+  const conversation = req.messages
+    .map(
+      (m) =>
+        `<${m.role === "assistant" ? "assistant" : "user"}>${m.content}</${
+          m.role === "assistant" ? "assistant" : "user"
+        }>`,
+    )
+    .join("\n");
+  const merged = [
+    req.system,
+    "",
+    "<conversation>",
+    conversation,
+    "</conversation>",
+    "",
+    "Reply with ONLY your next assistant message. Do not add user/assistant labels, do not continue the conversation past one turn, do not echo the input back.",
+  ].join("\n");
   const text = await spawnClaudeCli(merged, req.abortSignal);
   return { text, toolCalls: [] };
 }
