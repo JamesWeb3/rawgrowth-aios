@@ -24,7 +24,10 @@ import {
 // Load every tool module so they register into the in-memory registry.
 import "@/lib/mcp/tools";
 
-const MAX_STEPS = 12;
+// Hard cap per CTO brief §02 + §P07 + day1-reply §1.
+const MAX_STEPS = 10;
+// Wall-clock cap per CTO brief §02 + R05. Drains cleanly via AbortController.
+const WALL_CLOCK_MS = 120_000;
 
 /** Map our agent.runtime strings to AI SDK model ids. */
 function runtimeToModel(runtime: string): string {
@@ -86,13 +89,21 @@ export async function executeRun(runId: string): Promise<void> {
     );
     const userMessage = buildUserMessage(run, trigger);
 
-    const result = await generateText({
-      model: anthropic(runtimeToModel(agent?.runtime ?? "claude-sonnet-4-5")),
-      system: systemPrompt,
-      prompt: userMessage,
-      tools,
-      stopWhen: stepCountIs(MAX_STEPS),
-    });
+    const abortCtl = new AbortController();
+    const wallClockTimer = setTimeout(() => abortCtl.abort(), WALL_CLOCK_MS);
+    let result;
+    try {
+      result = await generateText({
+        model: anthropic(runtimeToModel(agent?.runtime ?? "claude-sonnet-4-5")),
+        system: systemPrompt,
+        prompt: userMessage,
+        tools,
+        stopWhen: stepCountIs(MAX_STEPS),
+        abortSignal: abortCtl.signal,
+      });
+    } finally {
+      clearTimeout(wallClockTimer);
+    }
 
     await finaliseRun(
       runId,
