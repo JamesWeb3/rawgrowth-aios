@@ -51,6 +51,7 @@ export function NewDepartmentForm() {
         body: JSON.stringify({
           name: `${deptName} Manager`,
           title: managerTitle.trim() || `${deptName} Manager`,
+          role: "manager",
           description: `Leads the ${deptName} department. Coordinates sub-agents, owns KPIs, surfaces blockers.`,
           department: deptSlug,
         }),
@@ -89,6 +90,7 @@ export function NewDepartmentForm() {
           body: JSON.stringify({
             name: sub.name.trim(),
             title: sub.title.trim() || sub.name.trim(),
+            role: "sub_agent",
             department: deptSlug,
             reportsTo: managerId,
           }),
