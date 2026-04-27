@@ -29,7 +29,11 @@ type AgentNode = {
 
 type NodeData = {
   agent: AgentNode;
-  onAddSub: (parentId: string, parentName: string) => void;
+  onAddSub: (
+    parentId: string,
+    parentName: string,
+    parentDepartment: string | null,
+  ) => void;
   onAttachTelegram: (
     agentId: string,
     name: string,
@@ -106,7 +110,7 @@ function AgentNodeCard({ data }: NodeProps<NodeData>) {
       className="min-w-[220px] rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-4 py-3 text-left shadow-[0_1px_0_rgba(12,191,106,0.08)]"
       onContextMenu={(e) => {
         e.preventDefault();
-        onAddSub(agent.id, agent.name);
+        onAddSub(agent.id, agent.name, agent.department);
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0.5 }} />
@@ -143,7 +147,7 @@ function AgentNodeCard({ data }: NodeProps<NodeData>) {
         </button>
         <button
           type="button"
-          onClick={() => onAddSub(agent.id, agent.name)}
+          onClick={() => onAddSub(agent.id, agent.name, agent.department)}
           className="rounded border border-[var(--line-strong)] px-2 py-1 text-[11px] text-[var(--text-body)] hover:border-primary hover:text-primary"
         >
           + sub-agent
@@ -170,6 +174,7 @@ export function AgentTreeClient({
   const [addModalFor, setAddModalFor] = useState<{
     parentId: string;
     parentName: string;
+    parentDepartment: string | null;
   } | null>(null);
   const [tgModalFor, setTgModalFor] = useState<{
     agentId: string;
@@ -177,9 +182,12 @@ export function AgentTreeClient({
     role: "manager" | "sub-agent";
   } | null>(null);
 
-  const onAddSub = useCallback((parentId: string, parentName: string) => {
-    setAddModalFor({ parentId, parentName });
-  }, []);
+  const onAddSub = useCallback(
+    (parentId: string, parentName: string, parentDepartment: string | null) => {
+      setAddModalFor({ parentId, parentName, parentDepartment });
+    },
+    [],
+  );
   const onAttachTelegram = useCallback(
     (agentId: string, name: string, role: "manager" | "sub-agent") => {
       setTgModalFor({ agentId, name, role });
@@ -297,6 +305,7 @@ export function AgentTreeClient({
         <AddSubAgentModal
           parentId={addModalFor.parentId}
           parentName={addModalFor.parentName}
+          parentDepartment={addModalFor.parentDepartment}
           onClose={() => setAddModalFor(null)}
           onCreated={(created) => {
             setAgents((prev) => [

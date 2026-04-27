@@ -16,11 +16,13 @@ type CreatedAgent = {
 export function AddSubAgentModal({
   parentId,
   parentName,
+  parentDepartment,
   onClose,
   onCreated,
 }: {
   parentId: string;
   parentName: string;
+  parentDepartment: string | null;
   onClose: () => void;
   onCreated: (agent: CreatedAgent) => void;
 }) {
@@ -41,6 +43,8 @@ export function AddSubAgentModal({
           name: name.trim(),
           title: title.trim(),
           description: description.trim(),
+          role: "sub_agent",
+          department: parentDepartment,
           reportsTo: parentId,
         }),
       });
