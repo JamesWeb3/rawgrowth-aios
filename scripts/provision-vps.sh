@@ -292,6 +292,13 @@ import { spawn } from "node:child_process";
 const PORT = 9876;
 const CLAUDE = "/usr/local/bin/claude";
 
+// CTO brief §02 + R05: 4-concurrent spawn cap. CX22 has 4GB RAM and each
+// claude --print holds ~300-500MB resident. Four concurrent leaves
+// headroom for Next.js + Caddy + Postgres client. Override via env.
+const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_SPAWNS ?? 4);
+let inFlight = 0;
+const pendingPrompts = []; // queued strings when at cap
+
 const slots = new Map(); // command → { running, redrive }
 
 function trigger(command) {
@@ -315,6 +322,12 @@ function trigger(command) {
 }
 
 function spawnWithPrompt(prompt) {
+  if (inFlight >= MAX_CONCURRENT) {
+    pendingPrompts.push(prompt);
+    console.log(`drain[run] queued, depth=${pendingPrompts.length} inFlight=${inFlight}`);
+    return;
+  }
+  inFlight += 1;
   const started = Date.now();
   const child = spawn(CLAUDE, [
     "--print",
@@ -322,7 +335,10 @@ function spawnWithPrompt(prompt) {
     prompt,
   ], { stdio: ["ignore", "inherit", "inherit"], detached: true });
   child.on("exit", (code) => {
-    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length}`);
+    inFlight -= 1;
+    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length} inFlight=${inFlight}`);
+    const next = pendingPrompts.shift();
+    if (next !== undefined) spawnWithPrompt(next);
   });
   child.unref();
 }
