@@ -13,7 +13,6 @@ import {
   Activity,
   Sparkles,
   BookOpen,
-  FolderOpen,
 } from "lucide-react";
 
 import {
@@ -59,7 +58,6 @@ const navSections: NavSection[] = [
     items: [
       { label: "Agents", href: "/agents", icon: Bot },
       { label: "Routines", href: "/routines", icon: Repeat },
-      { label: "Files", href: "/knowledge", icon: FolderOpen },
       { label: "Activity", href: "/activity", icon: Activity },
       { label: "Approvals", href: "/approvals", icon: ShieldCheck },
     ],

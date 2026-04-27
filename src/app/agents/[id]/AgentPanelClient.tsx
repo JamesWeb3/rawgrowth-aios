@@ -196,10 +196,14 @@ export function AgentPanelClient({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <section className="rounded-md border border-[var(--line)] bg-[var(--brand-surface)] p-4">
               <h3 className="text-xs uppercase tracking-widest text-primary">
-                Role
+                Job description
               </h3>
               <p className="mt-2 text-sm text-[var(--text-body)]">
-                {agent.description ?? "—"}
+                {agent.description?.trim() || (
+                  <span className="text-[var(--text-muted)]">
+                    No description set. Edit in Settings tab.
+                  </span>
+                )}
               </p>
             </section>
 
