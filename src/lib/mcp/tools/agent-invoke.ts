@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { registerTool, text, textError } from "../registry";
 
 /**
- * agent_invoke — fire-and-relay. A manager persona calls this mid-
+ * agent_invoke  -  fire-and-relay. A manager persona calls this mid-
  * conversation to ask a sub-agent for something; the reply comes back
  * as a single text block the manager can weave into its own answer.
  *
@@ -60,7 +60,7 @@ registerTool({
     // Find-or-create an "ad-hoc invocation" routine for this agent. We use
     // one long-lived routine per agent so run history stays grouped in the
     // dashboard under a recognisable title.
-    const INVOKE_ROUTINE_TITLE = `Direct invocation — ${target.name}`;
+    const INVOKE_ROUTINE_TITLE = `Direct invocation  -  ${target.name}`;
 
     const { data: routine } = await db
       .from("rgaios_routines")

@@ -6,7 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { isSelfHosted } from "@/lib/deploy-mode";
 
 export async function POST(req: Request) {
-  // Single-tenant in self-hosted mode — nothing to switch to.
+  // Single-tenant in self-hosted mode  -  nothing to switch to.
   if (isSelfHosted) {
     return NextResponse.json({ ok: false, error: "Not available" }, { status: 404 });
   }

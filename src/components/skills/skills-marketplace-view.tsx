@@ -285,7 +285,7 @@ function SkillSheet({
         throw new Error(body.error ?? "Save failed");
       }
       toast.success(
-        `Updated "${skill.name}" — ${selected.size} agent${selected.size === 1 ? "" : "s"}`,
+        `Updated "${skill.name}"  -  ${selected.size} agent${selected.size === 1 ? "" : "s"}`,
       );
       onSaved();
       onOpenChange(false);

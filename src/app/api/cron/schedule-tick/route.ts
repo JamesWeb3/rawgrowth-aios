@@ -17,7 +17,7 @@ export const maxDuration = 300;
  *   2. updates the trigger's last_fired_at to "now"
  *   3. fires executeRun() in the background
  *
- * Auth: matches Vercel's cron convention — Authorization header is
+ * Auth: matches Vercel's cron convention  -  Authorization header is
  * `Bearer ${CRON_SECRET}`. Set CRON_SECRET in Vercel env; the scheduler
  * sends it automatically.
  */
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   const now = new Date();
 
-  // Always sweep pendings that have been sitting too long — regardless of
+  // Always sweep pendings that have been sitting too long  -  regardless of
   // executor state. This covers telegram-triggered runs that pile up while
   // the executor is down, and leftovers from past outages.
   const staleCutoff = new Date(now.getTime() - STALE_PENDING_MS).toISOString();
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     .from("rgaios_routine_runs")
     .update({
       status: "failed",
-      error: "executor offline — run aged out before claim",
+      error: "executor offline  -  run aged out before claim",
       completed_at: now.toISOString(),
     })
     .eq("status", "pending")
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
   const sweptCount = sweptRows?.length ?? 0;
 
   // If the local executor isn't ready, stop here. Don't materialise new
-  // schedule runs — they'd just join the backlog. Sweep still ran above.
+  // schedule runs  -  they'd just join the backlog. Sweep still ran above.
   if (!executorReady) {
     const { count: pendingCount } = await db
       .from("rgaios_routine_runs")
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
   // NOTE: We intentionally do NOT nest `assignee:rgaios_agents!...(reports_to)`
   // inside this select. PostgREST hint resolution can fail silently if the FK
   // constraint isn't introspected as expected (stale schema cache, ambiguous
-  // hint, etc.) — the embed comes back as `null` instead of erroring, and
+  // hint, etc.)  -  the embed comes back as `null` instead of erroring, and
   // the sub-agent filter below would treat every sub-agent routine as a
   // manager, firing them all on heartbeat and silently breaking brief §9.6.
   // Two explicit queries are slower by one round-trip but cannot silently
@@ -262,7 +262,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Count any pending runs across the DB — the self-hosted tick uses this
+  // Count any pending runs across the DB  -  the self-hosted tick uses this
   // to decide whether to poke the drain daemon to wake Claude Code.
   // (Hosted mode doesn't need it; dispatchRun() handles its own executor.)
   const { count: pendingCount } = await db

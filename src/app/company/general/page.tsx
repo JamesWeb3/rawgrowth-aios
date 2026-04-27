@@ -4,7 +4,7 @@ import { CompanyGeneralView } from "@/components/company/general-view";
 import { getOrgOverview } from "@/lib/organizations/overview";
 import { DEPLOY_MODE } from "@/lib/deploy-mode";
 
-export const metadata = { title: "General — Rawgrowth" };
+export const metadata = { title: "General  -  Rawgrowth" };
 
 export default async function GeneralPage() {
   const org = await getOrgOverview();

@@ -15,7 +15,7 @@ type AuditRow = {
 /**
  * Live activity feed backed by Supabase Realtime. Subscribes to INSERTs
  * on rgaios_audit_log filtered by organization_id so each VPS only
- * sees its own events. Anon key + URL are baked into the bundle —
+ * sees its own events. Anon key + URL are baked into the bundle  - 
  * RLS on rgaios_audit_log (0016 + 0015) scopes the subscription to
  * the caller's org.
  *

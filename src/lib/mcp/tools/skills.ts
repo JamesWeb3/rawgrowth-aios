@@ -140,11 +140,11 @@ registerTool({
       "",
       ...shown.map(
         (s) =>
-          `- \`${s.id}\` · **${s.name}** · ${s.category} — ${s.tagline}`,
+          `- \`${s.id}\` · **${s.name}** · ${s.category}  -  ${s.tagline}`,
       ),
     ];
     if (total > shown.length) {
-      lines.push("", `(${total - shown.length} more — raise \`limit\` to see them.)`);
+      lines.push("", `(${total - shown.length} more  -  raise \`limit\` to see them.)`);
     }
     return text(lines.join("\n"));
   },
@@ -182,7 +182,7 @@ registerTool({
       ...skillIds.map((id) => {
         const s = getSkill(id);
         return s
-          ? `- \`${s.id}\` · **${s.name}** · ${s.category} — ${s.tagline}`
+          ? `- \`${s.id}\` · **${s.name}** · ${s.category}  -  ${s.tagline}`
           : `- \`${id}\` · (missing from catalog)`;
       }),
     ];
@@ -195,7 +195,7 @@ registerTool({
 registerTool({
   name: "skills_assign",
   description:
-    "Assign one or more skills to an agent. Additive — existing skills are kept. Pass `agent` (id or exact name) and `skill_ids` (array of catalog ids from `skills_catalog_list`, e.g. ['rawclaw-react-patterns','rawclaw-frontend-design']).",
+    "Assign one or more skills to an agent. Additive  -  existing skills are kept. Pass `agent` (id or exact name) and `skill_ids` (array of catalog ids from `skills_catalog_list`, e.g. ['rawclaw-react-patterns','rawclaw-frontend-design']).",
   isWrite: true,
   inputSchema: {
     type: "object",
@@ -244,7 +244,7 @@ registerTool({
       for (const id of added) {
         const s = getSkill(id);
         if (!s) continue;
-        lines.push(`- **${s.name}** (\`${s.id}\`) — install on laptop: \`${installCommand(s)}\``);
+        lines.push(`- **${s.name}** (\`${s.id}\`)  -  install on laptop: \`${installCommand(s)}\``);
       }
     }
     if (alreadyHad.length > 0) {

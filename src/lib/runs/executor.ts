@@ -156,7 +156,7 @@ export async function executeRun(runId: string): Promise<void> {
         error: message,
       });
     }
-    // Swallow the throw — callers fire-and-forget.
+    // Swallow the throw  -  callers fire-and-forget.
     console.error("[executor]", runId, message);
   }
 }
@@ -374,7 +374,7 @@ function buildSystemPrompt(
     `You are currently executing the routine "${routineTitle}". The user's instructions are below. Follow them precisely.`,
     "",
     "**Operating rules:**",
-    "- Use the provided tools to read data, take actions, and gather context. Do not fabricate facts — call tools when you need information.",
+    "- Use the provided tools to read data, take actions, and gather context. Do not fabricate facts  -  call tools when you need information.",
     "- Tools that write (draft emails, create docs, etc.) are labelled as such; prefer draft-first tools over direct-send when both exist.",
     "- When the routine is complete, return a short plain-text summary of what you did and any links (draft URLs, file ids, etc.) the user needs.",
     "- Stop after at most a dozen tool calls. If you need more, ask for approval instead of looping.",
@@ -462,7 +462,7 @@ function buildToolset(
       inputSchema: jsonSchema(t.inputSchema as Record<string, unknown>),
       execute: async (args: unknown) => {
         const configured = writePolicy[policyKey] ?? "direct";
-        // Read tools are never gated — policy only matters for writes.
+        // Read tools are never gated  -  policy only matters for writes.
         const policy = t.isWrite ? configured : "direct";
         const typedArgs = (args ?? {}) as Record<string, unknown>;
 
@@ -473,7 +473,7 @@ function buildToolset(
             agentId,
             toolName: t.name,
             toolArgs: typedArgs,
-            reason: `Agent attempted ${t.name} — write policy requires approval.`,
+            reason: `Agent attempted ${t.name}  -  write policy requires approval.`,
           });
           await auditLog(toolCtx.organizationId, "approval_requested", {
             run_id: runId,

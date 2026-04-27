@@ -5,7 +5,7 @@
  *   - deleteWebhook  → clean up on disconnect
  *   - sendMessage    → reply to the user after a routine fires
  *
- * No SDK dependency — fetch + JSON is enough.
+ * No SDK dependency  -  fetch + JSON is enough.
  */
 
 const API_ROOT = "https://api.telegram.org";
@@ -81,7 +81,7 @@ export function sendMessage(
 
 /**
  * Replace the contents of a message we previously sent. Use this to turn
- * a placeholder ("…") into the real agent reply once it arrives — Telegram
+ * a placeholder ("…") into the real agent reply once it arrives  -  Telegram
  * animates the swap, so from the user's side it looks like a speech bubble
  * that was thinking and then finished.
  *
@@ -117,7 +117,7 @@ export async function editMessageText(
 /**
  * Show a "typing…" bubble in the chat HEADER (not inline). Auto-clears
  * after 5s or when the next message is sent. Use it for instant feedback
- * while the agent thinks — pairs well with the placeholder-then-edit
+ * while the agent thinks  -  pairs well with the placeholder-then-edit
  * pattern in the webhook handler.
  */
 export function sendChatAction(

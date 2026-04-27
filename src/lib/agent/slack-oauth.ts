@@ -12,7 +12,7 @@ import { encryptSecret, decryptSecret } from "@/lib/crypto";
  * bound to that client's workspace.
  *
  * This avoids the "shared Slack App + one Events URL" routing problem
- * — each client's events land directly on their own VPS because their
+ *  -  each client's events land directly on their own VPS because their
  * Slack App was configured to point at their VPS webhook URL.
  *
  * Scope list below matches our Phase 1+2+3 feature set: read channels
@@ -36,7 +36,7 @@ export const SLACK_OAUTH_TOKEN_URL = "https://slack.com/api/oauth.v2.access";
 
 /**
  * Pack in-flight state into the `state` param so we don't need a temp
- * DB row. We encrypt the payload — the state passes through the user's
+ * DB row. We encrypt the payload  -  the state passes through the user's
  * browser, don't want it to leak the org id in plaintext.
  */
 export function packState(input: {
@@ -67,7 +67,7 @@ export function unpackState(state: string): UnpackedState | null {
       t?: number;
     };
     if (!parsed.o) return null;
-    // Reject >30 min old — user gave up / tab went stale.
+    // Reject >30 min old  -  user gave up / tab went stale.
     if (parsed.t && Date.now() - parsed.t > 30 * 60_000) return null;
     return {
       organizationId: parsed.o,

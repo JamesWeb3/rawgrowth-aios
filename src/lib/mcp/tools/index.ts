@@ -1,5 +1,5 @@
 /**
- * Tool loader — importing this file triggers every tool module's
+ * Tool loader  -  importing this file triggers every tool module's
  * registerTool() side effects. The MCP route imports this once.
  *
  * Add a new integration? Create a new file next to this one, register

@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
       updateFields.slack_channel_id = data.slack_channel;
     }
 
-    // Onboarding complete at step 8 — flip flag on the org row
+    // Onboarding complete at step 8  -  flip flag on the org row
     if (step >= 8) {
       updateFields.onboarding_completed = true;
     }

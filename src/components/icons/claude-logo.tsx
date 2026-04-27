@@ -1,5 +1,5 @@
 /**
- * Official Claude (Anthropic) symbol — vector matched to public/Claude_AI_symbol.svg.
+ * Official Claude (Anthropic) symbol  -  vector matched to public/Claude_AI_symbol.svg.
  * Brand colour #d97757 is baked into the path's fill so it always renders correctly,
  * regardless of `currentColor` context.
  */

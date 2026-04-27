@@ -14,7 +14,7 @@ import {
 } from "ai";
 
 /**
- * Unified chat-LLM provider abstraction. ONE entry point — `chatComplete` —
+ * Unified chat-LLM provider abstraction. ONE entry point  -  `chatComplete`  - 
  * fans out to three backends so every call site (onboarding chat, manager
  * runs, brand-voice rewrite) can flip provider per-VPS via env var without
  * touching call-site code.
@@ -38,7 +38,7 @@ import {
  *                    the caller passes tools while in CLI mode.
  *
  * Contract: `chatComplete` executes ONE model step. Agentic loops (multi-
- * turn tool use) live in the caller — the provider just runs the step,
+ * turn tool use) live in the caller  -  the provider just runs the step,
  * returns text + toolCalls, and the caller decides whether to call again
  * with the tool results appended to messages.
  */
@@ -51,7 +51,7 @@ export type ChatMessage = {
 };
 
 /**
- * OpenAI Function-calling tool shape — the abstraction's canonical form.
+ * OpenAI Function-calling tool shape  -  the abstraction's canonical form.
  * For anthropic-api we translate to AI SDK `tool()` wrappers; for
  * anthropic-cli we drop them with a warning (CLI tools come from the
  * operator's claude_desktop_config, not request-time wiring).
@@ -121,7 +121,7 @@ export function resolveProvider(callSiteEnvVar?: string): ChatProviderId {
     return raw;
   }
   console.warn(
-    `[llm/provider] unknown provider "${raw}" — falling back to openai`,
+    `[llm/provider] unknown provider "${raw}"  -  falling back to openai`,
   );
   return "openai";
 }
@@ -135,12 +135,12 @@ function openaiClient(): OpenAI {
   return _openai;
 }
 
-/** Test seam — flush the cached OpenAI client between env-flip cases. */
+/** Test seam  -  flush the cached OpenAI client between env-flip cases. */
 export function __resetClientsForTests() {
   _openai = null;
 }
 
-/** Public entry point — see ChatRequest / ChatResponse. */
+/** Public entry point  -  see ChatRequest / ChatResponse. */
 export async function chatComplete(req: ChatRequest): Promise<ChatResponse> {
   const provider = req.provider ?? resolveProvider();
   switch (provider) {
@@ -217,7 +217,7 @@ async function runOpenAI(req: ChatRequest): Promise<ChatResponse> {
 
 /**
  * AI SDK runs its own internal tool loop, so we surface the FINAL text +
- * any tool calls collected. Tools translated from OpenAI shape — each
+ * any tool calls collected. Tools translated from OpenAI shape  -  each
  * tool's `execute` is left as a no-op that records the call; the caller
  * is responsible for executing tool side-effects (parity with how the
  * openai branch returns tool calls without executing them). The exception

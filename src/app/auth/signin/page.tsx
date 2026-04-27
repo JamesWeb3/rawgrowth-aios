@@ -26,7 +26,7 @@ export default function SignInPage() {
     setLoading(true);
     // Validate creds first (no redirect) so we can show a friendly error.
     // If valid, kick a redirect-mode signIn so the Set-Cookie header and
-    // the 302 leave the server in a single response — avoids a race where
+    // the 302 leave the server in a single response  -  avoids a race where
     // middleware on the destination route runs before the session cookie
     // has propagated to the client.
     const probe = await signIn("credentials", {

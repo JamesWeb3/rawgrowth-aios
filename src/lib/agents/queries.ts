@@ -83,7 +83,7 @@ export async function deleteAgent(
   organizationId: string,
   id: string,
 ): Promise<void> {
-  // reports_to is ON DELETE SET NULL — direct reports reparent to null automatically.
+  // reports_to is ON DELETE SET NULL  -  direct reports reparent to null automatically.
   const { error } = await supabaseAdmin()
     .from("rgaios_agents")
     .delete()

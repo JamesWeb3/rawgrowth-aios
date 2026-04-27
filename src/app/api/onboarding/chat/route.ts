@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = `You are the Rawgrowth onboarding assistant. You run a lon
 
 You must call the provided tools to persist data.
 
-STRICT RULE — no transition announcements. Do NOT say any of these or any close paraphrase:
+STRICT RULE  -  no transition announcements. Do NOT say any of these or any close paraphrase:
 • "moving on to the next section"
 • "let's move on"
 • "I'll move on"
@@ -40,29 +40,29 @@ STRICT RULE — no transition announcements. Do NOT say any of these or any clos
 • "on to the next…"
 • "let's get to…"
 
-Instead: acknowledge the client's previous answer in ONE short clause if you like (e.g. "Got it."), then ask your next question directly — no transitional phrasing that names a topic or section.
+Instead: acknowledge the client's previous answer in ONE short clause if you like (e.g. "Got it."), then ask your next question directly  -  no transitional phrasing that names a topic or section.
 
 NEVER repeat a question that's already been answered in this conversation. Before asking, scan the message history for an answer to that exact question. If you find one, skip to the next field.
 
 ------------------------------------------------------------
-SECTION 1 — Communication preferences
+SECTION 1  -  Communication preferences
 ------------------------------------------------------------
 This section captures ONLY four values. Do NOT ask about anything else.
 
 Fields for Section 1 (the ONLY questions allowed here):
-  • messaging_channel — one of telegram / slack / whatsapp
-  • messaging_handle — their handle for that channel (@username / workspace.slack.com / phone with country code)
-  • slack_workspace_url — optional
-  • slack_channel_name — optional
+  • messaging_channel  -  one of telegram / slack / whatsapp
+  • messaging_handle  -  their handle for that channel (@username / workspace.slack.com / phone with country code)
+  • slack_workspace_url  -  optional
+  • slack_channel_name  -  optional
 
-FORBIDDEN in Section 1 (these are Section 2 basicInfo fields — ask them LATER):
+FORBIDDEN in Section 1 (these are Section 2 basicInfo fields  -  ask them LATER):
   ✗ phone (standalone; "phone with country code" ONLY when it's the WhatsApp handle)
   ✗ timezone
   ✗ preferred_comms / preferred communication method
   ✗ email, full name, business name
 
 Ask in order (one question per turn, acknowledge each answer first):
-1. Which messaging channel — Telegram, Slack, or WhatsApp?
+1. Which messaging channel  -  Telegram, Slack, or WhatsApp?
 2. Their handle for that channel.
 3. "Do you have a Slack workspace you'd like to connect too?"
    • YES → ask workspace URL, then channel name.
@@ -73,11 +73,11 @@ Once you have those four values, call \`complete_section_1\`. Pass slack_workspa
 IMMEDIATELY after the tool returns, proceed to Section 2. Do NOT say "section 1 done" or "let's move on".
 
 ------------------------------------------------------------
-SECTION 2 — Brand Questionnaire (13 sub-sections)
+SECTION 2  -  Brand Questionnaire (13 sub-sections)
 ------------------------------------------------------------
 Walk through each sub-section below in order. For each:
 - Ask conversationally, grouping 1–3 related questions per turn.
-- Don't force every field — accept what the client volunteers.
+- Don't force every field  -  accept what the client volunteers.
 - Once you have enough for that sub-section, call \`save_questionnaire_section({section_id, data})\` with only the fields you've actually captured.
 - Then IMMEDIATELY ask the first question of the next sub-section. Never announce boundaries.
 
@@ -97,10 +97,10 @@ Sub-sections (in order) and field names to extract:
 12. toolsSystems: tech_stack, tools_love, tools_frustrate, ai_comfort
 13. additionalContext: anything_else, most_excited, most_nervous, how_heard, convincing_content
 
-After \`save_questionnaire_section\` for additionalContext (the final sub-section), call \`finalize_questionnaire\`. The system will AUTOMATICALLY generate the brand profile and stream it into the chat — you do NOT need to call generate_brand_profile for the initial version.
+After \`save_questionnaire_section\` for additionalContext (the final sub-section), call \`finalize_questionnaire\`. The system will AUTOMATICALLY generate the brand profile and stream it into the chat  -  you do NOT need to call generate_brand_profile for the initial version.
 
 ------------------------------------------------------------
-SECTION 3 — Brand Profile
+SECTION 3  -  Brand Profile
 ------------------------------------------------------------
 This section does NOT ask the client any questions. The brand profile is generated from their questionnaire data.
 
@@ -111,28 +111,28 @@ Flow:
    • Tells them to reply "approve" if it looks right, or describe changes they'd like
    • Mentions they can edit it later from their dashboard
 3. Wait for their response.
-   • If they approve ("looks good", "approve", "ship it") → call \`approve_brand_profile\`. The system will automatically emit a short transition line and open the Section 4 uploader for you — do NOT write any text after this tool call. Stop immediately.
+   • If they approve ("looks good", "approve", "ship it") → call \`approve_brand_profile\`. The system will automatically emit a short transition line and open the Section 4 uploader for you  -  do NOT write any text after this tool call. Stop immediately.
    • If they request changes → call \`generate_brand_profile({ feedback: "verbatim feedback" })\`. A new streaming version will render the same way. After it completes, ask for approval again.
 
 ------------------------------------------------------------
-SECTION 4 — Brand Documents
+SECTION 4  -  Brand Documents
 ------------------------------------------------------------
 Goal: collect the client's logos, brand guidelines, and any other brand assets.
 
 Flow:
 1. In one short sentence, invite them to drop in their logos / brand guidelines / other assets.
 2. IMMEDIATELY call \`show_brand_docs_uploader\`. The system will render an inline drag-and-drop widget in the chat.
-3. Wait silently while they upload or skip. Do NOT describe the widget or list the zones — the UI does that.
+3. Wait silently while they upload or skip. Do NOT describe the widget or list the zones  -  the UI does that.
 4. When the client sends a message indicating they're done ("uploaded", "that's all", "no docs"), call \`complete_brand_docs_section\` and proceed immediately to Section 6.
 
 ------------------------------------------------------------
-SECTION 6 — Software Access
+SECTION 6  -  Software Access
 ------------------------------------------------------------
 Goal: confirm the client has added chris@rawgrowth.ai to each of the platforms below, or that they don't use that platform.
 
 Walk through these platforms ONE AT A TIME, in order:
 ${SOFTWARE_ACCESS_PLATFORMS.map(
-  (p, i) => `${i + 1}. ${p.id} — ${p.label}`
+  (p, i) => `${i + 1}. ${p.id}  -  ${p.label}`
 ).join("\n")}
 
 For each platform:
@@ -144,7 +144,7 @@ For each platform:
 After ALL 6 platforms have been covered with save_software_access calls, call \`complete_software_access_section\`. Then proceed to Section 7 without announcing the boundary.
 
 ------------------------------------------------------------
-SECTION 7 — Schedule Milestone Calls
+SECTION 7  -  Schedule Milestone Calls
 ------------------------------------------------------------
 Goal: get the client to book their 4 milestone calls with the team.
 
@@ -163,7 +163,7 @@ For each call:
 After all 4 calls are covered, call \`complete_schedule_calls_section\`. Then proceed to Section 8 without announcing.
 
 ------------------------------------------------------------
-SECTION 8 — Completion
+SECTION 8  -  Completion
 ------------------------------------------------------------
 Once Section 7 is done, call \`complete_onboarding\` immediately. After it returns, give a short warm congratulations mentioning:
 - Their AI department will begin training on their brand immediately
@@ -250,7 +250,7 @@ const TOOLS: ChatCompletionTool[] = [
     function: {
       name: "generate_brand_profile",
       description:
-        "Generate (or regenerate) the client's brand profile from their questionnaire data. The rendered markdown is automatically shown in the chat when this returns — never repeat its content in your reply.",
+        "Generate (or regenerate) the client's brand profile from their questionnaire data. The rendered markdown is automatically shown in the chat when this returns  -  never repeat its content in your reply.",
       parameters: {
         type: "object",
         properties: {
@@ -768,7 +768,7 @@ async function completeOnboarding(
       { onConflict: "organization_id" }
     );
   if (transcriptErr) {
-    // Don't fail the whole completion over this — log and continue
+    // Don't fail the whole completion over this  -  log and continue
     console.error(
       "[onboarding] transcript save failed:",
       transcriptErr.message
@@ -905,7 +905,7 @@ export async function POST(req: NextRequest) {
     let nextActionBlock = "";
 
     if (!section1Done) {
-      nextActionBlock = `Section 1 is NOT yet complete. Your ONE and ONLY job right now is Section 1 — ask about messaging channel (Telegram/Slack/WhatsApp), handle, then the optional Slack workspace. Do NOT ask any Section 2 questions (no timezone, no phone, no preferred_comms) until \`complete_section_1\` has been called.`;
+      nextActionBlock = `Section 1 is NOT yet complete. Your ONE and ONLY job right now is Section 1  -  ask about messaging channel (Telegram/Slack/WhatsApp), handle, then the optional Slack workspace. Do NOT ask any Section 2 questions (no timezone, no phone, no preferred_comms) until \`complete_section_1\` has been called.`;
     } else if (!questionnaireSubmitted) {
       const nextSub = subsectionState.find((s) => !s.saved);
       if (nextSub) {
@@ -930,7 +930,7 @@ export async function POST(req: NextRequest) {
             handle.startsWith("+")
           ) {
             hints.push(
-              `The client's WhatsApp handle is "${handle}" — that IS their phone number with country code. Do NOT ask them for a phone number; just include { phone: "${handle}" } in your basicInfo save.`
+              `The client's WhatsApp handle is "${handle}"  -  that IS their phone number with country code. Do NOT ask them for a phone number; just include { phone: "${handle}" } in your basicInfo save.`
             );
           } else if (handle) {
             hints.push(
@@ -938,7 +938,7 @@ export async function POST(req: NextRequest) {
             );
           }
           hints.push(
-            `If the client's phone number or WhatsApp handle has a country code (e.g. +64 → New Zealand → NZT, +44 → UK → GMT/BST, +61 → Australia), INFER the timezone from it and use that value WITHOUT asking. Only ask about timezone if the country has multiple zones (US, Canada, Australia, Russia, Brazil) — in that case ask which city or state.`
+            `If the client's phone number or WhatsApp handle has a country code (e.g. +64 → New Zealand → NZT, +44 → UK → GMT/BST, +61 → Australia), INFER the timezone from it and use that value WITHOUT asking. Only ask about timezone if the country has multiple zones (US, Canada, Australia, Russia, Brazil)  -  in that case ask which city or state.`
           );
           hints.push(
             `Scan the recent conversation for anything the client already said about phone, timezone, email, preferred_comms, full_name, business_name. If they already mentioned it, use that value WITHOUT asking again.`
@@ -947,17 +947,17 @@ export async function POST(req: NextRequest) {
         }
 
         nextActionBlock = `Section 1 is complete. The current Section 2 sub-section is "${nextSub.label}" (section_id: "${nextSub.id}"). ${captured} Remaining fields to ask about: ${
-          remaining.length ? remaining.join(", ") : "(all basic fields covered — wrap up with a short extra question if useful, then save)."
-        }. Once you have enough, call \`save_questionnaire_section({section_id: "${nextSub.id}", data: {...}})\`. Pass ONLY the new fields you captured in this turn — existing data will be merged server-side.${basicInfoHints}`;
+          remaining.length ? remaining.join(", ") : "(all basic fields covered  -  wrap up with a short extra question if useful, then save)."
+        }. Once you have enough, call \`save_questionnaire_section({section_id: "${nextSub.id}", data: {...}})\`. Pass ONLY the new fields you captured in this turn  -  existing data will be merged server-side.${basicInfoHints}`;
       } else {
-        nextActionBlock = `All 13 Section 2 sub-sections are saved but \`finalize_questionnaire\` hasn't been called. Call it now — the brand profile will be auto-generated.`;
+        nextActionBlock = `All 13 Section 2 sub-sections are saved but \`finalize_questionnaire\` hasn't been called. Call it now  -  the brand profile will be auto-generated.`;
       }
     } else if (!profileGenerated) {
-      nextActionBlock = `Questionnaire is submitted but the brand profile hasn't been generated. This is unexpected — call \`generate_brand_profile({ feedback: null })\` to recover.`;
+      nextActionBlock = `Questionnaire is submitted but the brand profile hasn't been generated. This is unexpected  -  call \`generate_brand_profile({ feedback: null })\` to recover.`;
     } else if (!profileApproved) {
       nextActionBlock = `Brand profile v${latestProfile?.version} is rendered and waiting on the client's decision. If they approve → call \`approve_brand_profile\`. If they ask for changes → call \`generate_brand_profile({ feedback: "<their exact words>" })\`.`;
     } else if (!brandDocsDone) {
-      // Section 4 — brand documents
+      // Section 4  -  brand documents
       const { data: docs } = await supabaseAdmin()
         .from("rgaios_onboarding_documents")
         .select("id, type, filename")
@@ -975,7 +975,7 @@ export async function POST(req: NextRequest) {
         nextActionBlock = `You are in Section 4. The uploader is already visible to the client. They have uploaded ${uploadCount} file(s) so far${uploadCount ? `: ${docs!.map((d: any) => d.filename).join(", ")}` : ""}. Wait for them to say they're done (or indicate they have nothing). When they do, call \`complete_brand_docs_section\`. Do NOT call \`show_brand_docs_uploader\` again.`;
       }
     } else if (!softwareAccessDone) {
-      // Section 6 — find next platform to ask about
+      // Section 6  -  find next platform to ask about
       const nextPlatform = SOFTWARE_ACCESS_PLATFORMS.find(
         (p) => !softwarePlatformsCovered.has(p.id)
       );
@@ -987,7 +987,7 @@ export async function POST(req: NextRequest) {
         nextActionBlock = `All 6 software platforms have been covered (${[...softwarePlatformsCovered].join(", ")}). Call \`complete_software_access_section\` now.`;
       }
     } else if (!scheduleCallsDone) {
-      // Section 7 — find next call to ask about
+      // Section 7  -  find next call to ask about
       const nextCall = SCHEDULE_CALLS.find((c) => !bookedCallIds.has(c.id));
       if (nextCall) {
         nextActionBlock = `You are in Section 7. Calls already handled: ${
@@ -1002,9 +1002,9 @@ export async function POST(req: NextRequest) {
       nextActionBlock = `Onboarding is fully complete. If the client says anything further, respond warmly and briefly.`;
     }
 
-    const contextPrompt = `\n\n------------------------------------------------------------\nALREADY KNOWN (from the clients record) — do NOT ask these again\n------------------------------------------------------------\n${
+    const contextPrompt = `\n\n------------------------------------------------------------\nALREADY KNOWN (from the clients record)  -  do NOT ask these again\n------------------------------------------------------------\n${
       knownLines.length ? knownLines.join("\n") : "(nothing yet)"
-    }\n\nWhen you call \`save_questionnaire_section\` for \`basicInfo\`, automatically include \`full_name\`, \`business_name\`, and \`email\` from the known list alongside any NEW fields the client gives you (\`phone\`, \`timezone\`, \`preferred_comms\`). Messaging preferences are NOT already known — you still ask about them in Section 1.\n\n------------------------------------------------------------\nNEXT ACTION — follow this exactly\n------------------------------------------------------------\n${nextActionBlock}\n`;
+    }\n\nWhen you call \`save_questionnaire_section\` for \`basicInfo\`, automatically include \`full_name\`, \`business_name\`, and \`email\` from the known list alongside any NEW fields the client gives you (\`phone\`, \`timezone\`, \`preferred_comms\`). Messaging preferences are NOT already known  -  you still ask about them in Section 1.\n\n------------------------------------------------------------\nNEXT ACTION  -  follow this exactly\n------------------------------------------------------------\n${nextActionBlock}\n`;
 
     // Only user/assistant roles go to the model. Defensive: drop anything
     // else (reasoning bubbles, uploader placeholders) and empty-content rows.
@@ -1161,7 +1161,7 @@ export async function POST(req: NextRequest) {
                     emit({
                       type: "text",
                       delta:
-                        "\n\nGenerating your brand profile now — this takes 20–30 seconds.\n\n",
+                        "\n\nGenerating your brand profile now  -  this takes 20–30 seconds.\n\n",
                     });
                     const genResult = await generateBrandProfile(
                       user.id,
@@ -1192,7 +1192,7 @@ export async function POST(req: NextRequest) {
                   emit({
                     type: "text",
                     delta:
-                      "\n\nRegenerating with your feedback — one moment.\n\n",
+                      "\n\nRegenerating with your feedback  -  one moment.\n\n",
                   });
                   const genResult = await generateBrandProfile(
                     user.id,
@@ -1218,7 +1218,7 @@ export async function POST(req: NextRequest) {
                     emit({
                       type: "text",
                       delta:
-                        "\n\nLocked in. Drop in any logos, brand guidelines, or other assets below — or skip if you don't have any yet.\n\n",
+                        "\n\nLocked in. Drop in any logos, brand guidelines, or other assets below  -  or skip if you don't have any yet.\n\n",
                     });
                     emit({ type: "brand_docs_uploader" });
                     result = {
@@ -1262,7 +1262,7 @@ export async function POST(req: NextRequest) {
                     emit({ type: "portal_button" });
                     result = {
                       ok: true,
-                      note: "Onboarding finalized. Write ONE short congratulatory sentence (e.g. 'You're all set — welcome to Rawgrowth.'). The Continue to Portal button is already rendered for them. Do NOT describe it.",
+                      note: "Onboarding finalized. Write ONE short congratulatory sentence (e.g. 'You're all set  -  welcome to Rawgrowth.'). The Continue to Portal button is already rendered for them. Do NOT describe it.",
                     };
                   }
                 } else {

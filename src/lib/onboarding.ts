@@ -128,7 +128,7 @@ export const BRAND_DOC_ZONES: Array<{
   },
 ];
 
-// Section 6 — platforms where the client should add chris@rawgrowth.ai
+// Section 6  -  platforms where the client should add chris@rawgrowth.ai
 export const SOFTWARE_ACCESS_PLATFORMS: Array<{
   id: string;
   label: string;
@@ -184,7 +184,7 @@ export const SOFTWARE_ACCESS_PLATFORMS: Array<{
   },
 ];
 
-// Section 7 — only the first kickoff call gets booked during onboarding.
+// Section 7  -  only the first kickoff call gets booked during onboarding.
 // Future milestone calls (Month 2/3/4) will be scheduled later by the team.
 export const SCHEDULE_CALLS: Array<{
   id: string;
@@ -246,7 +246,7 @@ export async function computeOnboardingProgress(
     }
   }
 
-  // Section 3 — brand profile approved
+  // Section 3  -  brand profile approved
   const { data: approvedProfile } = await db
     .from("rgaios_brand_profiles")
     .select("id")
@@ -256,16 +256,16 @@ export async function computeOnboardingProgress(
     .maybeSingle();
   if (approvedProfile) completed.push("brandProfile");
 
-  // Section 4 — brand docs complete (step >= 5)
+  // Section 4  -  brand docs complete (step >= 5)
   if ((org?.onboarding_step ?? 1) >= 5) completed.push("brandDocs");
 
-  // Section 6 — software access complete (step >= 6)
+  // Section 6  -  software access complete (step >= 6)
   if ((org?.onboarding_step ?? 1) >= 6) completed.push("softwareAccess");
 
-  // Section 7 — scheduled calls complete (step >= 7)
+  // Section 7  -  scheduled calls complete (step >= 7)
   if ((org?.onboarding_step ?? 1) >= 7) completed.push("scheduleCalls");
 
-  // Section 8 — onboarding fully completed flag on the org row
+  // Section 8  -  onboarding fully completed flag on the org row
   if (org?.onboarding_completed) completed.push("onboardingComplete");
 
   return {

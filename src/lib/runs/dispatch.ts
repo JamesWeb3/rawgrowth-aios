@@ -11,7 +11,7 @@ import { executeRun } from "./executor";
  *                 via the MCP `runs_claim` tool, and records an audit entry
  *                 so the UI can reflect "queued for local Claude".
  *
- * Callers do not need to know which mode they're in — this helper is the
+ * Callers do not need to know which mode they're in  -  this helper is the
  * single place that branches.
  */
 export function dispatchRun(runId: string, organizationId: string) {

@@ -23,7 +23,7 @@ import { useConnections } from "@/lib/connections/use-connections";
 /**
  * Self-hosted integrations view.
  *
- * In self-hosted mode the client's Claude Code drives everything — and
+ * In self-hosted mode the client's Claude Code drives everything  -  and
  * Claude Desktop / Claude Code already ship **native connectors** for the
  * most common SaaS tools. We don't duplicate those. This page explains
  * how to connect them in Claude itself, plus pointers for niche tools
@@ -75,18 +75,18 @@ export function SelfHostedIntegrationsGuide() {
           </h3>
           <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
             Your Claude Code (or Claude Desktop) on your laptop is what
-            actually drives routines here — so the integrations live in
+            actually drives routines here  -  so the integrations live in
             Claude, not Rawclaw. Connect each tool once in Claude, and
             your agents pick them up automatically whenever they run.
           </p>
           <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
             Rawclaw provides the workspace (routines, runs, approvals, the
-            org) — Claude provides the tools (Gmail, Slack, Drive, and
+            org)  -  Claude provides the tools (Gmail, Slack, Drive, and
             anything else you wire in).
           </p>
           <div className="mt-4 flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-[12px] text-primary">
             <Check className="size-3.5" />
-            Nothing to configure here — it all happens in Claude.
+            Nothing to configure here  -  it all happens in Claude.
           </div>
         </CardContent>
       </Card>
@@ -148,8 +148,8 @@ export function SelfHostedIntegrationsGuide() {
           </a>
         </div>
         <p className="mb-3 text-[12px] text-muted-foreground">
-          For anything Anthropic doesn&apos;t ship natively — Shopify,
-          Stripe, your own database, internal APIs — install a community
+          For anything Anthropic doesn&apos;t ship natively  -  Shopify,
+          Stripe, your own database, internal APIs  -  install a community
           MCP server in your Claude Code config. A few popular ones:
         </p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -168,7 +168,7 @@ export function SelfHostedIntegrationsGuide() {
         </div>
       </section>
 
-      {/* Telegram — special-cased because it's the only integration with server-side bot auth */}
+      {/* Telegram  -  special-cased because it's the only integration with server-side bot auth */}
       <section>
         <div className="mb-3 flex items-baseline justify-between">
           <h3 className="text-[13px] font-semibold text-foreground">
@@ -198,7 +198,7 @@ export function SelfHostedIntegrationsGuide() {
               <div className="text-[11.5px] text-muted-foreground">
                 {telegramConn
                   ? `Connected${telegramDisplay ? ` · ${telegramDisplay}` : ""}`
-                  : "Not connected — click to set up a bot token"}
+                  : "Not connected  -  click to set up a bot token"}
               </div>
             </div>
             <Button

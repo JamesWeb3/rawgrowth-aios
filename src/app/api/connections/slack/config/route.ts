@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     const organizationId = await currentOrganizationId();
 
-    // Preserve any already-installed workspace info — we don't wipe the
+    // Preserve any already-installed workspace info  -  we don't wipe the
     // bot_token just because the client re-saved their app creds.
     const existing = await getConnection(organizationId, PROVIDER_KEY);
     const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>;

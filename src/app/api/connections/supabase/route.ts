@@ -14,7 +14,7 @@ const PROVIDER_KEY = "supabase";
  * Body: { token: string }   // Supabase Personal Access Token (sbp_…)
  *
  * Validates the PAT by listing the user's Supabase organizations, then
- * stores it encrypted. One PAT covers every project the user can access —
+ * stores it encrypted. One PAT covers every project the user can access  - 
  * MCP tools take `project_ref` per call to target a specific DB.
  */
 export async function POST(req: NextRequest) {

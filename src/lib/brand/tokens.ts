@@ -65,7 +65,7 @@ export const FONT_STACK = {
  * Use brand tokens instead: text-primary, bg-brand-surface, ring-primary/50.
  */
 export const BANNED_TAILWIND_CLASSES = [
-  // Default Tailwind blues / indigos / skies — the "looks like a template" tell.
+  // Default Tailwind blues / indigos / skies  -  the "looks like a template" tell.
   /\b(?:text|bg|border|ring|from|to|via)-(?:blue|indigo|sky|violet)-(?:50|100|200|300|400|500|600|700|800|900|950)\b/,
   // Flat / generic shadows.
   /\bshadow(?:-sm|-md|)\b/,

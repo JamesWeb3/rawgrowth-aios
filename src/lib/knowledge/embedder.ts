@@ -4,17 +4,17 @@ import OpenAI from "openai";
  * Embeddings provider abstraction. Three backends, selected at runtime
  * via EMBEDDING_PROVIDER:
  *
- *   fastembed (default) — BAAI/bge-small-en-v1.5 via fastembed-js (ONNX,
+ *   fastembed (default)  -  BAAI/bge-small-en-v1.5 via fastembed-js (ONNX,
  *   ~250MB RSS, ~33MB model on disk). Native 384d, zero-padded to 1536d.
- *   Zero API key — runs entirely inside the Next.js process. Picked as
+ *   Zero API key  -  runs entirely inside the Next.js process. Picked as
  *   default per CTO brief §1: "no kill-switch, no third-party billed
  *   key required". Cold-start ~3-5s on first call; subsequent calls
  *   reuse the cached singleton.
  *
- *   openai           — text-embedding-3-large at dims=1536. Matches the
+ *   openai            -  text-embedding-3-large at dims=1536. Matches the
  *   rgaios_agent_file_chunks.embedding vector(1536) column natively.
  *
- *   voyage           — Anthropic-ecosystem alternative for VPS installs
+ *   voyage            -  Anthropic-ecosystem alternative for VPS installs
  *   that want a managed embedding endpoint without OpenAI. Uses
  *   voyage-3-large via plain fetch against
  *   https://api.voyageai.com/v1/embeddings. Native 1024d, zero-padded
@@ -25,7 +25,7 @@ import OpenAI from "openai";
  * similarity exactly (extra zero dims contribute 0 to both dot product
  * and L2 norm), so the column + ivfflat index keep working without a
  * schema migration. Do NOT mix providers inside one organization's
- * corpus — flip per-VPS, then backfill if you switch later.
+ * corpus  -  flip per-VPS, then backfill if you switch later.
  *
  * Public contract is unchanged: embedBatch / embedOne / toPgVector with
  * the same shapes the upload route and knowledge_query MCP tool expect.

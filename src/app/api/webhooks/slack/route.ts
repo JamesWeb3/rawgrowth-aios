@@ -15,7 +15,7 @@ export const maxDuration = 300;
  * POST /api/webhooks/slack
  *
  * Single endpoint that handles:
- *   1. URL verification (first time Slack activates the events URL —
+ *   1. URL verification (first time Slack activates the events URL  - 
  *      Slack sends { type: "url_verification", challenge: "..." } and
  *      expects us to echo the challenge back verbatim).
  *   2. All subsequent event_callback deliveries.
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
 
-  // ─── 1. URL verification (no signature expected yet — Slack's first
+  // ─── 1. URL verification (no signature expected yet  -  Slack's first
   // activation call doesn't include auth headers in some cases, but new
   // installs do. Verify if present, allow through if not, since the
   // only thing we do here is echo the challenge). ────────────────────
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   const signingSecret = tryDecryptSecret(meta.signing_secret);
   if (!signingSecret) {
     return NextResponse.json(
-      { error: "signing secret missing — Slack App creds not configured" },
+      { error: "signing secret missing  -  Slack App creds not configured" },
       { status: 500 },
     );
   }

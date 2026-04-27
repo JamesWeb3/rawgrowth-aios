@@ -11,7 +11,7 @@ import { randomUUID } from "crypto";
 /**
  * MCP tools for the routine lifecycle. Lets clients create, list, update,
  * and archive routines directly from Claude Code. Triggers are kept
- * deliberately simple — a manual trigger is always created, and an
+ * deliberately simple  -  a manual trigger is always created, and an
  * optional schedule (cron) trigger if requested. Webhook/integration/
  * telegram triggers still flow through the web UI for now.
  */
@@ -68,7 +68,7 @@ registerTool({
     if (filtered.length === 0) {
       return text(
         filter === "all"
-          ? "No routines yet. Create one with `routines_create` — minimum is `title` and `description`."
+          ? "No routines yet. Create one with `routines_create`  -  minimum is `title` and `description`."
           : `No routines with status=${filter}.`,
       );
     }
@@ -79,7 +79,7 @@ registerTool({
       ...filtered.map((r) => {
         const schedule = r.triggers.find((t) => t.kind === "schedule");
         const scheduleStr = schedule ? ` · schedule: ${(schedule as { cron: string }).cron}` : "";
-        return `- **${r.title}** — status: ${r.status}${scheduleStr} · id: \`${r.id}\``;
+        return `- **${r.title}**  -  status: ${r.status}${scheduleStr} · id: \`${r.id}\``;
       }),
     ];
     return text(lines.join("\n"));
@@ -91,7 +91,7 @@ registerTool({
 registerTool({
   name: "routines_create",
   description:
-    "Create a new routine. Required: title, description (the routine's instructions — Claude will read this when the routine runs). Optional: assignee_agent_id (id of an agent), schedule_cron (e.g. '0 9 * * *' to run daily at 9am), schedule_timezone (default: UTC). Every routine is always runnable manually.",
+    "Create a new routine. Required: title, description (the routine's instructions  -  Claude will read this when the routine runs). Optional: assignee_agent_id (id of an agent), schedule_cron (e.g. '0 9 * * *' to run daily at 9am), schedule_timezone (default: UTC). Every routine is always runnable manually.",
   isWrite: true,
   inputSchema: {
     type: "object",
@@ -100,7 +100,7 @@ registerTool({
       description: {
         type: "string",
         description:
-          "The routine's instructions. This IS the prompt that runs — be specific and plain-english.",
+          "The routine's instructions. This IS the prompt that runs  -  be specific and plain-english.",
       },
       assignee_agent_id: {
         type: "string",
@@ -199,7 +199,7 @@ registerTool({
 
     const routine = await updateRoutine(ctx.organizationId, id, patch);
     return text(
-      `Updated **${routine.title}** — status: ${routine.status}.`,
+      `Updated **${routine.title}**  -  status: ${routine.status}.`,
     );
   },
 });

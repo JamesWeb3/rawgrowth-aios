@@ -9,7 +9,7 @@ import {
  * App-level secret-at-rest helpers.
  *
  * Used for things like the client's `sk-ant-oat01-` Claude Max token in
- * `rgaios_connections.metadata.access_token` — the dashboard never wants
+ * `rgaios_connections.metadata.access_token`  -  the dashboard never wants
  * to see plaintext sitting in Postgres logs / pgdump output / etc.
  *
  * Algorithm: AES-256-GCM. Encryption key is derived from the per-tenant
@@ -34,7 +34,7 @@ function deriveKey(): Buffer {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error(
-      "[crypto] JWT_SECRET is not set — cannot derive encryption key",
+      "[crypto] JWT_SECRET is not set  -  cannot derive encryption key",
     );
   }
   // Domain-separated SHA-256 → 32-byte key for AES-256.
@@ -83,7 +83,7 @@ export function decryptSecret(value: string): string {
   return plain.toString("utf8");
 }
 
-/** Best-effort decrypt — returns `null` on any failure instead of throwing. */
+/** Best-effort decrypt  -  returns `null` on any failure instead of throwing. */
 export function tryDecryptSecret(value: string | null | undefined): string | null {
   if (!value) return null;
   try {

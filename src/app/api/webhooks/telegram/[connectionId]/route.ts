@@ -16,7 +16,7 @@ import { transcribeVoice } from "@/lib/voice/transcribe";
 /**
  * Rotating animation frames for the thinking bubble. We cycle through
  * these every ~2.5s so the user gets visible "I'm alive" feedback while
- * the drain daemon works. Keep each phrase short — Telegram bubbles
+ * the drain daemon works. Keep each phrase short  -  Telegram bubbles
  * with changing lengths look jittery if they reflow the line a lot.
  */
 const THINKING_FRAMES = [
@@ -64,7 +64,7 @@ function startProgressUpdates(opts: {
       | { responded_at?: string | null; placeholder_message_id?: number | null }
       | null;
 
-    // Drain has already edited the placeholder with the final reply —
+    // Drain has already edited the placeholder with the final reply  - 
     // our job is done, don't touch the bubble.
     if (row && !row.placeholder_message_id) return;
     // Belt-and-braces: if responded_at is set we also stop (shouldn't
@@ -76,7 +76,7 @@ function startProgressUpdates(opts: {
         opts.token,
         opts.chatId,
         opts.messageId,
-        `⌛ ${opts.acknowledgement}\nStill working — I'll keep going in the background.`,
+        `⌛ ${opts.acknowledgement}\nStill working  -  I'll keep going in the background.`,
       ).catch(() => {});
       return;
     }
@@ -118,7 +118,7 @@ export const maxDuration = 300;
  *      fire the routine (insert a run row, bump last_run_at).
  *   3. Reply in-chat so the user gets feedback.
  *
- * Execution of the routine itself (invoking Claude Agent SDK) comes in Phase 8 —
+ * Execution of the routine itself (invoking Claude Agent SDK) comes in Phase 8  - 
  * for now we confirm receipt and mark the run as "pending".
  */
 
@@ -182,7 +182,7 @@ export async function POST(
       );
     } catch (err) {
       console.error("[telegram] voice transcribe failed:", (err as Error).message);
-      text = "[voice transcription failed — please resend as text]";
+      text = "[voice transcription failed  -  please resend as text]";
     }
   }
   if (!text) {
@@ -222,7 +222,7 @@ export async function POST(
       // Header "typing…" indicator (auto-clears in 5s).
       sendChatAction(token, msg.chat.id, "typing").catch(() => {});
 
-      // Placeholder bubble — an actual message the user sees appear in
+      // Placeholder bubble  -  an actual message the user sees appear in
       // the conversation instantly. We'll editMessageText it when the
       // real reply is ready, so the "…" morphs into the final answer.
       let placeholderId: number | null = null;
@@ -242,7 +242,7 @@ export async function POST(
             .update({ placeholder_message_id: placeholderId })
             .eq("id", inboxRowId);
         } catch {
-          /* non-fatal — ticker will still run, just can't edit in place */
+          /* non-fatal  -  ticker will still run, just can't edit in place */
         }
       }
 
@@ -307,7 +307,7 @@ export async function POST(
       if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
         const acknowledgement = result.reply
           .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-          .replace(/^\s*[—-]\s*/, "")
+          .replace(/^\s*[ - -]\s*/, "")
           .trim() || "Working on it";
 
         if (placeholderId !== null) {
@@ -341,11 +341,11 @@ export async function POST(
             });
           }
         }
-        // Don't mark responded — drain will do that when it finishes.
+        // Don't mark responded  -  drain will do that when it finishes.
         return;
       }
 
-      // Plain chat reply — swap the placeholder for the real text.
+      // Plain chat reply  -  swap the placeholder for the real text.
       try {
         if (placeholderId !== null) {
           await editMessageText(token, msg.chat.id, placeholderId, result.reply);
@@ -353,7 +353,7 @@ export async function POST(
           await sendMessage(token, msg.chat.id, result.reply);
         }
       } catch {
-        /* Telegram delivery failure — logged elsewhere */
+        /* Telegram delivery failure  -  logged elsewhere */
       }
 
       await supabaseAdmin()
@@ -404,7 +404,7 @@ export async function POST(
   });
 
   if (!match || !match.rgaios_routines) {
-    // Unbound slash command — fall through to the instant chat path so
+    // Unbound slash command  -  fall through to the instant chat path so
     // the agent handles it naturally (e.g. /start, /help, anything the
     // user types with a slash prefix that isn't an explicit routine).
     after(async () => {
@@ -427,7 +427,7 @@ export async function POST(
             .update({ placeholder_message_id: placeholderId })
             .eq("id", inboxRowId);
         } catch {
-          /* non-fatal — ticker will still run, just can't edit in place */
+          /* non-fatal  -  ticker will still run, just can't edit in place */
         }
       }
 
@@ -487,7 +487,7 @@ export async function POST(
       if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
         const acknowledgement = result.reply
           .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-          .replace(/^\s*[—-]\s*/, "")
+          .replace(/^\s*[ - -]\s*/, "")
           .trim() || "Working on it";
 
         if (placeholderId !== null) {
@@ -625,7 +625,7 @@ export async function POST(
   dispatchRun(run.id, run.organization_id);
 
   // In hosted mode, wait for completion and ping Telegram with the result.
-  // In self-hosted mode the executor doesn't exist, so we skip — Claude Code
+  // In self-hosted mode the executor doesn't exist, so we skip  -  Claude Code
   // will pick the run up and the user can check the app for output.
   if (isHosted) {
     after(async () => {

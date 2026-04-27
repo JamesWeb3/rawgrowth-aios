@@ -7,11 +7,11 @@ import { fetchSource } from "@/lib/scrape/fetcher";
  * /api/scrape/route.ts (in-process after onboarding submit) and from
  * the systemd schedule-tick cron (D12) as a retry path.
  *
- * Concurrency: sequential per org. We keep it simple — the scrape list
+ * Concurrency: sequential per org. We keep it simple  -  the scrape list
  * is <=~6 URLs and the dashboard unlock gate cares about overall
  * completion, not speed.
  *
- * Never throws — failures land in rgaios_scrape_snapshots.status.
+ * Never throws  -  failures land in rgaios_scrape_snapshots.status.
  */
 export async function drainScrapeQueue(organizationId: string): Promise<{
   total: number;
@@ -31,7 +31,7 @@ export async function drainScrapeQueue(organizationId: string): Promise<{
     return { total: 0, succeeded: 0, blocked: 0, failed: 0 };
   }
 
-  // Seed pending rows for any source URL not yet tracked. Idempotent —
+  // Seed pending rows for any source URL not yet tracked. Idempotent  - 
   // we don't re-seed succeeded/failed rows on re-run.
   const sources = buildScrapeSources(intake);
   const { data: existing } = await db
@@ -99,7 +99,7 @@ export async function drainScrapeQueue(organizationId: string): Promise<{
 /**
  * True iff the scrape queue has at least one succeeded/blocked/failed row
  * for this org (i.e. the queue has drained to completion). Blocked + failed
- * are terminal states — we do NOT wait for 100% success, only for "we
+ * are terminal states  -  we do NOT wait for 100% success, only for "we
  * stopped trying". This is what /api/dashboard/gate checks.
  */
 export async function isScrapeComplete(organizationId: string): Promise<boolean> {

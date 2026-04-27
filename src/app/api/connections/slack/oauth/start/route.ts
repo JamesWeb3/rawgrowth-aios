@@ -14,7 +14,7 @@ const PROVIDER_KEY = "slack";
  * install the bot into their workspace. We build it using the client's
  * own Slack App credentials (already saved via /config).
  *
- * redirect_uri is this VPS's /oauth/callback — must exactly match what
+ * redirect_uri is this VPS's /oauth/callback  -  must exactly match what
  * the client pasted into their Slack App's "OAuth & Permissions" page.
  */
 export async function GET(req: NextRequest) {
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Slack App credentials not configured yet — save them first.",
+            "Slack App credentials not configured yet  -  save them first.",
         },
         { status: 400 },
       );

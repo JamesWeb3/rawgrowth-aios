@@ -129,7 +129,7 @@ export function CreateClientSheet({
               </Field>
               <Field
                 label="Temporary password"
-                hint="Share securely. At least 8 characters — the owner can change it later."
+                hint="Share securely. At least 8 characters  -  the owner can change it later."
               >
                 <Input
                   type="text"

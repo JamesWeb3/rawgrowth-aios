@@ -28,7 +28,7 @@ export async function ensureDefaultOrganization(): Promise<void> {
       { onConflict: "id" },
     );
   if (error) {
-    // Don't throw — the underlying write will still surface a useful error
+    // Don't throw  -  the underlying write will still surface a useful error
     // if this really failed for a structural reason. Just log + re-try next time.
     console.error("[ensureDefaultOrganization] failed:", error.message);
     return;

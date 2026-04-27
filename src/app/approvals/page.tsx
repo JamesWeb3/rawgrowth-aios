@@ -4,7 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { ApprovalsView } from "@/components/approvals/approvals-view";
 
 export const metadata = {
-  title: "Approvals — Rawgrowth",
+  title: "Approvals  -  Rawgrowth",
 };
 
 export default async function ApprovalsPage() {

@@ -121,11 +121,14 @@ function AgentNodeCard({ data }: NodeProps<NodeData>) {
           </div>
           <div className="text-xs text-[var(--text-muted)]">{agent.title}</div>
         </div>
-        {agent.department && (
-          <span className="rounded border border-[var(--line-strong)] px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-primary">
-            {agent.department}
-          </span>
-        )}
+        <span
+          className={
+            "rounded border border-[var(--line-strong)] px-1.5 py-0.5 text-[10px] uppercase tracking-widest " +
+            (agent.department ? "text-primary" : "text-[var(--text-muted)]")
+          }
+        >
+          {agent.department ?? "Unassigned"}
+        </span>
       </div>
       <div className="mt-3 flex items-center gap-2">
         <button
@@ -295,6 +298,9 @@ export function AgentTreeClient({
         nodeTypes={nodeTypes}
         onNodeDragStop={onNodeDragStop}
         fitView
+        fitViewOptions={{ padding: 0.18, includeHiddenNodes: false }}
+        minZoom={0.5}
+        maxZoom={1.4}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="var(--line-strong)" gap={24} />

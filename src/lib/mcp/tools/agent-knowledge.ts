@@ -3,7 +3,7 @@ import { embedOne, toPgVector } from "@/lib/knowledge/embedder";
 import { registerTool, text, textError } from "../registry";
 
 /**
- * knowledge_query — top-K retrieval over the current agent's uploaded
+ * knowledge_query  -  top-K retrieval over the current agent's uploaded
  * files (rgaios_agent_file_chunks, keyed by agent_id). Called by the
  * agent persona mid-conversation to pull grounded context from files
  * the user dropped into the per-agent panel.

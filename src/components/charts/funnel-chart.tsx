@@ -43,7 +43,7 @@ export interface FunnelChartProps {
   showPercentage?: boolean;
   showValues?: boolean;
   showLabels?: boolean;
-  /** Controlled hover state — index of the hovered segment */
+  /** Controlled hover state  -  index of the hovered segment */
   hoveredIndex?: number | null;
   /** Callback when hover state changes */
   onHoverChange?: (index: number | null) => void;
@@ -771,7 +771,7 @@ export function FunnelChart({
               role="presentation"
               viewBox={`0 0 ${W} ${H}`}
             >
-              {/* Background bands — alternating on even segments */}
+              {/* Background bands  -  alternating on even segments */}
               {showBands &&
                 data.map((stage, i) => {
                   if (i % 2 !== 0) {
@@ -805,7 +805,7 @@ export function FunnelChart({
             </svg>
           )}
 
-          {/* Segments container — overflow-visible so hover scale is not clipped */}
+          {/* Segments container  -  overflow-visible so hover scale is not clipped */}
           <div
             className={cn(
               "absolute inset-0 flex overflow-visible",
@@ -859,7 +859,7 @@ export function FunnelChart({
             })}
           </div>
 
-          {/* Grid lines — rendered above segments so they're visible */}
+          {/* Grid lines  -  rendered above segments so they're visible */}
           {gridEnabled && showGridLines && (
             <svg
               aria-hidden="true"
@@ -903,7 +903,7 @@ export function FunnelChart({
             </svg>
           )}
 
-          {/* Label overlays — one per segment, positioned over each segment cell.
+          {/* Label overlays  -  one per segment, positioned over each segment cell.
               These are the hover triggers for each segment. */}
           {data.map((stage, i) => {
             const pct = (stage.value / max) * 100;

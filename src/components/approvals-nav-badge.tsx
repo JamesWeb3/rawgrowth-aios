@@ -8,7 +8,7 @@ type ListResponse = { approvals: Approval[] };
 
 /**
  * Amber pulsing pill shown on the Approvals sidebar item whenever any
- * approvals are pending. Polls every 10s — same cadence as the inbox.
+ * approvals are pending. Polls every 10s  -  same cadence as the inbox.
  */
 export function ApprovalsNavBadge() {
   const { data } = useSWR<ListResponse>(

@@ -4,12 +4,12 @@ import { listAgentsForOrg } from "@/lib/agents/queries";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 
 export const metadata = {
-  title: "Knowledge — Rawgrowth",
+  title: "Knowledge  -  Rawgrowth",
 };
 
 export default async function KnowledgePage() {
   // Pulled server-side so the per-agent filter dropdown (brief §7) has its
-  // option set ready on first paint. Failure is non-fatal — the view falls
+  // option set ready on first paint. Failure is non-fatal  -  the view falls
   // back to "All / Unassigned" only.
   let agents: { id: string; name: string }[] = [];
   try {

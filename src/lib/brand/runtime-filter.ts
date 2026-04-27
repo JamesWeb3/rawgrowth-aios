@@ -105,7 +105,7 @@ const REGEN_TIMEOUT_MS = 10_000;
  *   - on `ok:false` → write an audit_log row of kind brand_voice_hard_fail
  *     with the returned `hits` + `finalAttempt`, and refuse to send.
  *
- * Model: claude-haiku-4-5 — cheapest + fastest in the family. Brief §02
+ * Model: claude-haiku-4-5  -  cheapest + fastest in the family. Brief §02
  * already permits per-call model selection independent of agent runtime.
  *
  * Failure modes folded into ok:false:
@@ -135,7 +135,7 @@ export async function regenerateWithBrandReminder(
     const out = await invoke({ system, prompt, signal: ctl.signal });
     regenerated = out.text.trim();
   } catch {
-    // Network / timeout / abort — fall back to the substring-sanitised
+    // Network / timeout / abort  -  fall back to the substring-sanitised
     // version of the original so the operator-bound audit row is at least
     // free of banned words.
     const fallback = checkBrandVoice(originalText);

@@ -1,5 +1,5 @@
 /**
- * Public-source scraper. No Playwright browser, no headless chromium —
+ * Public-source scraper. No Playwright browser, no headless chromium  - 
  * for v3 trial scope we stay with vanilla fetch + a browser-shaped
  * User-Agent. That gets us text content from:
  *   - company site roots (HTML)

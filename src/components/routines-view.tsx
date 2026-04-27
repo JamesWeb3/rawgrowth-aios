@@ -89,7 +89,7 @@ export function RoutinesView() {
       <EmptyState
         icon={Repeat}
         title="No routines yet"
-        description="Build automated workflows — trigger on a schedule, webhook, or integration event; let an agent execute the playbook you write."
+        description="Build automated workflows  -  trigger on a schedule, webhook, or integration event; let an agent execute the playbook you write."
         action={
           <RoutineSheet triggerSize="lg" triggerLabel="Create first routine" />
         }
@@ -133,7 +133,7 @@ export function RoutinesView() {
               routine={r}
               assigneeLabel={
                 assignee
-                  ? `${assignee.name}${assignee.title ? ` — ${assignee.title}` : ""}`
+                  ? `${assignee.name}${assignee.title ? `  -  ${assignee.title}` : ""}`
                   : "Unassigned"
               }
               isActive={isActive}
@@ -183,7 +183,7 @@ function RoutineRow({
   return (
     <div className="group rounded-xl border border-border bg-card/50 transition-colors hover:border-primary/30 hover:bg-card">
       <div className="flex items-stretch">
-        {/* Main content — click to edit */}
+        {/* Main content  -  click to edit */}
         <button
           type="button"
           onClick={onEdit}

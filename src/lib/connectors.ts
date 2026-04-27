@@ -17,7 +17,7 @@ import {
 
 /**
  * Known connectors the client's Claude Code can reach. In self-hosted
- * mode we don't OAuth into these — the client authorizes them once inside
+ * mode we don't OAuth into these  -  the client authorizes them once inside
  * Claude Desktop / Claude Code native connector settings or installs a
  * community MCP server. Rawclaw just tracks which connectors each agent
  * is *expected* to use so the UI can render logos and routines can

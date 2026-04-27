@@ -6,7 +6,7 @@ import { nangoCall } from "../proxy";
  *
  * Registered in BOTH hosted and self-hosted modes. (We previously gated
  * to hosted-only on the assumption that self-hosted Claude Code would
- * reach Gmail via Anthropic's native connectors — but those don't
+ * reach Gmail via Anthropic's native connectors  -  but those don't
  * propagate from claude.ai to a VPS-side `claude` CLI session, so the
  * VPS drain has no way to call Gmail without these wrappers.)
  *
@@ -14,7 +14,7 @@ import { nangoCall } from "../proxy";
  * is `gmail`. OAuth scopes required:
  *   - gmail.readonly (for search / read)
  *   - gmail.compose   (for draft)
- *   - gmail.send      (for direct send — gated by approvals later)
+ *   - gmail.send      (for direct send  -  gated by approvals later)
  */
 
 {
@@ -147,7 +147,7 @@ registerTool({
 registerTool({
   name: "gmail_draft",
   description:
-    "Compose a draft email in the user's Gmail drafts folder. The user reviews and sends manually. Safe default — does NOT send on its own.",
+    "Compose a draft email in the user's Gmail drafts folder. The user reviews and sends manually. Safe default  -  does NOT send on its own.",
   requiresIntegration: "gmail",
   isWrite: true,
   inputSchema: {

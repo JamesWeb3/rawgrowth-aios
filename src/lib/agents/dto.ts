@@ -1,7 +1,7 @@
 import type { Database } from "@/lib/supabase/types";
 import type { AgentRole, AgentRuntime, AgentStatus } from "./constants";
 
-// Department is a free-form slug (per /departments/new — lowercased + underscored
+// Department is a free-form slug (per /departments/new  -  lowercased + underscored
 // from the user's chosen name). The five values below are the seeded defaults
 // the dashboard ships with; any custom slug ("research", "engineering") is
 // also valid and renders under a "Custom" section in the UI.
@@ -55,7 +55,7 @@ export function agentFromRow(row: AgentRow): Agent {
   };
 }
 
-/** Input to hireAgent() — everything except server-controlled fields. */
+/** Input to hireAgent()  -  everything except server-controlled fields. */
 export type AgentCreateInput = {
   name: string;
   title: string;

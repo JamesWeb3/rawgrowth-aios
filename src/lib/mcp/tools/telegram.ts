@@ -7,7 +7,7 @@ import { tryDecryptSecret } from "@/lib/crypto";
  * MCP tools for conversational Telegram. The client's Claude Code uses
  * these to read inbound messages the client has texted to their bot, and
  * to send replies back via the same bot. The actual bot token lives on
- * the VPS (in rgaios_connections.metadata.bot_token) — never exposed to
+ * the VPS (in rgaios_connections.metadata.bot_token)  -  never exposed to
  * Claude Code.
  *
  * Workflow:

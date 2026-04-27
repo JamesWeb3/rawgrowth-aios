@@ -53,7 +53,7 @@ const marketingData = Array.from({ length: 12 }, (_, i) => {
   };
 });
 
-// Sales funnel — pipeline stages
+// Sales funnel  -  pipeline stages
 const salesFunnelData = [
   { label: "Leads", value: 2840, displayValue: "2,840" },
   { label: "Qualified", value: 1120, displayValue: "1,120" },
@@ -61,7 +61,7 @@ const salesFunnelData = [
   { label: "Won", value: 148, displayValue: "148" },
 ];
 
-// Fulfilment — orders by region, stacked by status
+// Fulfilment  -  orders by region, stacked by status
 const fulfilmentData = [
   { region: "North", pending: 12, inProgress: 28, shipped: 45, delivered: 120 },
   { region: "South", pending: 18, inProgress: 22, shipped: 38, delivered: 96 },
@@ -69,7 +69,7 @@ const fulfilmentData = [
   { region: "West", pending: 14, inProgress: 19, shipped: 41, delivered: 108 },
 ];
 
-// Finance — 12 months of revenue vs expenses
+// Finance  -  12 months of revenue vs expenses
 const financeData = Array.from({ length: 12 }, (_, i) => {
   const d = new Date();
   d.setMonth(d.getMonth() - (11 - i));
@@ -136,7 +136,7 @@ export default async function DashboardPage() {
   return (
     <PageShell
       title="Dashboard"
-      description="Your AI company at a glance — goals, agents, tickets, spend."
+      description="Your AI company at a glance  -  goals, agents, tickets, spend."
     >
       <DashboardStats />
 
@@ -171,12 +171,12 @@ export default async function DashboardPage() {
         </Card>
       )}
 
-      {/* Core business pillars — 2x2 */}
+      {/* Core business pillars  -  2x2 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {pillars.marketing && (
           <PillarCard
             title="Marketing"
-            subtitle="Traffic & leads — last 12 weeks"
+            subtitle="Traffic & leads  -  last 12 weeks"
             kpi={{ value: "8.4K", delta: "+12.3% vs prev", positive: true }}
           >
             <LineChart
@@ -196,7 +196,7 @@ export default async function DashboardPage() {
         {pillars.sales && (
           <PillarCard
             title="Sales"
-            subtitle="Pipeline by stage — current quarter"
+            subtitle="Pipeline by stage  -  current quarter"
             kpi={{ value: "5.2%", delta: "lead→won rate", positive: true }}
           >
             <FunnelChart
@@ -240,7 +240,7 @@ export default async function DashboardPage() {
         {pillars.finance && (
           <PillarCard
             title="Finance"
-            subtitle="Revenue vs expenses — trailing 12 months"
+            subtitle="Revenue vs expenses  -  trailing 12 months"
             kpi={{ value: "$38.2K", delta: "net profit / mo", positive: true }}
           >
             <AreaChart

@@ -1,5 +1,5 @@
 /**
- * Static routine metadata — trigger kinds, schedule presets, and the
+ * Static routine metadata  -  trigger kinds, schedule presets, and the
  * event catalog for integration triggers. Plus helpers for minting new
  * trigger records on the client before they're saved.
  */
@@ -55,42 +55,42 @@ export type SchedulePreset = (typeof SCHEDULE_PRESETS)[number]["value"];
 export const INTEGRATION_EVENTS = [
   {
     value: "fathom.meeting.ended",
-    label: "Fathom — Meeting ended",
+    label: "Fathom  -  Meeting ended",
     integration: "Fathom",
   },
   {
     value: "gdrive.file.created",
-    label: "Google Drive — New file in folder",
+    label: "Google Drive  -  New file in folder",
     integration: "Google Drive",
   },
   {
     value: "gmail.email.received",
-    label: "Gmail — Email received",
+    label: "Gmail  -  Email received",
     integration: "Gmail",
   },
   {
     value: "shopify.order.created",
-    label: "Shopify — New order",
+    label: "Shopify  -  New order",
     integration: "Shopify",
   },
   {
     value: "stripe.payment.succeeded",
-    label: "Stripe — Payment succeeded",
+    label: "Stripe  -  Payment succeeded",
     integration: "Stripe",
   },
   {
     value: "slack.message.posted",
-    label: "Slack — Message in channel",
+    label: "Slack  -  Message in channel",
     integration: "Slack",
   },
   {
     value: "hubspot.deal.stage_changed",
-    label: "HubSpot — Deal stage changed",
+    label: "HubSpot  -  Deal stage changed",
     integration: "HubSpot",
   },
   {
     value: "meta.lead.submitted",
-    label: "Meta — Lead form submitted",
+    label: "Meta  -  Lead form submitted",
     integration: "Meta Business Suite",
   },
 ] as const;
@@ -98,7 +98,7 @@ export const INTEGRATION_EVENTS = [
 export type IntegrationEvent = (typeof INTEGRATION_EVENTS)[number]["value"];
 
 // ─── Trigger shape ─────────────────────────────────────────────────
-// Discriminated union — the UI reads `trigger.preset` / `trigger.cron` etc.
+// Discriminated union  -  the UI reads `trigger.preset` / `trigger.cron` etc.
 // directly. Server-side we persist the kind-specific fields into the
 // routine_triggers.config jsonb column.
 

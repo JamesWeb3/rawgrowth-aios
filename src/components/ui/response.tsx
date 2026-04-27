@@ -10,7 +10,7 @@ type ResponseProps = ComponentProps<typeof Streamdown>
 export const Response = memo(
   ({ className, ...props }: ResponseProps) => (
     <Streamdown
-      // Trust links from our own agent — skip Streamdown's "leaving the site"
+      // Trust links from our own agent  -  skip Streamdown's "leaving the site"
       // confirmation modal so things like the Calendly URL open directly.
       linkSafety={{ enabled: false }}
       className={cn(

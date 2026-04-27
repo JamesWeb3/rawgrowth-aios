@@ -130,7 +130,7 @@ export async function deleteKnowledgeFile(
   const row = await getKnowledgeFile(organizationId, id);
   if (!row) return;
 
-  // 1. Remove the storage object — best-effort (continue even if missing).
+  // 1. Remove the storage object  -  best-effort (continue even if missing).
   if (row.storage_path) {
     await supabaseAdmin().storage.from(BUCKET).remove([row.storage_path]);
   }

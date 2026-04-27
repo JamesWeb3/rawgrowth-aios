@@ -4,12 +4,12 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { drainScrapeQueue, isScrapeComplete } from "@/lib/scrape/worker";
 
 /**
- * POST /api/scrape — kick off (or re-run) the onboarding scrape for the
+ * POST /api/scrape  -  kick off (or re-run) the onboarding scrape for the
  * caller's organization. Called from the onboarding chat after brand
  * profile approval; idempotent so repeat calls just drain whatever's
  * still pending.
  *
- * GET /api/scrape — returns { ready, counts } so the dashboard can show
+ * GET /api/scrape  -  returns { ready, counts } so the dashboard can show
  * progress while the worker drains.
  */
 

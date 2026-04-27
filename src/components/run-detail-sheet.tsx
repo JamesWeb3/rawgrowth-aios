@@ -178,7 +178,7 @@ function StatusBanner({
     return (
       <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 p-3 text-[12px] text-primary">
         <span className="size-1.5 animate-pulse rounded-full bg-primary shadow-[0_0_6px_rgba(12,191,106,.6)]" />
-        <span className="font-semibold">Running now — timeline updates live.</span>
+        <span className="font-semibold">Running now  -  timeline updates live.</span>
       </div>
     );
   }

@@ -4,7 +4,7 @@
  * Primary source: https://github.com/scanbott/claude-skills (154 Claude Code
  * skills for marketing, sales, content, engineering, and ops workflows).
  * Rebranded as "RawClaw" capabilities. Assignment to agents is per-tenant
- * via rgaios_agent_skills — the catalog itself is global / code-defined.
+ * via rgaios_agent_skills  -  the catalog itself is global / code-defined.
  */
 
 export type SkillCategory =
@@ -51,7 +51,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-frontend-design",
     "name": "RawClaw Frontend Design",
     "tagline": "Anthropic's frontend design playbook.",
-    "description": "Distinctive, production-grade UI design. Avoids generic AI aesthetics — creates polished interfaces with strong visual hierarchy and taste.",
+    "description": "Distinctive, production-grade UI design. Avoids generic AI aesthetics  -  creates polished interfaces with strong visual hierarchy and taste.",
     "category": "design",
     "sourceRepo": "https://github.com/anthropics/skills",
     "sourceSkill": "frontend-design",
@@ -83,8 +83,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-ad-creative",
     "name": "RawClaw Ad Creative",
-    "tagline": "When the user wants to generate, iterate, or scale ad creative — headlines, descriptions, primary text, or full ad variations — for any paid advertising platform.",
-    "description": "When the user wants to generate, iterate, or scale ad creative — headlines, descriptions, primary text, or full ad variations — for any paid advertising platform. Also use when the user mentions 'ad copy variations,' 'ad creative,' 'generate headlines,' 'RSA headlines,' 'bulk ad copy,' 'ad iterations,' 'creative testing,' 'ad performance optimization,' 'write me some ads,' 'Facebook ad copy,' 'Google ad headlines,' 'LinkedIn ad text,' or 'I need more ad variations.' Use this whenever someone needs to produce ad copy at scale or iterate on existing ads. For campaign strategy and targeting, see paid-ads. For landing page copy, see copywriting.",
+    "tagline": "When the user wants to generate, iterate, or scale ad creative  -  headlines, descriptions, primary text, or full ad variations  -  for any paid advertising platform.",
+    "description": "When the user wants to generate, iterate, or scale ad creative  -  headlines, descriptions, primary text, or full ad variations  -  for any paid advertising platform. Also use when the user mentions 'ad copy variations,' 'ad creative,' 'generate headlines,' 'RSA headlines,' 'bulk ad copy,' 'ad iterations,' 'creative testing,' 'ad performance optimization,' 'write me some ads,' 'Facebook ad copy,' 'Google ad headlines,' 'LinkedIn ad text,' or 'I need more ad variations.' Use this whenever someone needs to produce ad copy at scale or iterate on existing ads. For campaign strategy and targeting, see paid-ads. For landing page copy, see copywriting.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "ad-creative",
@@ -589,8 +589,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-form-cro",
     "name": "RawClaw Form Cro",
-    "tagline": "When the user wants to optimize any form that is NOT signup/registration — including lead capture forms, contact forms, demo request forms, application forms, survey forms, or checkout forms.",
-    "description": "When the user wants to optimize any form that is NOT signup/registration — including lead capture forms, contact forms, demo request forms, application forms, survey forms, or checkout forms. Also use when the user mentions \"form optimization,\" \"lead form conversions,\" \"form friction,\" \"form fields,\" \"form completion rate,\" \"contact form,\" \"nobody fills out our form,\" \"form abandonment,\" \"too many fields,\" \"demo request form,\" or \"lead form isn't converting.\" Use this for any non-signup form that captures information. For signup/registration forms, see signup-flow-cro. For popups containing forms, see popup-cro.",
+    "tagline": "When the user wants to optimize any form that is NOT signup/registration  -  including lead capture forms, contact forms, demo request forms, application forms, survey forms, or checkout forms.",
+    "description": "When the user wants to optimize any form that is NOT signup/registration  -  including lead capture forms, contact forms, demo request forms, application forms, survey forms, or checkout forms. Also use when the user mentions \"form optimization,\" \"lead form conversions,\" \"form friction,\" \"form fields,\" \"form completion rate,\" \"contact form,\" \"nobody fills out our form,\" \"form abandonment,\" \"too many fields,\" \"demo request form,\" or \"lead form isn't converting.\" Use this for any non-signup form that captures information. For signup/registration forms, see signup-flow-cro. For popups containing forms, see popup-cro.",
     "category": "ops",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "form-cro",
@@ -600,8 +600,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-free-tool-strategy",
     "name": "RawClaw Free Tool Strategy",
-    "tagline": "When the user wants to plan, evaluate, or build a free tool for marketing purposes — lead generation, SEO value, or brand awareness.",
-    "description": "When the user wants to plan, evaluate, or build a free tool for marketing purposes — lead generation, SEO value, or brand awareness. Also use when the user mentions \"engineering as marketing,\" \"free tool,\" \"marketing tool,\" \"calculator,\" \"generator,\" \"interactive tool,\" \"lead gen tool,\" \"build a tool for leads,\" \"free resource,\" \"ROI calculator,\" \"grader tool,\" \"audit tool,\" \"should I build a free tool,\" or \"tools for lead gen.\" Use this whenever someone wants to build something useful and give it away to attract leads or earn links. For downloadable content lead magnets (ebooks, checklists, templates), see lead-magnets.",
+    "tagline": "When the user wants to plan, evaluate, or build a free tool for marketing purposes  -  lead generation, SEO value, or brand awareness.",
+    "description": "When the user wants to plan, evaluate, or build a free tool for marketing purposes  -  lead generation, SEO value, or brand awareness. Also use when the user mentions \"engineering as marketing,\" \"free tool,\" \"marketing tool,\" \"calculator,\" \"generator,\" \"interactive tool,\" \"lead gen tool,\" \"build a tool for leads,\" \"free resource,\" \"ROI calculator,\" \"grader tool,\" \"audit tool,\" \"should I build a free tool,\" or \"tools for lead gen.\" Use this whenever someone wants to build something useful and give it away to attract leads or earn links. For downloadable content lead magnets (ebooks, checklists, templates), see lead-magnets.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "free-tool-strategy",
@@ -699,8 +699,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-hyperframes-cli",
     "name": "RawClaw Hyperframes Cli",
-    "tagline": "HyperFrames CLI tool — hyperframes init, lint, preview, render, transcribe, tts, doctor, browser, info, upgrade, compositions, docs, benchmark.",
-    "description": "HyperFrames CLI tool — hyperframes init, lint, preview, render, transcribe, tts, doctor, browser, info, upgrade, compositions, docs, benchmark. Use when scaffolding a project, linting or validating compositions, previewing in the studio, rendering to video, transcribing audio, generating TTS, or troubleshooting the HyperFrames environment.",
+    "tagline": "HyperFrames CLI tool  -  hyperframes init, lint, preview, render, transcribe, tts, doctor, browser, info, upgrade, compositions, docs, benchmark.",
+    "description": "HyperFrames CLI tool  -  hyperframes init, lint, preview, render, transcribe, tts, doctor, browser, info, upgrade, compositions, docs, benchmark. Use when scaffolding a project, linting or validating compositions, previewing in the studio, rendering to video, transcribing audio, generating TTS, or troubleshooting the HyperFrames environment.",
     "category": "ops",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "hyperframes-cli",
@@ -831,8 +831,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-page-cro",
     "name": "RawClaw Page Cro",
-    "tagline": "When the user wants to optimize, improve, or increase conversions on any marketing page — including homepage, landing pages, pricing pages, feature pages, or blog posts.",
-    "description": "When the user wants to optimize, improve, or increase conversions on any marketing page — including homepage, landing pages, pricing pages, feature pages, or blog posts. Also use when the user says \"CRO,\" \"conversion rate optimization,\" \"this page isn't converting,\" \"improve conversions,\" \"why isn't this page working,\" \"my landing page sucks,\" \"nobody's converting,\" \"low conversion rate,\" \"bounce rate is too high,\" \"people leave without signing up,\" or \"this page needs work.\" Use this even if the user just shares a URL and asks for feedback — they probably want conversion help. For signup/registration flows, see signup-flow-cro. For post-signup activation, see onboarding-cro. For forms outside of signup, see form-cro. For popups/modals, see popup-cro.",
+    "tagline": "When the user wants to optimize, improve, or increase conversions on any marketing page  -  including homepage, landing pages, pricing pages, feature pages, or blog posts.",
+    "description": "When the user wants to optimize, improve, or increase conversions on any marketing page  -  including homepage, landing pages, pricing pages, feature pages, or blog posts. Also use when the user says \"CRO,\" \"conversion rate optimization,\" \"this page isn't converting,\" \"improve conversions,\" \"why isn't this page working,\" \"my landing page sucks,\" \"nobody's converting,\" \"low conversion rate,\" \"bounce rate is too high,\" \"people leave without signing up,\" or \"this page needs work.\" Use this even if the user just shares a URL and asks for feedback  -  they probably want conversion help. For signup/registration flows, see signup-flow-cro. For post-signup activation, see onboarding-cro. For forms outside of signup, see form-cro. For popups/modals, see popup-cro.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "page-cro",
@@ -854,7 +854,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-paywall-upgrade-cro",
     "name": "RawClaw Paywall Upgrade Cro",
     "tagline": "When the user wants to create or optimize in-app paywalls, upgrade screens, upsell modals, or feature gates.",
-    "description": "When the user wants to create or optimize in-app paywalls, upgrade screens, upsell modals, or feature gates. Also use when the user mentions \"paywall,\" \"upgrade screen,\" \"upgrade modal,\" \"upsell,\" \"feature gate,\" \"convert free to paid,\" \"freemium conversion,\" \"trial expiration screen,\" \"limit reached screen,\" \"plan upgrade prompt,\" \"in-app pricing,\" \"free users won't upgrade,\" \"trial to paid conversion,\" or \"how do I get users to pay.\" Use this for any in-product moment where you're asking users to upgrade. Distinct from public pricing pages (see page-cro) — this focuses on in-product upgrade moments where the user has already experienced value. For pricing decisions, see pricing-strategy.",
+    "description": "When the user wants to create or optimize in-app paywalls, upgrade screens, upsell modals, or feature gates. Also use when the user mentions \"paywall,\" \"upgrade screen,\" \"upgrade modal,\" \"upsell,\" \"feature gate,\" \"convert free to paid,\" \"freemium conversion,\" \"trial expiration screen,\" \"limit reached screen,\" \"plan upgrade prompt,\" \"in-app pricing,\" \"free users won't upgrade,\" \"trial to paid conversion,\" or \"how do I get users to pay.\" Use this for any in-product moment where you're asking users to upgrade. Distinct from public pricing pages (see page-cro)  -  this focuses on in-product upgrade moments where the user has already experienced value. For pricing decisions, see pricing-strategy.",
     "category": "ops",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "paywall-upgrade-cro",
@@ -887,7 +887,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-product-marketing-context",
     "name": "RawClaw Product Marketing Context",
     "tagline": "When the user wants to create or update their product marketing context document.",
-    "description": "When the user wants to create or update their product marketing context document. Also use when the user mentions 'product context,' 'marketing context,' 'set up context,' 'positioning,' 'who is my target audience,' 'describe my product,' 'ICP,' 'ideal customer profile,' or wants to avoid repeating foundational information across marketing tasks. Use this at the start of any new project before using other marketing skills — it creates `.agents/product-marketing-context.md` that all other skills reference for product, audience, and positioning context.",
+    "description": "When the user wants to create or update their product marketing context document. Also use when the user mentions 'product context,' 'marketing context,' 'set up context,' 'positioning,' 'who is my target audience,' 'describe my product,' 'ICP,' 'ideal customer profile,' or wants to avoid repeating foundational information across marketing tasks. Use this at the start of any new project before using other marketing skills  -  it creates `.agents/product-marketing-context.md` that all other skills reference for product, audience, and positioning context.",
     "category": "ops",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "product-marketing-context",
@@ -964,7 +964,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-sales",
     "name": "RawClaw Sales",
     "tagline": "Load sales playbook, objection handling, DM templates, and pricing details.",
-    "description": "Load sales playbook, objection handling, DM templates, and pricing details. Use for any sales-related task — copy, DMs, emails, proposals, call prep.",
+    "description": "Load sales playbook, objection handling, DM templates, and pricing details. Use for any sales-related task  -  copy, DMs, emails, proposals, call prep.",
     "category": "sales",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "sales",
@@ -1019,7 +1019,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-seo-audit",
     "name": "RawClaw Seo Audit",
     "tagline": "When the user wants to audit, review, or diagnose SEO issues on their site.",
-    "description": "When the user wants to audit, review, or diagnose SEO issues on their site. Also use when the user mentions \"SEO audit,\" \"technical SEO,\" \"why am I not ranking,\" \"SEO issues,\" \"on-page SEO,\" \"meta tags review,\" \"SEO health check,\" \"my traffic dropped,\" \"lost rankings,\" \"not showing up in Google,\" \"site isn't ranking,\" \"Google update hit me,\" \"page speed,\" \"core web vitals,\" \"crawl errors,\" or \"indexing issues.\" Use this even if the user just says something vague like \"my SEO is bad\" or \"help with SEO\" — start with an audit. For building pages at scale to target keywords, see programmatic-seo. For adding structured data, see schema-markup. For AI search optimization, see ai-seo.",
+    "description": "When the user wants to audit, review, or diagnose SEO issues on their site. Also use when the user mentions \"SEO audit,\" \"technical SEO,\" \"why am I not ranking,\" \"SEO issues,\" \"on-page SEO,\" \"meta tags review,\" \"SEO health check,\" \"my traffic dropped,\" \"lost rankings,\" \"not showing up in Google,\" \"site isn't ranking,\" \"Google update hit me,\" \"page speed,\" \"core web vitals,\" \"crawl errors,\" or \"indexing issues.\" Use this even if the user just says something vague like \"my SEO is bad\" or \"help with SEO\"  -  start with an audit. For building pages at scale to target keywords, see programmatic-seo. For adding structured data, see schema-markup. For AI search optimization, see ai-seo.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "seo-audit",
@@ -1029,8 +1029,8 @@ export const SKILLS_CATALOG: Skill[] = [
   {
     "id": "rawclaw-short-form-video",
     "name": "RawClaw Short Form Video",
-    "tagline": "Build and iterate short-form vertical (9:16) videos in Hyperframes — TikTok/Reels/Shorts style.",
-    "description": "Build and iterate short-form vertical (9:16) videos in Hyperframes — TikTok/Reels/Shorts style. Use when Nate says \"short-form video\", \"vertical video\", \"TikTok/Reels/Shorts\", \"make a short\", \"talking-head + motion graphics\", or when the target is a 1080x1920 composition with face video + synced scene overlays + karaoke captions. Encodes the full May Shorts 19 playbook: face-mode choreography, audio-synced scene timing, karaoke captions, and the 10-rule quality checklist.",
+    "tagline": "Build and iterate short-form vertical (9:16) videos in Hyperframes  -  TikTok/Reels/Shorts style.",
+    "description": "Build and iterate short-form vertical (9:16) videos in Hyperframes  -  TikTok/Reels/Shorts style. Use when Nate says \"short-form video\", \"vertical video\", \"TikTok/Reels/Shorts\", \"make a short\", \"talking-head + motion graphics\", or when the target is a 1080x1920 composition with face video + synced scene overlays + karaoke captions. Encodes the full May Shorts 19 playbook: face-mode choreography, audio-synced scene timing, karaoke captions, and the 10-rule quality checklist.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "short-form-video",
@@ -1063,7 +1063,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-site-architecture",
     "name": "RawClaw Site Architecture",
     "tagline": "When the user wants to plan, map, or restructure their website's page hierarchy, navigation, URL structure, or internal linking.",
-    "description": "When the user wants to plan, map, or restructure their website's page hierarchy, navigation, URL structure, or internal linking. Also use when the user mentions \"sitemap,\" \"site map,\" \"visual sitemap,\" \"site structure,\" \"page hierarchy,\" \"information architecture,\" \"IA,\" \"navigation design,\" \"URL structure,\" \"breadcrumbs,\" \"internal linking strategy,\" \"website planning,\" \"what pages do I need,\" \"how should I organize my site,\" or \"site navigation.\" Use this whenever someone is planning what pages a website should have and how they connect. NOT for XML sitemaps (that's technical SEO — see seo-audit). For SEO audits, see seo-audit. For structured data, see schema-markup.",
+    "description": "When the user wants to plan, map, or restructure their website's page hierarchy, navigation, URL structure, or internal linking. Also use when the user mentions \"sitemap,\" \"site map,\" \"visual sitemap,\" \"site structure,\" \"page hierarchy,\" \"information architecture,\" \"IA,\" \"navigation design,\" \"URL structure,\" \"breadcrumbs,\" \"internal linking strategy,\" \"website planning,\" \"what pages do I need,\" \"how should I organize my site,\" or \"site navigation.\" Use this whenever someone is planning what pages a website should have and how they connect. NOT for XML sitemaps (that's technical SEO  -  see seo-audit). For SEO audits, see seo-audit. For structured data, see schema-markup.",
     "category": "marketing",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "site-architecture",
@@ -1228,7 +1228,7 @@ export const SKILLS_CATALOG: Skill[] = [
     "id": "rawclaw-yt-pipeline",
     "name": "RawClaw Yt Pipeline",
     "tagline": "End-to-end YouTube research pipeline.",
-    "description": "End-to-end YouTube research pipeline. Given a topic, automatically searches YouTube (via yt-search), auto-selects the 5-8 best videos by relevance/engagement/recency/diversity, creates a NotebookLM notebook with those videos as sources (via notebooklm skill), queries for thorough analysis — trends, outliers, gaps — and presents key takeaways. Optionally generates deliverables (podcast, slide deck, report, YouTube script). Triggers on \"yt pipeline [topic]\", \"YouTube pipeline [topic]\", \"research [topic] on YouTube\", or \"YouTube research on [topic]\".",
+    "description": "End-to-end YouTube research pipeline. Given a topic, automatically searches YouTube (via yt-search), auto-selects the 5-8 best videos by relevance/engagement/recency/diversity, creates a NotebookLM notebook with those videos as sources (via notebooklm skill), queries for thorough analysis  -  trends, outliers, gaps  -  and presents key takeaways. Optionally generates deliverables (podcast, slide deck, report, YouTube script). Triggers on \"yt pipeline [topic]\", \"YouTube pipeline [topic]\", \"research [topic] on YouTube\", or \"YouTube research on [topic]\".",
     "category": "sales",
     "sourceRepo": "https://github.com/scanbott/claude-skills",
     "sourceSkill": "yt-pipeline",

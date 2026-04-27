@@ -7,7 +7,7 @@ export default function SettingsPage() {
       description="Your profile and personal preferences."
     >
       <div className="text-sm text-muted-foreground">
-        Profile settings UI — to be built.
+        Profile settings UI  -  to be built.
       </div>
     </PageShell>
   );

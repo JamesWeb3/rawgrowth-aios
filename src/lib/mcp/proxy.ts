@@ -6,7 +6,7 @@ import { providerConfigKeyFor } from "@/lib/nango/providers";
  * Thin wrapper around nango.proxy() that resolves the current org's
  * connection for a given integration id and forwards the API call.
  *
- * Throws if the integration isn't connected — callers should have gated
+ * Throws if the integration isn't connected  -  callers should have gated
  * with `requiresIntegration` in the tool definition, but we guard again
  * here for safety.
  */

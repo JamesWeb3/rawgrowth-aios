@@ -1,7 +1,7 @@
 import { getOrgContext } from "@/lib/auth/admin";
 
 /**
- * The seeded admin organization — the Rawgrowth team's own tenant. Users
+ * The seeded admin organization  -  the Rawgrowth team's own tenant. Users
  * whose `organization_id` matches this row are platform admins who can
  * impersonate any other org via the admin view cookie.
  *
@@ -21,7 +21,7 @@ export const DEFAULT_ORGANIZATION_SLUG = "rawgrowth";
  *      impersonation via the rg_admin_view_org cookie).
  *   2. If not signed in (e.g. cron, webhook before auth exists, local
  *      curl in dev), fall back to the default admin org id so the route
- *      doesn't crash — route-level auth guards are the real gatekeeper.
+ *      doesn't crash  -  route-level auth guards are the real gatekeeper.
  *
  * Throws if neither a session nor a fallback resolves.
  */
@@ -30,7 +30,7 @@ export async function currentOrganizationId(): Promise<string> {
     const ctx = await getOrgContext();
     if (ctx?.activeOrgId) return ctx.activeOrgId;
   } catch {
-    /* no session — fall through */
+    /* no session  -  fall through */
   }
   return DEFAULT_ORGANIZATION_ID;
 }

@@ -246,7 +246,7 @@ function ConnectorsRow({ ids }: { ids: string[] }) {
 // ────────────────────────── Tree renderer ──────────────────────────
 //
 // Each node renders as a column. When a node has children, a vertical stub
-// drops down from the card, then a row of "connector columns" — one per child.
+// drops down from the card, then a row of "connector columns"  -  one per child.
 // Each child's connector column contains a horizontal segment (sized to stitch
 // into a continuous horizontal bar across siblings) plus a vertical drop into
 // the child card.
@@ -289,7 +289,7 @@ function TreeNode({
                 >
                   {/* Connector zone above child */}
                   <div className="relative flex h-6 w-full justify-center">
-                    {/* Horizontal segment — only when multiple children */}
+                    {/* Horizontal segment  -  only when multiple children */}
                     {multipleChildren && (
                       <div
                         className={cn(
@@ -339,8 +339,8 @@ export function OrgChart() {
     return (
       <EmptyState
         icon={Network}
-        title="No agents yet — your org chart is empty"
-        description="Hire your first agent — a CEO at the top, or go straight to individual contributors. You can add reports underneath them later."
+        title="No agents yet  -  your org chart is empty"
+        description="Hire your first agent  -  a CEO at the top, or go straight to individual contributors. You can add reports underneath them later."
         action={<AgentSheet triggerSize="lg" triggerLabel="Hire first agent" />}
       />
     );
@@ -366,7 +366,7 @@ export function OrgChart() {
         <AgentSheet />
       </div>
 
-      {/* Chart canvas — scrolls horizontally for wide orgs */}
+      {/* Chart canvas  -  scrolls horizontally for wide orgs */}
       <div className="relative overflow-x-auto rounded-2xl border border-border bg-card/30 p-10">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/20 to-transparent" />
         <div

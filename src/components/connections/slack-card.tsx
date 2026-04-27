@@ -246,7 +246,7 @@ export function SlackConnectionCard() {
           // ─── Configured, ready to install ─────────────────────────
           <div className="space-y-3">
             <p className="text-[12.5px] text-muted-foreground">
-              Slack App creds saved. Now install the bot into your workspace —
+              Slack App creds saved. Now install the bot into your workspace  - 
               Slack will ask you to pick a workspace and approve the scopes.
             </p>
             <div className="flex gap-2">
@@ -296,13 +296,13 @@ export function SlackConnectionCard() {
                   In <strong>OAuth &amp; Permissions</strong>:
                   <ul className="mt-1 list-disc pl-5">
                     <li>
-                      Redirect URL — paste this:
+                      Redirect URL  -  paste this:
                       <code className="ml-1 block overflow-x-auto rounded bg-background/60 px-1.5 py-0.5 font-mono text-[10.5px]">
                         {redirectUri}
                       </code>
                     </li>
                     <li>
-                      Bot Token Scopes — add:{" "}
+                      Bot Token Scopes  -  add:{" "}
                       <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10.5px]">
                         channels:read, channels:history, groups:read, groups:history, chat:write, files:read, users:read, app_mentions:read
                       </code>
@@ -511,7 +511,7 @@ function SlackBindingsPanel() {
 
       {rows.length === 0 && !adding && (
         <p className="text-[11.5px] text-muted-foreground">
-          No bindings yet. Pick a channel, an agent, a trigger — agents will
+          No bindings yet. Pick a channel, an agent, a trigger  -  agents will
           listen on Slack and respond per your rules.
         </p>
       )}
@@ -705,7 +705,7 @@ function BindingForm({
             onChange={(e) => setChannelId(e.target.value)}
             className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
           >
-            <option value="">— select channel —</option>
+            <option value=""> -  select channel  - </option>
             {channelList.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.is_private ? "🔒" : "#"}
@@ -724,11 +724,11 @@ function BindingForm({
             onChange={(e) => setAgentId(e.target.value)}
             className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
           >
-            <option value="">— select agent —</option>
+            <option value=""> -  select agent  - </option>
             {agentList.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
-                {a.title ? ` — ${a.title}` : ""}
+                {a.title ? `  -  ${a.title}` : ""}
               </option>
             ))}
           </select>
@@ -788,7 +788,7 @@ function BindingForm({
             onChange={(e) => setOutputChannel(e.target.value)}
             className="mt-1 w-full rounded border border-border bg-background/60 px-2 py-1 text-[12px] text-foreground"
           >
-            <option value="">— select channel —</option>
+            <option value=""> -  select channel  - </option>
             {channelList.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.is_private ? "🔒" : "#"}
@@ -812,7 +812,7 @@ function BindingForm({
             className="mt-1 text-[12px]"
           />
           <p className="mt-1 text-[10.5px] text-muted-foreground">
-            Note: Gmail sending isn&apos;t wired up yet — for now the reply
+            Note: Gmail sending isn&apos;t wired up yet  -  for now the reply
             gets posted as a Slack thread note instead.
           </p>
         </div>

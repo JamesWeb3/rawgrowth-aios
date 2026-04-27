@@ -106,7 +106,7 @@ export function KnowledgeView({
 
   return (
     <>
-      {/* Drop zone — always visible so users can append more at any time */}
+      {/* Drop zone  -  always visible so users can append more at any time */}
       <div
         onDragEnter={(e) => {
           e.preventDefault();
@@ -160,7 +160,7 @@ export function KnowledgeView({
         <EmptyState
           icon={BookOpen}
           title="No knowledge files yet"
-          description="Upload markdown playbooks, SOPs, brand voice docs — anything your agents should reference. Tag them so they're easy to surface."
+          description="Upload markdown playbooks, SOPs, brand voice docs  -  anything your agents should reference. Tag them so they're easy to surface."
         />
       ) : (
         <>
@@ -332,7 +332,7 @@ function FileRow({
   );
 }
 
-// Tag pill with remove button — used inside the file sheet
+// Tag pill with remove button  -  used inside the file sheet
 export function TagPill({
   tag,
   onRemove,

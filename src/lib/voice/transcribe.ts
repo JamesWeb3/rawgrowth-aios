@@ -9,12 +9,12 @@ import { getFile, fileDownloadUrl } from "@/lib/telegram/client";
 /**
  * Voice-to-text for Telegram voice notes. Dual-path by design:
  *
- *   PATH A (primary) — Anthropic native audio input via the Messages API.
+ *   PATH A (primary)  -  Anthropic native audio input via the Messages API.
  *     Single call, no subprocess, no binary dep. Used when ANTHROPIC_API_KEY
  *     is present. This is the Path B commercial-API runtime talking to itself
- *     only for transcription — it does not count against the client's Max sub.
+ *     only for transcription  -  it does not count against the client's Max sub.
  *
- *   PATH B (fallback) — whisper.cpp static binary. Used when Anthropic is
+ *   PATH B (fallback)  -  whisper.cpp static binary. Used when Anthropic is
  *     unavailable / returns an error / the org opted out of the commercial
  *     key. Binary ships in the Dockerfile at /usr/local/bin/whisper-cli.
  *

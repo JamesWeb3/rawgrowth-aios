@@ -51,7 +51,7 @@ export type RunDetail = {
 };
 
 /**
- * Poll faster while any run is still running — so the UI feels live while
+ * Poll faster while any run is still running  -  so the UI feels live while
  * nothing is happening we don't spam the API.
  */
 export function useRuns() {

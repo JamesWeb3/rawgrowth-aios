@@ -6,7 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
  * button on each default manager (Marketing/Sales/Ops) then flips the
  * row to 'connected' once the operator pastes a BotFather token.
  *
- * Idempotent under concurrent calls — relies on the partial unique index
+ * Idempotent under concurrent calls  -  relies on the partial unique index
  * `rgaios_connections_org_agent_provider_key` (migration 0028) on
  * `(organization_id, agent_id, provider_config_key) where agent_id is
  * not null` plus supabase-js .upsert({ ignoreDuplicates: true }). Two

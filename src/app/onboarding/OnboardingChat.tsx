@@ -113,7 +113,7 @@ export default function OnboardingChat({
     setStreaming(true);
 
     try {
-      // Strip reasoning / uploader placeholder messages — OpenAI only
+      // Strip reasoning / uploader placeholder messages  -  OpenAI only
       // understands user/assistant roles, and the empty trailing assistant
       // placeholder we pushed for UX shouldn't go back out.
       const wireMessages = next
@@ -496,8 +496,8 @@ function ReasoningBubble({ message }: { message: ReasoningMessage }) {
 }
 
 function formatValue(v: any): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "string") return v || "—";
+  if (v === null || v === undefined) return " - ";
+  if (typeof v === "string") return v || " - ";
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return JSON.stringify(v);
 }
@@ -560,8 +560,8 @@ function BrandDocsUploader({
     const n = docs.length;
     onFinish(
       n > 0
-        ? `I've uploaded ${n} file${n === 1 ? "" : "s"} — done with brand docs.`
-        : "Nothing to upload here — ready to continue."
+        ? `I've uploaded ${n} file${n === 1 ? "" : "s"}  -  done with brand docs.`
+        : "Nothing to upload here  -  ready to continue."
     );
   }
 
@@ -582,7 +582,7 @@ function BrandDocsUploader({
             Upload your brand assets
           </p>
           <p className="text-[11px] text-muted-foreground/70">
-            Drag in files or pick them — up to 25 MB each
+            Drag in files or pick them  -  up to 25 MB each
           </p>
         </div>
       </div>

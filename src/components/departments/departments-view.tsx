@@ -33,15 +33,21 @@ type DeptMeta = {
   brand: string;
 };
 
+// Brand-only palette per CTO brief §P08  -  primary green for active
+// departments, muted neutral for the rest. No Tailwind blue/indigo/
+// yellow/orange/purple/pink anywhere.
+const PRIMARY = "#0cbf6a";
+const MUTED = "#94a3b8";
+
 const SEEDED_META: Record<string, DeptMeta> = {
-  marketing: { label: "Marketing", icon: Megaphone, brand: "#60a5fa" },
-  sales: { label: "Sales", icon: BadgeDollarSign, brand: "#0cbf6a" },
-  fulfilment: { label: "Fulfilment", icon: PackageCheck, brand: "#fbbf24" },
-  finance: { label: "Finance", icon: Wallet, brand: "#a78bfa" },
-  development: { label: "Development", icon: Code2, brand: "#f472b6" },
+  marketing: { label: "Marketing", icon: Megaphone, brand: PRIMARY },
+  sales: { label: "Sales", icon: BadgeDollarSign, brand: PRIMARY },
+  fulfilment: { label: "Fulfilment", icon: PackageCheck, brand: MUTED },
+  finance: { label: "Finance", icon: Wallet, brand: MUTED },
+  development: { label: "Development", icon: Code2, brand: MUTED },
 };
 
-const CUSTOM_BRANDS = ["#f472b6", "#94a3b8", "#22d3ee", "#facc15", "#fb7185"];
+const CUSTOM_BRANDS = [PRIMARY, MUTED];
 
 function metaFor(dept: string): DeptMeta {
   if (dept in SEEDED_META) return SEEDED_META[dept];
@@ -238,19 +244,25 @@ function AgentRow({
         </div>
       </div>
       <Select
-        value={agent.department ?? "__none__"}
-        onValueChange={(v) => onReassign(agent, v === "__none__" ? null : (v as Department))}
+        value={agent.department ?? undefined}
+        onValueChange={(v) => onReassign(agent, v === "__unassign__" ? null : (v as Department))}
       >
         <SelectTrigger className="h-8 w-36 bg-input/40 text-[12px]">
-          <SelectValue placeholder="Move to…" />
+          <SelectValue placeholder="Unassigned" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none__">Unassigned</SelectItem>
-          <SelectItem value="marketing">Marketing</SelectItem>
-          <SelectItem value="sales">Sales</SelectItem>
-          <SelectItem value="fulfilment">Fulfilment</SelectItem>
-          <SelectItem value="finance">Finance</SelectItem>
-          <SelectItem value="development">Development</SelectItem>
+          {Array.from(new Set([...DEPARTMENTS, ...Object.keys(SEEDED_META)]))
+            .sort()
+            .map((d) => (
+              <SelectItem key={d} value={d}>
+                {metaFor(d).label}
+              </SelectItem>
+            ))}
+          {agent.department && (
+            <SelectItem value="__unassign__" className="text-muted-foreground">
+              Remove from department
+            </SelectItem>
+          )}
         </SelectContent>
       </Select>
     </li>

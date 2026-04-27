@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     }
     if (trimmed.length < 60) {
       return NextResponse.json(
-        { error: "Token looks too short — did the paste cut off?" },
+        { error: "Token looks too short  -  did the paste cut off?" },
         { status: 400 },
       );
     }

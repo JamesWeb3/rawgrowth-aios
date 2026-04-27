@@ -1,5 +1,5 @@
 /**
- * Static agent metadata. Not persisted — these are product-level choices
+ * Static agent metadata. Not persisted  -  these are product-level choices
  * surfaced in the UI (role picker, runtime picker). Evolving these values
  * is a frontend change only; the `rgaios_agents.role` and `.runtime`
  * columns are just `text` in Postgres.

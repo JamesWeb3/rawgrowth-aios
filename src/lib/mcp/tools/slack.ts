@@ -10,7 +10,7 @@ import { postMessage } from "@/lib/slack/client";
  * webhook hands off to the drain daemon which spawns `claude --print`.
  * That claude session has full rawgrowth MCP tools (gmail, etc.) but
  * needs a way to deliver the final reply back to the originating Slack
- * channel — hence this tool.
+ * channel  -  hence this tool.
  *
  * Token resolution: the org's Slack bot token is stored encrypted in
  * rgaios_connections (provider_config_key='slack'). Single-org-per-VPS

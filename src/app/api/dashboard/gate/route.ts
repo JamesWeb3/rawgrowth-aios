@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { isScrapeComplete } from "@/lib/scrape/worker";
 
 /**
- * GET /api/dashboard/gate — true if onboarding is done AND brand profile
+ * GET /api/dashboard/gate  -  true if onboarding is done AND brand profile
  * is approved AND the post-submit scrape queue has drained to a terminal
  * state. The dashboard shell uses this to decide whether to show the
  * content dashboard or the "still working…" waiting screen.

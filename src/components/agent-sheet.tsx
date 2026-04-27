@@ -261,7 +261,7 @@ export function AgentSheet(props: Props) {
                     {managerCandidates.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
                         {a.name}
-                        {a.title ? ` — ${a.title}` : ""}
+                        {a.title ? `  -  ${a.title}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>

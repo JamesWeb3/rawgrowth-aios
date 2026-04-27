@@ -3,7 +3,7 @@
 import { useRuns } from "@/lib/runs/use-runs";
 
 /**
- * Lives inside the Activity sidebar item — shows a pulsing green pill
+ * Lives inside the Activity sidebar item  -  shows a pulsing green pill
  * with a count whenever any routine run is running or pending. SWR's
  * smart polling in useRuns() already ticks every 2s while live, 15s
  * otherwise, so this updates in near-real-time without extra plumbing.

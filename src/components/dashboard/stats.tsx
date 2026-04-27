@@ -21,22 +21,22 @@ export function DashboardStats() {
   const cards = [
     {
       label: "Active agents",
-      value: data ? String(data.activeAgents) : "—",
+      value: data ? String(data.activeAgents) : " - ",
       hint: data ? `${data.activelyRunning} running` : "loading…",
     },
     {
       label: "Open issues",
-      value: data ? String(data.openIssues) : "—",
+      value: data ? String(data.openIssues) : " - ",
       hint: "failed runs (7d)",
     },
     {
       label: "Pending approvals",
-      value: data ? String(data.pendingApprovals) : "—",
+      value: data ? String(data.pendingApprovals) : " - ",
       hint: data ? `${data.pendingApprovals} awaiting` : "loading…",
     },
     {
       label: "Runs this week",
-      value: data ? String(data.runsThisWeek) : "—",
+      value: data ? String(data.runsThisWeek) : " - ",
       hint: "completed (7d)",
     },
   ];

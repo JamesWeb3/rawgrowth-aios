@@ -157,7 +157,7 @@ export function MembersView() {
                             <UserRound className="size-3.5" />
                           </div>
                           <span className="font-medium text-foreground">
-                            {m.name ?? "—"}
+                            {m.name ?? " - "}
                           </span>
                           {isMe && (
                             <span className="text-[10px] text-muted-foreground">
@@ -206,7 +206,7 @@ export function MembersView() {
                           <Mail className="size-3.5" />
                         </div>
                         <span className="text-muted-foreground italic">
-                          {inv.name ?? "—"}
+                          {inv.name ?? " - "}
                         </span>
                       </div>
                     </td>

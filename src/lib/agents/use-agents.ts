@@ -9,7 +9,7 @@ const AGENTS_KEY = "/api/agents";
 
 /**
  * Client hook for agent CRUD. Backed by SWR so every component that
- * calls useAgents() shares the same cache — a hire in one component
+ * calls useAgents() shares the same cache  -  a hire in one component
  * is visible to every listener immediately.
  */
 export function useAgents() {
