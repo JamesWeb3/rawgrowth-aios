@@ -17,7 +17,7 @@ import { autoPickSkillsForAgent } from "@/lib/skills/rank";
  *
  * In self-hosted mode the `runtime` column is ignored (no autonomous
  * executor runs) but we still accept a value for forward-compat with the
- * hosted product. Default to claude-sonnet-4-5 so creates always work.
+ * hosted product. Default to claude-sonnet-4-6 so creates always work.
  */
 
 const VALID_ROLES = AGENT_ROLES.map((r) => r.value) as readonly string[];
@@ -178,7 +178,7 @@ registerTool({
       role,
       reportsTo: args.reports_to ? String(args.reports_to) : null,
       description: String(args.description ?? "").trim(),
-      runtime: "claude-sonnet-4-5",
+      runtime: "claude-sonnet-4-6",
       budgetMonthlyUsd: Number(args.budget_monthly_usd ?? 500),
       department,
       writePolicy,

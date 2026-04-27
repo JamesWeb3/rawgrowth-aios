@@ -437,9 +437,7 @@ export function AgentPanelClient({
                 <option value="claude-sonnet-4-6">
                   Sonnet 4.6 (sub-agents)
                 </option>
-                <option value="claude-haiku-4-5-20251001">
-                  Haiku 4.5 (high-volume)
-                </option>
+                <option value="claude-haiku-4-5">Haiku 4.5 (high-volume)</option>
               </select>
             </div>
 

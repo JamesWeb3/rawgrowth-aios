@@ -60,7 +60,7 @@ function emptyForm(): FormState {
     role: "general",
     description: "",
     reportsTo: NONE,
-    runtime: "claude-sonnet-4-5",
+    runtime: "claude-sonnet-4-6",
     budget: 500,
     writePolicy: {},
     department: NONE,
@@ -311,7 +311,7 @@ export function AgentSheet(props: Props) {
                   onValueChange={(v) =>
                     setForm({
                       ...form,
-                      runtime: (v ?? "claude-sonnet-4-5") as AgentRuntime,
+                      runtime: (v ?? "claude-sonnet-4-6") as AgentRuntime,
                     })
                   }
                 >

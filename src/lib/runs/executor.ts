@@ -36,10 +36,13 @@ function runtimeToModel(runtime: string): string {
     case "claude-opus-4-7":
       return "claude-opus-4-7";
     case "claude-haiku-4-5":
+    case "claude-haiku-4-5-20251001":
       return "claude-haiku-4-5";
     case "claude-sonnet-4-5":
-    default:
       return "claude-sonnet-4-5";
+    case "claude-sonnet-4-6":
+    default:
+      return "claude-sonnet-4-6";
   }
 }
 
@@ -112,7 +115,7 @@ export async function executeRun(runId: string): Promise<void> {
         result = { text, steps: [] as unknown[] };
       } else {
         result = await generateText({
-          model: anthropic(runtimeToModel(agent?.runtime ?? "claude-sonnet-4-5")),
+          model: anthropic(runtimeToModel(agent?.runtime ?? "claude-sonnet-4-6")),
           system: systemPrompt,
           prompt: userMessage,
           tools,

@@ -101,7 +101,7 @@ export type ChatResponse = {
 };
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
-const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_STEPS = 12;
 
 /**

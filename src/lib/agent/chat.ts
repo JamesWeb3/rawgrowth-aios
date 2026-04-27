@@ -15,7 +15,7 @@ import { tryDecryptSecret } from "@/lib/crypto";
  * rather than silently failing.
  */
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 1024;
 const RECENT_HISTORY = 6;
 
