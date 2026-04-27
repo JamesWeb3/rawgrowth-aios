@@ -33,13 +33,12 @@ import {
 } from "@/lib/agents/constants";
 import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent } from "@/lib/agents/dto";
+import { DEPARTMENTS } from "@/lib/agents/dto";
 import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
 import { ConnectorsPicker } from "@/components/agents/connectors-picker";
 import { useConfig } from "@/lib/use-config";
 
 const NONE = "__none__";
-
-type Department = "marketing" | "sales" | "fulfilment" | "finance";
 
 type FormState = {
   name: string;
@@ -50,8 +49,12 @@ type FormState = {
   runtime: AgentRuntime;
   budget: number;
   writePolicy: WritePolicy;
-  department: Department | typeof NONE;
+  department: string;
 };
+
+function deptLabel(slug: string): string {
+  return slug.charAt(0).toUpperCase() + slug.slice(1).replace(/_/g, " ");
+}
 
 function emptyForm(): FormState {
   return {
@@ -77,7 +80,7 @@ function agentToForm(agent: Agent): FormState {
     runtime: agent.runtime,
     budget: agent.budgetMonthlyUsd,
     writePolicy: agent.writePolicy ?? {},
-    department: (agent.department ?? NONE) as Department | typeof NONE,
+    department: agent.department ?? NONE,
   };
 }
 
@@ -273,7 +276,7 @@ export function AgentSheet(props: Props) {
               <Select
                 value={form.department}
                 onValueChange={(v) =>
-                  setForm({ ...form, department: (v ?? NONE) as Department | typeof NONE })
+                  setForm({ ...form, department: v ?? NONE })
                 }
               >
                 <SelectTrigger className="w-full bg-input/40">
@@ -281,10 +284,20 @@ export function AgentSheet(props: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>Unassigned</SelectItem>
-                  <SelectItem value="marketing">Marketing</SelectItem>
-                  <SelectItem value="sales">Sales</SelectItem>
-                  <SelectItem value="fulfilment">Fulfilment</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
+                  {Array.from(
+                    new Set([
+                      ...DEPARTMENTS,
+                      ...agents
+                        .map((a) => a.department)
+                        .filter((d): d is string => Boolean(d)),
+                    ]),
+                  )
+                    .sort()
+                    .map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {deptLabel(d)}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </Field>
