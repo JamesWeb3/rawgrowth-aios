@@ -61,7 +61,10 @@ async function replaceTriggers(
 
   if (triggers.length === 0) return;
   const rows = triggers.map((t) => ({
-    id: t.id,
+    // Omit id when missing so the DB default (gen_random_uuid()) fires.
+    // Sending {id: undefined} serialises as null over PostgREST, which
+    // violates the NOT NULL primary key.
+    ...(t.id ? { id: t.id } : {}),
     organization_id: organizationId,
     routine_id: routineId,
     kind: t.kind,
