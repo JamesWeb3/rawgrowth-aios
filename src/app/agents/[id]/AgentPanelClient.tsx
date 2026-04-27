@@ -4,6 +4,13 @@ import { useRef, useState, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
+import { AGENT_RUNTIMES } from "@/lib/agents/constants";
+
+function runtimeLabel(value: string | null): string {
+  if (!value) return "Default";
+  const meta = AGENT_RUNTIMES.find((r) => r.value === value);
+  return meta ? meta.label : value;
+}
 
 type Agent = {
   id: string;
@@ -240,8 +247,8 @@ export function AgentPanelClient({
               <h3 className="text-xs uppercase tracking-widest text-primary">
                 Runtime
               </h3>
-              <p className="mt-2 font-mono text-sm text-[var(--text-body)]">
-                {agent.runtime ?? "default"}
+              <p className="mt-2 text-sm text-[var(--text-body)]">
+                {runtimeLabel(agent.runtime)}
               </p>
             </section>
 
