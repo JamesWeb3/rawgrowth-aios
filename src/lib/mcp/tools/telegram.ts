@@ -20,7 +20,7 @@ import { tryDecryptSecret } from "@/lib/crypto";
 async function getTelegramConnection(organizationId: string) {
   const { data } = await supabaseAdmin()
     .from("rgaios_connections")
-    .select("id, metadata, display_name")
+    .select("id, metadata, display_name, agent_id")
     .eq("organization_id", organizationId)
     .eq("provider_config_key", "telegram")
     .eq("status", "connected")
@@ -130,24 +130,81 @@ registerTool({
     const raw = String(args.text ?? "").trim();
     if (!raw) return textError("text is required");
 
-    // Brand-voice guard (brief §12). Rewrite banned words to neutral
-    // substitutes before anything leaves the server. Logs the hit list
-    // so operators can audit the activity feed and spot prompt-drift.
-    const { checkBrandVoice } = await import("@/lib/brand/runtime-filter");
-    const verdict = checkBrandVoice(raw);
-    const body = verdict.ok ? raw : verdict.rewritten;
-    if (!verdict.ok) {
-      console.warn(
-        `[telegram_reply] brand-voice rewrite, hits=${verdict.hits.join(",")}`,
-      );
-    }
-
+    // Brand-voice guard (CTO brief §P09). Two-pass flow:
+    //   1. checkBrandVoice on raw output.
+    //   2. If hit, regenerateWithBrandReminder (Haiku, 10s timeout,
+    //      explicit "do not use these words" reminder). Result is
+    //      already re-checked inside the helper.
+    //   3. If still hit (or regen errored), hard-fail: refuse to send and
+    //      surface to the operator via rgaios_audit_log
+    //      (kind=brand_voice_hard_fail).
+    //   4. On clean-after-regen, audit a lower-severity
+    //      brand_voice_regenerated entry so the activity feed shows when
+    //      Claude tripped the filter.
+    const { checkBrandVoice, regenerateWithBrandReminder } = await import(
+      "@/lib/brand/runtime-filter"
+    );
+    // Pull connection (and the agent_id it's bound to) up front so audit
+    // rows on the brand-voice path can attribute hits to the right agent.
     const conn = await getTelegramConnection(ctx.organizationId);
     if (!conn) {
       return textError(
-        "Telegram isn't connected for this organization. Connect a bot in the Rawclaw UI first.",
+        "Telegram isn't connected for this organization. Connect a bot in the Rawclaw UI under /integrations first.",
       );
     }
+    const agentId =
+      (conn as { agent_id?: string | null }).agent_id ?? null;
+
+    let body = raw;
+    const firstPass = checkBrandVoice(raw);
+    if (!firstPass.ok) {
+      console.warn(
+        `[telegram_reply] brand-voice pass-1 hit: ${firstPass.hits.join(",")}, regenerating`,
+      );
+      const regen = await regenerateWithBrandReminder(raw, firstPass.hits, {
+        organizationId: ctx.organizationId,
+        agentId,
+      });
+      if (!regen.ok) {
+        console.error(
+          `[telegram_reply] brand-voice hard-fail after pass-2: ${regen.hits.join(",")}`,
+        );
+        await supabaseAdmin()
+          .from("rgaios_audit_log")
+          .insert({
+            organization_id: ctx.organizationId,
+            kind: "brand_voice_hard_fail",
+            actor_type: "system",
+            actor_id: "telegram_reply",
+            detail: {
+              agent_id: agentId,
+              original_excerpt: raw.slice(0, 500),
+              final_attempt_excerpt: regen.finalAttempt.slice(0, 500),
+              hits_first: firstPass.hits,
+              hits_second: regen.hits,
+            },
+          });
+        return textError(
+          `Brand voice guard: copy still contained banned words after one regeneration. Operator review needed. Hits: ${regen.hits.join(", ")}`,
+        );
+      }
+      body = regen.text;
+      await supabaseAdmin()
+        .from("rgaios_audit_log")
+        .insert({
+          organization_id: ctx.organizationId,
+          kind: "brand_voice_regenerated",
+          actor_type: "system",
+          actor_id: "telegram_reply",
+          detail: {
+            agent_id: agentId,
+            hits_first: firstPass.hits,
+            original_excerpt: raw.slice(0, 500),
+            final_excerpt: body.slice(0, 500),
+          },
+        });
+    }
+
     const botToken = tryDecryptSecret(
       (conn.metadata as { bot_token?: string } | null)?.bot_token,
     );

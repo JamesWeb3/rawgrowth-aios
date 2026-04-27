@@ -96,6 +96,7 @@ const eslintConfig = defineConfig([
     // Unit tests for runtime-filter have to embed banned words verbatim
     // to exercise the filter; exempt them from the source-scan rule.
     "tests/unit/brand-filter.spec.ts",
+    "tests/unit/brand-voice-regen.spec.ts",
   ]),
 ]);
 
