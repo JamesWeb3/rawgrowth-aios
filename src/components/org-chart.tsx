@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import {
   Bot,
@@ -395,6 +395,37 @@ export function OrgChart() {
   const runningCount = agents.filter((a) => a.status === "running").length;
   const headsCount = agents.filter((a) => a.isDepartmentHead).length;
 
+  // Auto-fit: when the natural chart width exceeds the visible canvas,
+  // scale the whole tree down so it fits without horizontal scrolling.
+  // Floor at 0.4 so cards don't get unreadable on dense orgs.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const recalc = () => {
+      const canvas = canvasRef.current;
+      const content = contentRef.current;
+      if (!canvas || !content) return;
+      // Reset transform before measuring so we get the natural size.
+      content.style.transform = "none";
+      const naturalW = content.scrollWidth;
+      const naturalH = content.scrollHeight;
+      // 80px = total horizontal padding inside the canvas (p-10 each side).
+      const available = canvas.clientWidth - 80;
+      const next =
+        naturalW <= available ? 1 : Math.max(0.4, available / naturalW);
+      setScale(next);
+      setContentHeight(naturalH * next);
+    };
+    recalc();
+    if (!canvasRef.current) return;
+    const ro = new ResizeObserver(recalc);
+    ro.observe(canvasRef.current);
+    return () => ro.disconnect();
+  }, [tree, agents.length]);
+
   if (!hasHydrated) {
     return (
       <div className="h-105 animate-pulse rounded-2xl border border-border bg-card/20" />
@@ -444,12 +475,28 @@ export function OrgChart() {
         <AgentSheet />
       </div>
 
-      {/* Chart canvas — scrolls horizontally for wide orgs */}
-      <div className="relative overflow-x-auto rounded-2xl border border-border bg-card/30 p-10">
+      {/* Chart canvas — auto-scales the tree down to fit the available
+          width instead of horizontally scrolling. Wider orgs get smaller
+          cards rather than off-screen ones. */}
+      <div
+        ref={canvasRef}
+        className="relative overflow-hidden rounded-2xl border border-border bg-card/30 p-10"
+        style={contentHeight !== null ? { minHeight: contentHeight + 80 } : undefined}
+      >
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/20 to-transparent" />
+        {scale < 1 && (
+          <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-border bg-background/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+            {Math.round(scale * 100)}%
+          </div>
+        )}
         <div
-          className="mx-auto flex items-start justify-center gap-8"
-          style={{ minWidth: Math.max(CARD_WIDTH, tree.length * (CARD_WIDTH + 64)) }}
+          ref={contentRef}
+          className="mx-auto flex items-start justify-center gap-8 origin-top"
+          style={{
+            minWidth: Math.max(CARD_WIDTH, tree.length * (CARD_WIDTH + 64)),
+            transform: `scale(${scale})`,
+            width: "fit-content",
+          }}
         >
           {tree.map((root) => (
             <TreeNode
