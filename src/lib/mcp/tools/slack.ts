@@ -53,7 +53,7 @@ registerTool({
     },
     required: ["channel_id", "text"],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const channel = String(args.channel_id ?? "").trim();
     const body = String(args.text ?? "").trim();
     if (!channel || !body) {
@@ -65,10 +65,21 @@ registerTool({
         "Slack isn't installed for this organization. Connect it at /connections.",
       );
     }
+    // Brief §P09 + §12: every outbound user-facing surface gates on the
+    // brand-voice two-pass filter. Telegram_reply does this inline; the
+    // shared helper covers Slack so the same audit + hard-fail semantics
+    // apply here.
+    const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
+    const filtered = await applyBrandFilter(body, {
+      organizationId: ctx.organizationId,
+      surface: "slack_post_message",
+    });
+    if (!filtered.ok) return textError(filtered.error);
+
     try {
       const sent = await postMessage(token, {
         channel,
-        text: body,
+        text: filtered.text,
         thread_ts: args.thread_ts ? String(args.thread_ts) : undefined,
       });
       return text(

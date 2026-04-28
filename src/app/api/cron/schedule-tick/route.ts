@@ -247,10 +247,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Audit a single summary row so you can grep cron activity.
+  // Audit a single summary row so you can grep cron activity. Pinned to
+  // the platform-admin tenant (DEFAULT_ORGANIZATION_ID) instead of null
+  // so any future RLS-bound admin reader can actually see it — RLS
+  // policies of the form `organization_id = rgaios_current_org_id()`
+  // exclude null rows (null = uuid → null, not true), so a null-tenanted
+  // row would be invisible to every legitimate consumer.
   if (fired.length > 0 || skipped.length > 0) {
+    const { DEFAULT_ORGANIZATION_ID } = await import(
+      "@/lib/supabase/constants"
+    );
     await db.from("rgaios_audit_log").insert({
-      organization_id: null, // cross-tenant summary; org_id is nullable on this table
+      organization_id: DEFAULT_ORGANIZATION_ID,
       kind: "cron_schedule_tick",
       actor_type: "system",
       actor_id: "cron",

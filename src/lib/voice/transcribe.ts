@@ -101,9 +101,15 @@ async function transcribeViaAnthropic(
 /**
  * Path B: whisper.cpp subprocess. Writes the audio bytes to a temp file,
  * runs `whisper-cli -m <model> -f <audio> -otxt`, reads the resulting
- * <audio>.txt file. Cleans up the temp dir either way.
+ * <audio>.txt file. Cleans up the temp dir either way. AbortSignal
+ * propagates to spawn so a wall-clock timeout actually kills the
+ * subprocess instead of hanging the webhook.
  */
-async function transcribeViaWhisper(bytes: Buffer, mimeType: string): Promise<string> {
+async function transcribeViaWhisper(
+  bytes: Buffer,
+  mimeType: string,
+  signal: AbortSignal,
+): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "rawclaw-voice-"));
   const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "audio";
   const audioPath = path.join(dir, `in.${ext}`);
@@ -114,7 +120,7 @@ async function transcribeViaWhisper(bytes: Buffer, mimeType: string): Promise<st
       const child = spawn(
         WHISPER_BIN,
         ["-m", WHISPER_MODEL, "-f", audioPath, "-otxt", "-nt"],
-        { stdio: "pipe" },
+        { stdio: "pipe", signal },
       );
       let stderr = "";
       child.stderr.on("data", (d) => (stderr += d.toString()));
@@ -125,7 +131,6 @@ async function transcribeViaWhisper(bytes: Buffer, mimeType: string): Promise<st
       });
     });
 
-    // whisper-cli -otxt writes <input>.txt next to the input file.
     const { readFile } = await import("node:fs/promises");
     const txt = await readFile(`${audioPath}.txt`, "utf-8");
     return txt.trim() || "[unintelligible]";
@@ -134,9 +139,20 @@ async function transcribeViaWhisper(bytes: Buffer, mimeType: string): Promise<st
   }
 }
 
+// Brief §9.4 voice-reply SLA is <30s end-to-end; reserve ~5s for the
+// LLM round-trip after transcription, so transcription gets 25s.
+const TRANSCRIBE_WALL_CLOCK_MS = 25_000;
+
 /**
- * High-level entry: try Path A, fall back to Path B on failure.
- * Always returns a transcript string; throws only if both fail.
+ * High-level entry: try Path A (Anthropic Messages API with audio
+ * document block — currently fails for all audio MIME types since the
+ * Messages API only accepts PDF/text in document blocks; left in as a
+ * forward-compat slot for when Anthropic ships native audio on
+ * messages.create) → falls back to Path B (whisper.cpp).
+ *
+ * Both paths share a single AbortController capped at
+ * TRANSCRIBE_WALL_CLOCK_MS so a hung whisper subprocess doesn't keep
+ * the Telegram webhook open past the 30s SLA.
  */
 export async function transcribeVoice(
   botToken: string,
@@ -145,18 +161,23 @@ export async function transcribeVoice(
   const started = Date.now();
   const { bytes, mimeType } = await downloadTelegramVoice(botToken, fileId);
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      const text = await transcribeViaAnthropic(bytes, mimeType);
-      return { text, source: "anthropic", durationMs: Date.now() - started };
-    } catch (err) {
-      console.warn(
-        "[voice] anthropic transcribe failed, falling back to whisper:",
-        (err as Error).message,
-      );
+  const abortCtl = new AbortController();
+  const timer = setTimeout(() => abortCtl.abort(), TRANSCRIBE_WALL_CLOCK_MS);
+  try {
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        const text = await transcribeViaAnthropic(bytes, mimeType);
+        return { text, source: "anthropic", durationMs: Date.now() - started };
+      } catch (err) {
+        console.warn(
+          "[voice] anthropic transcribe failed, falling back to whisper:",
+          (err as Error).message,
+        );
+      }
     }
+    const text = await transcribeViaWhisper(bytes, mimeType, abortCtl.signal);
+    return { text, source: "whisper", durationMs: Date.now() - started };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const text = await transcribeViaWhisper(bytes, mimeType);
-  return { text, source: "whisper", durationMs: Date.now() - started };
 }

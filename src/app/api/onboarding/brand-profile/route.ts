@@ -8,13 +8,17 @@ export async function GET() {
     if (!ctx?.activeOrgId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const user = { id: ctx.activeOrgId, userId: ctx.userId };
 
+    // Match what the executor's loadBrandVoice reads (highest-version
+    // approved row). Without the status filter the UI would render an
+    // unapproved 'ready' draft while runs use the previous approved one.
     const { data: profile } = await supabaseAdmin()
       .from("rgaios_brand_profiles")
       .select("*")
       .eq("organization_id", user.id)
+      .eq("status", "approved")
       .order("version", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     return NextResponse.json({ profile });
   } catch (err: any) {

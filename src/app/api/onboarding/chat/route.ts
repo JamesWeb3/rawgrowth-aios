@@ -572,15 +572,18 @@ ${sections}`;
 }
 
 async function approveBrandProfile(userId: string) {
+  // status='ready' filter so a regen that landed mid-flight (status
+  // 'generating' or already 'approved') doesn't get flipped under us.
   const { data: latest } = await supabaseAdmin()
     .from("rgaios_brand_profiles")
     .select("id")
     .eq("organization_id", userId)
+    .eq("status", "ready")
     .order("version", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!latest) return { ok: false, error: "No brand profile to approve." };
+  if (!latest) return { ok: false, error: "No ready brand profile to approve." };
 
   const nowMs = Date.now();
   const { error: profileErr } = await supabaseAdmin()

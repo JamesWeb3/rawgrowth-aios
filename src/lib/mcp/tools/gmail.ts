@@ -167,14 +167,29 @@ registerTool({
     const cc = String(args.cc ?? "").trim();
     if (!to || !subject) return textError("to and subject are required");
 
+    // Brief §P09 + §12: brand-voice guard runs before the draft hits
+    // Gmail. Filter both subject and body so a banned word in either
+    // surface lands an audit row + hard-fails the draft creation.
+    const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
+    const subjectFiltered = await applyBrandFilter(subject, {
+      organizationId: ctx.organizationId,
+      surface: "gmail_send_message:subject",
+    });
+    if (!subjectFiltered.ok) return textError(subjectFiltered.error);
+    const bodyFiltered = await applyBrandFilter(body, {
+      organizationId: ctx.organizationId,
+      surface: "gmail_send_message:body",
+    });
+    if (!bodyFiltered.ok) return textError(bodyFiltered.error);
+
     const headers = [
       `To: ${to}`,
       cc ? `Cc: ${cc}` : "",
-      `Subject: ${subject}`,
+      `Subject: ${subjectFiltered.text}`,
       'Content-Type: text/plain; charset="UTF-8"',
       "MIME-Version: 1.0",
       "",
-      body,
+      bodyFiltered.text,
     ].filter(Boolean);
 
     const raw = Buffer.from(headers.join("\r\n"), "utf8").toString("base64url");

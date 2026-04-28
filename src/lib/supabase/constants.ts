@@ -15,22 +15,22 @@ export const DEFAULT_ORGANIZATION_NAME = "Rawgrowth";
 export const DEFAULT_ORGANIZATION_SLUG = "rawgrowth";
 
 /**
- * Resolves the "active" organization id for the current request.
+ * Resolves the "active" organization id for the current request via the
+ * authenticated session (respects admin impersonation through the
+ * rg_admin_view_org cookie).
  *
- *   1. If the user is signed in, use their org context (respects admin
- *      impersonation via the rg_admin_view_org cookie).
- *   2. If not signed in (e.g. cron, webhook before auth exists, local
- *      curl in dev), fall back to the default admin org id so the route
- *      doesn't crash  -  route-level auth guards are the real gatekeeper.
- *
- * Throws if neither a session nor a fallback resolves.
+ * Throws on missing session. Prior versions silently fell back to
+ * DEFAULT_ORGANIZATION_ID, which meant any route that forgot to call
+ * getOrgContext() would default to Rawgrowth's tenant data instead of
+ * 401-ing. Cron + webhook paths must look up org_id from their own
+ * verified context (CRON_SECRET, connection-id signature).
  */
 export async function currentOrganizationId(): Promise<string> {
-  try {
-    const ctx = await getOrgContext();
-    if (ctx?.activeOrgId) return ctx.activeOrgId;
-  } catch {
-    /* no session  -  fall through */
+  const ctx = await getOrgContext();
+  if (!ctx?.activeOrgId) {
+    throw new Error(
+      "currentOrganizationId: no authenticated session — route must guard with getOrgContext or use a webhook-scoped resolver",
+    );
   }
-  return DEFAULT_ORGANIZATION_ID;
+  return ctx.activeOrgId;
 }
