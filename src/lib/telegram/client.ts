@@ -132,6 +132,22 @@ export function sendChatAction(
 }
 
 // Shape of the inbound webhook payload (only fields we care about).
+export type TgPhotoSize = {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  file_size?: number;
+};
+
+export type TgVoice = {
+  file_id: string;
+  file_unique_id: string;
+  duration: number;
+  mime_type?: string;
+  file_size?: number;
+};
+
 export type TgUpdate = {
   update_id: number;
   message?: {
@@ -140,5 +156,41 @@ export type TgUpdate = {
     chat: { id: number; type: string };
     date: number;
     text?: string;
+    caption?: string;
+    photo?: TgPhotoSize[];
+    voice?: TgVoice;
   };
 };
+
+/**
+ * Resolve a Telegram file_id to a downloadable URL. Returns the path that
+ * Telegram serves the binary at — combine with the bot token to fetch.
+ */
+export async function getFilePath(token: string, fileId: string): Promise<string> {
+  const file = await call<{ file_path?: string }>(token, "getFile", {
+    file_id: fileId,
+  });
+  if (!file.file_path) {
+    throw new Error(`Telegram getFile returned no file_path for ${fileId}`);
+  }
+  return file.file_path;
+}
+
+/**
+ * Download a Telegram-hosted file as raw bytes. Telegram limits this to
+ * 20MB per request — voice notes and Telegram-compressed photos are well
+ * under that ceiling.
+ */
+export async function downloadFile(
+  token: string,
+  filePath: string,
+): Promise<{ bytes: Uint8Array; mimeType: string }> {
+  const url = `${API_ROOT}/file/bot${token}/${filePath}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) {
+    throw new Error(`Telegram file download failed: ${res.status}`);
+  }
+  const mimeType = res.headers.get("content-type") ?? "application/octet-stream";
+  const buf = new Uint8Array(await res.arrayBuffer());
+  return { bytes: buf, mimeType };
+}

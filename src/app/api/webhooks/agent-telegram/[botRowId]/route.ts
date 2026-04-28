@@ -2,13 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
+  downloadFile,
   editMessageText,
+  getFilePath,
   sendChatAction,
   sendMessage,
   type TgUpdate,
 } from "@/lib/telegram/client";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { chatReply, CHAT_HANDOFF_SENTINEL_PREFIX } from "@/lib/agent/chat";
+import { transcribeVoice } from "@/lib/agent/voice-transcribe";
+import { describeImage } from "@/lib/agent/image-describe";
 
 /**
  * Per-Department-Head Telegram webhook.
@@ -138,11 +142,32 @@ export async function POST(
   }
 
   const msg = update.message;
-  if (!msg || !msg.text) {
+  if (!msg) {
     return NextResponse.json({ ok: true, skipped: "non-message update" });
   }
 
-  const text = msg.text.trim();
+  // Resolve the inbound message into a single text string. Voice notes
+  // get transcribed via Whisper; photos get described via Claude vision.
+  // We tag the result so the agent knows the original modality.
+  const resolved = await resolveUserMessage({
+    msg,
+    botToken: token,
+    organizationId,
+  });
+
+  if (!resolved.ok) {
+    // Couldn't extract anything useful — surface the error in-chat so the
+    // sender knows we received the message but can't read it. Don't waste
+    // an LLM round-trip when there's nothing to act on.
+    try {
+      await sendMessage(token, msg.chat.id, `⚠️ ${resolved.error}`);
+    } catch {
+      /* delivery best-effort */
+    }
+    return NextResponse.json({ ok: true, skipped: resolved.error });
+  }
+
+  const text = resolved.text;
 
   // Log the inbound message into the unified inbox table, scoped to this
   // bot row so each head's chat history stays separate.
@@ -297,4 +322,81 @@ export async function POST(
   });
 
   return NextResponse.json({ ok: true, inboxed: true, agent_id: agentId });
+}
+
+// ─── Multimodal input → text resolver ─────────────────────────────
+//
+// Telegram delivers messages in three shapes we care about:
+//   • text  — pass through
+//   • voice — OGG/Opus blob → Whisper transcript
+//   • photo — JPEG (highest-resolution variant) → Claude vision description
+//
+// We always return a single string (possibly tagged) so chatReply can
+// stay text-only. Captions on photos are merged into the description
+// so the agent has full context.
+
+type ResolvedMessage =
+  | { ok: true; text: string }
+  | { ok: false; error: string };
+
+async function resolveUserMessage(input: {
+  msg: NonNullable<TgUpdate["message"]>;
+  botToken: string;
+  organizationId: string;
+}): Promise<ResolvedMessage> {
+  const { msg, botToken, organizationId } = input;
+
+  // Voice note → transcribe.
+  if (msg.voice) {
+    try {
+      const filePath = await getFilePath(botToken, msg.voice.file_id);
+      const { bytes, mimeType } = await downloadFile(botToken, filePath);
+      const result = await transcribeVoice({
+        bytes,
+        mimeType: msg.voice.mime_type ?? mimeType,
+      });
+      if (!result.ok) return { ok: false, error: result.error };
+      return { ok: true, text: `[voice note]\n${result.text}` };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Couldn't read that voice note: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  // Photo → describe (highest-resolution variant) and merge any caption.
+  if (msg.photo && msg.photo.length > 0) {
+    const largest = msg.photo[msg.photo.length - 1];
+    try {
+      const filePath = await getFilePath(botToken, largest.file_id);
+      const { bytes, mimeType } = await downloadFile(botToken, filePath);
+      const result = await describeImage({
+        organizationId,
+        bytes,
+        mimeType,
+        hint: msg.caption?.trim() || undefined,
+      });
+      if (!result.ok) return { ok: false, error: result.error };
+      const captionLine = msg.caption?.trim()
+        ? `\n\nSender caption: ${msg.caption.trim()}`
+        : "";
+      return {
+        ok: true,
+        text: `[image attached]\n${result.description}${captionLine}`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Couldn't read that image: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  // Fallback: plain text.
+  if (msg.text && msg.text.trim()) {
+    return { ok: true, text: msg.text.trim() };
+  }
+
+  return { ok: false, error: "Empty or unsupported message type" };
 }
