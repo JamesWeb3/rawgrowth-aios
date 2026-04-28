@@ -122,7 +122,8 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
-          connection_id: string;
+          connection_id: string | null;
+          agent_telegram_bot_id: string | null;
           chat_id: number;
           sender_user_id: number | null;
           sender_username: string | null;
@@ -137,7 +138,8 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
-          connection_id: string;
+          connection_id?: string | null;
+          agent_telegram_bot_id?: string | null;
           chat_id: number;
           sender_user_id?: number | null;
           sender_username?: string | null;
@@ -150,6 +152,39 @@ export type Database = {
         };
         Update: Partial<
           Database["public"]["Tables"]["rgaios_telegram_messages"]["Row"]
+        >;
+        Relationships: [];
+      };
+      rgaios_agent_telegram_bots: {
+        Row: {
+          id: string;
+          organization_id: string;
+          agent_id: string;
+          bot_id: number;
+          bot_username: string | null;
+          bot_first_name: string | null;
+          bot_token: string;
+          webhook_secret: string;
+          status: "connected" | "error" | "disconnected";
+          metadata: Record<string, unknown>;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          agent_id: string;
+          bot_id: number;
+          bot_username?: string | null;
+          bot_first_name?: string | null;
+          bot_token: string;
+          webhook_secret: string;
+          status?: "connected" | "error" | "disconnected";
+          metadata?: Record<string, unknown>;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["rgaios_agent_telegram_bots"]["Row"]
         >;
         Relationships: [];
       };
@@ -262,6 +297,7 @@ export type Database = {
             "direct" | "requires_approval" | "draft_only"
           >;
           department: "marketing" | "sales" | "fulfilment" | "finance" | "development" | null;
+          is_department_head: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -279,6 +315,7 @@ export type Database = {
             "direct" | "requires_approval" | "draft_only"
           >;
           department?: "marketing" | "sales" | "fulfilment" | "finance" | "development" | null;
+          is_department_head?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_agents"]["Row"]>;
         Relationships: [];

@@ -70,8 +70,8 @@ async function loadOrgMcpToken(
 async function loadDefaultPersona(
   organizationId: string,
 ): Promise<RawgrowthAgent | null> {
-  // For v1 we use the first non-paused agent as the public-facing persona.
-  // Multi-department routing comes later (TODO #2).
+  // Default persona = first non-paused agent. Used for the org-level
+  // Telegram bot path (no specific head bound).
   const { data } = await supabaseAdmin()
     .from("rgaios_agents")
     .select("name, title, description")
@@ -79,6 +79,24 @@ async function loadDefaultPersona(
     .neq("status", "paused")
     .order("created_at", { ascending: true })
     .limit(1)
+    .maybeSingle();
+  return data;
+}
+
+/**
+ * Resolve a SPECIFIC agent as the persona — used by the per-Department-Head
+ * Telegram path so messages routed through Marketing's bot reply as the
+ * Marketing head, not the org's default agent.
+ */
+async function loadAgentPersona(
+  organizationId: string,
+  agentId: string,
+): Promise<RawgrowthAgent | null> {
+  const { data } = await supabaseAdmin()
+    .from("rgaios_agents")
+    .select("name, title, description")
+    .eq("organization_id", organizationId)
+    .eq("id", agentId)
     .maybeSingle();
   return data;
 }
@@ -213,8 +231,14 @@ export async function chatReply(input: {
   chatId: number;
   userMessage: string;
   publicAppUrl: string;
+  /**
+   * Optional: route the reply through a specific agent's persona instead
+   * of the org default. Used by per-Department-Head Telegram bots so the
+   * Marketing bot replies as the Marketing head, not the first agent.
+   */
+  agentId?: string;
 }): Promise<AgentChatResult> {
-  const { organizationId, organizationName, chatId, userMessage, publicAppUrl } =
+  const { organizationId, organizationName, chatId, userMessage, publicAppUrl, agentId } =
     input;
 
   const claudeToken = await loadClaudeMaxToken(organizationId);
@@ -226,9 +250,13 @@ export async function chatReply(input: {
     };
   }
 
+  const personaLoader = agentId
+    ? loadAgentPersona(organizationId, agentId)
+    : loadDefaultPersona(organizationId);
+
   const [mcpToken, persona, history] = await Promise.all([
     loadOrgMcpToken(organizationId),
-    loadDefaultPersona(organizationId),
+    personaLoader,
     loadRecentHistory(organizationId, chatId),
   ]);
 

@@ -39,6 +39,9 @@ export async function createAgent(
       runtime: input.runtime,
       budget_monthly_usd: input.budgetMonthlyUsd,
       department: input.department ?? null,
+      ...(input.isDepartmentHead !== undefined
+        ? { is_department_head: input.isDepartmentHead }
+        : {}),
       ...(input.writePolicy ? { write_policy: input.writePolicy } : {}),
     })
     .select("*")
@@ -67,6 +70,8 @@ export async function updateAgent(
   if (patch.status !== undefined) dbPatch.status = patch.status;
   if (patch.writePolicy !== undefined) dbPatch.write_policy = patch.writePolicy;
   if (patch.department !== undefined) dbPatch.department = patch.department;
+  if (patch.isDepartmentHead !== undefined)
+    dbPatch.is_department_head = patch.isDepartmentHead;
 
   const { data, error } = await supabaseAdmin()
     .from("rgaios_agents")

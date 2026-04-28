@@ -28,9 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClaudeConnectionCard } from "@/components/connections/claude-card";
 import { SlackConnectionCard } from "@/components/connections/slack-card";
 import { WorkspaceToolsSection } from "@/components/connections/workspace-tools-section";
-import { IntegrationConnectionSheet } from "@/components/integration-connection-sheet";
 import { CreateClientSheet } from "@/components/admin/create-client-sheet";
-import { useConnections } from "@/lib/connections/use-connections";
 import { jsonFetcher } from "@/lib/swr";
 
 /**
@@ -94,13 +92,8 @@ type OrgMe = {
 };
 
 export function ConnectionsView() {
-  const { byIntegrationId } = useConnections();
-  const [telegramOpen, setTelegramOpen] = useState(false);
-  const telegramConn = byIntegrationId("telegram");
-  const telegramDisplay =
-    (telegramConn as { display_name?: string | null } | undefined)
-      ?.display_name ?? null;
-
+  // Telegram is no longer org-level — it's per-Department-Head, configured
+  // inside each agent's edit sheet. The card on this page is a summary.
   return (
     <div className="space-y-10">
       {/* 1. Claude Max */}
@@ -137,11 +130,7 @@ export function ConnectionsView() {
           subtitle="Where your agents listen for inbound messages from the outside world."
         />
 
-        <TelegramCard
-          connected={Boolean(telegramConn)}
-          displayName={telegramDisplay}
-          onOpen={() => setTelegramOpen(true)}
-        />
+        <DepartmentHeadTelegramCard />
 
         <div className="mb-3">
           <SlackConnectionCard />
@@ -177,11 +166,6 @@ export function ConnectionsView() {
         </div>
       </section>
 
-      <IntegrationConnectionSheet
-        integrationId={telegramOpen ? "telegram" : null}
-        open={telegramOpen}
-        onOpenChange={setTelegramOpen}
-      />
     </div>
   );
 }
@@ -343,7 +327,125 @@ function McpCard() {
   );
 }
 
-// ─── Telegram card ─────────────────────────────────────────────
+// ─── Department-Head Telegram bots card ───────────────────────────
+
+type AgentBotRow = {
+  id: string;
+  agent_id: string;
+  bot_username: string | null;
+  bot_first_name: string | null;
+  rgaios_agents?: {
+    id: string;
+    name: string;
+    title: string | null;
+    department: string | null;
+  } | null;
+};
+
+function DepartmentHeadTelegramCard() {
+  const { data, isLoading } = useSWR<{ bots: AgentBotRow[] }>(
+    "/api/connections/agent-telegram",
+    jsonFetcher,
+    { refreshInterval: 30_000 },
+  );
+  const bots = data?.bots ?? [];
+
+  return (
+    <Card className="mb-3 border-border bg-card/50">
+      <CardContent className="space-y-4 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div
+              className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border"
+              style={{ backgroundColor: "rgba(38, 165, 228, 0.12)" }}
+            >
+              <SiTelegram className="size-5" style={{ color: "#26A5E4" }} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-[14px] font-semibold text-foreground">
+                  Telegram bots
+                </h3>
+                {bots.length > 0 ? (
+                  <Badge
+                    variant="secondary"
+                    className="bg-primary/15 text-[10px] text-primary"
+                  >
+                    {bots.length} connected
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="secondary"
+                    className="bg-amber-500/10 text-[10px] text-amber-400"
+                  >
+                    No bots yet
+                  </Badge>
+                )}
+              </div>
+              <p className="mt-0.5 text-[12px] text-muted-foreground">
+                One Telegram bot per Department Head. DMs route to that head
+                as the persona.
+              </p>
+            </div>
+          </div>
+          <a
+            href="/agents"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-white/5"
+          >
+            Manage in agents
+          </a>
+        </div>
+
+        {isLoading ? (
+          <div className="text-[12px] text-muted-foreground">Loading…</div>
+        ) : bots.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border bg-background/30 px-3 py-3 text-[12px] text-muted-foreground">
+            Mark an agent as a Department Head in the Agents page → open the
+            agent → Telegram bot section. Each head can have one bot.
+          </div>
+        ) : (
+          <ul className="divide-y divide-border rounded-md border border-border bg-background/30">
+            {bots.map((b) => (
+              <li
+                key={b.id}
+                className="flex items-center justify-between gap-3 px-3 py-2.5 text-[12.5px]"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="size-1.5 rounded-full bg-primary shadow-[0_0_6px_rgba(12,191,106,.6)]" />
+                  <span className="font-medium text-foreground">
+                    {b.bot_username ? `@${b.bot_username}` : b.bot_first_name ?? "Bot"}
+                  </span>
+                  <span className="text-muted-foreground">→</span>
+                  <span className="text-foreground">
+                    {b.rgaios_agents?.name ?? "(unknown agent)"}
+                  </span>
+                  {b.rgaios_agents?.department && (
+                    <Badge
+                      variant="secondary"
+                      className="ml-1 bg-white/5 text-[10px] text-muted-foreground"
+                    >
+                      {b.rgaios_agents.department}
+                    </Badge>
+                  )}
+                </div>
+                {b.rgaios_agents?.id && (
+                  <a
+                    href={`/agents`}
+                    className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Edit
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── (Legacy) org-level Telegram card — kept for reference, no longer rendered ─
 
 type TelegramStats = {
   connected: boolean;

@@ -35,6 +35,7 @@ import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent } from "@/lib/agents/dto";
 import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
 import { ConnectorsPicker } from "@/components/agents/connectors-picker";
+import { AgentTelegramBotPanel } from "@/components/agents/agent-telegram-bot-panel";
 import { useConfig } from "@/lib/use-config";
 
 const NONE = "__none__";
@@ -51,6 +52,7 @@ type FormState = {
   budget: number;
   writePolicy: WritePolicy;
   department: Department | typeof NONE;
+  isDepartmentHead: boolean;
 };
 
 function emptyForm(): FormState {
@@ -64,6 +66,7 @@ function emptyForm(): FormState {
     budget: 500,
     writePolicy: {},
     department: NONE,
+    isDepartmentHead: false,
   };
 }
 
@@ -78,6 +81,7 @@ function agentToForm(agent: Agent): FormState {
     budget: agent.budgetMonthlyUsd,
     writePolicy: agent.writePolicy ?? {},
     department: (agent.department ?? NONE) as Department | typeof NONE,
+    isDepartmentHead: agent.isDepartmentHead ?? false,
   };
 }
 
@@ -150,6 +154,7 @@ export function AgentSheet(props: Props) {
       budgetMonthlyUsd: form.budget,
       writePolicy: form.writePolicy,
       department: form.department === NONE ? null : form.department,
+      isDepartmentHead: form.isDepartmentHead,
     };
     if (isEdit) {
       void updateAgent(props.agent.id, payload);
@@ -288,6 +293,35 @@ export function AgentSheet(props: Props) {
                 </SelectContent>
               </Select>
             </Field>
+
+            <Field
+              label="Department head"
+              hint="Department heads (CMO, CTO, COO, CEO) can be assigned a Telegram bot. Sub-agents cannot."
+            >
+              <label className="flex cursor-pointer items-center gap-2.5 rounded-md border border-border bg-input/40 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={form.isDepartmentHead}
+                  onChange={(e) =>
+                    setForm({ ...form, isDepartmentHead: e.target.checked })
+                  }
+                  disabled={form.department === NONE}
+                  className="size-4"
+                />
+                <span className="text-[12.5px] text-foreground">
+                  This agent is the head of {form.department === NONE
+                    ? "(pick a department first)"
+                    : form.department}
+                </span>
+              </label>
+            </Field>
+
+            {isEdit && form.isDepartmentHead && (
+              <AgentTelegramBotPanel
+                agentId={props.agent.id}
+                agentName={form.name || props.agent.name}
+              />
+            )}
 
             <Field
               label="Job description"

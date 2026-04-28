@@ -23,6 +23,7 @@ export type Agent = {
   status: AgentStatus;
   writePolicy: Record<string, "direct" | "requires_approval" | "draft_only">;
   department: Department | null;
+  isDepartmentHead: boolean;
   createdAt: string;
 };
 
@@ -40,6 +41,7 @@ export function agentFromRow(row: AgentRow): Agent {
     status: row.status,
     writePolicy: row.write_policy,
     department: (row.department ?? null) as Department | null,
+    isDepartmentHead: row.is_department_head ?? false,
     createdAt: row.created_at,
   };
 }
@@ -54,6 +56,7 @@ export type AgentCreateInput = {
   runtime: AgentRuntime;
   budgetMonthlyUsd: number;
   department?: Department | null;
+  isDepartmentHead?: boolean;
   writePolicy?: Record<string, "direct" | "requires_approval" | "draft_only">;
 };
 
