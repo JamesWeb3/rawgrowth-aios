@@ -65,6 +65,7 @@ const eslintConfig = defineConfig([
       "src/app/api/agent-files/**",
       "src/components/agents/**",
       "src/components/activity/**",
+      "src/components/onboarding/**",
       "src/components/tg-provision-modal.tsx",
       "src/lib/scrape/**",
       "src/lib/voice/**",

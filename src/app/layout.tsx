@@ -1,22 +1,26 @@
 import type { Metadata } from "next";
-import { Geist, Instrument_Serif } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { getOrgContext, listAllOrganizations } from "@/lib/auth/admin";
 
-const geist = Geist({
-  subsets: ["latin"],
+// Rawgrowth brand fonts. Files in public/fonts/, sourced from Chris's
+// brand kit (NeueHaasDisplay Medium for UI/body, Editor's Note Regular
+// for serif headings + brand surfaces).
+const neueHaas = localFont({
+  src: "../../public/fonts/NeueHaasDisplay-Medium.ttf",
   variable: "--font-sans",
+  display: "swap",
+  weight: "500",
 });
 
-const instrumentSerif = Instrument_Serif({
+const editorsNote = localFont({
+  src: "../../public/fonts/EditorsNote-Regular.otf",
   variable: "--font-serif",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
   display: "swap",
+  weight: "400",
 });
 
 export const metadata: Metadata = {
@@ -35,7 +39,7 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={cn("dark antialiased", geist.variable, instrumentSerif.variable)}
+      className={cn("dark antialiased", neueHaas.variable, editorsNote.variable)}
     >
       <body className="min-h-screen font-sans">
         <AppShell

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Response } from "@/components/ui/response";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { BRAND_DOC_ZONES } from "@/lib/onboarding";
+import { TelegramConnectorBlock } from "@/components/onboarding/TelegramConnectorBlock";
 
 type DocumentRecord = {
   id: string;
@@ -29,6 +30,7 @@ type ChatMessage =
       error?: string;
     }
   | { role: "brand_docs_uploader"; id: string }
+  | { role: "telegram_connector"; id: string }
   | { role: "portal_button"; id: string };
 
 // If the last message is an empty assistant placeholder, drop it. Used before
@@ -219,6 +221,16 @@ export default function OnboardingChat({
                   `uploader_${Date.now()}`,
               },
             ]);
+          } else if (event.type === "telegram_connector") {
+            setMessages((prev) => [
+              ...stripEmptyAssistant(prev),
+              {
+                role: "telegram_connector",
+                id:
+                  (globalThis.crypto?.randomUUID?.() as string) ||
+                  `tgconn_${Date.now()}`,
+              },
+            ]);
           } else if (event.type === "portal_button") {
             setMessages((prev) => [
               ...stripEmptyAssistant(prev),
@@ -323,6 +335,7 @@ export default function OnboardingChat({
               message={msg}
               streaming={streaming && i === messages.length - 1}
               onFinishUploader={(canned) => sendMessage(canned)}
+              onFinishTelegram={(canned) => sendMessage(canned)}
             />
           ))}
           {error && (
@@ -368,10 +381,12 @@ function MessageBubble({
   message,
   streaming,
   onFinishUploader,
+  onFinishTelegram,
 }: {
   message: ChatMessage;
   streaming: boolean;
   onFinishUploader: (canned: string) => void;
+  onFinishTelegram: (canned: string) => void;
 }) {
   if (message.role === "reasoning") {
     return <ReasoningBubble message={message} />;
@@ -389,6 +404,29 @@ function MessageBubble({
 
   if (message.role === "brand_docs_uploader") {
     return <BrandDocsUploader onFinish={onFinishUploader} />;
+  }
+
+  if (message.role === "telegram_connector") {
+    return (
+      <TelegramConnectorBlock
+        onFinish={({ connected, skipped }) => {
+          if (connected.length > 0) {
+            const list = connected.join(", ");
+            const tail =
+              skipped.length > 0
+                ? ` Skipping ${skipped.join(", ")} for now.`
+                : "";
+            onFinishTelegram(
+              `Connected Telegram for ${list}.${tail} Ready to continue.`,
+            );
+          } else {
+            onFinishTelegram(
+              "No Telegram bots connected yet - I'll wire them later from /agents.",
+            );
+          }
+        }}
+      />
+    );
   }
 
   if (message.role === "portal_button") {

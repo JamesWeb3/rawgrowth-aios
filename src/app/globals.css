@@ -11,14 +11,16 @@
  */
 
 :root {
-  /* Brand */
-  --brand-bg: #060b08;
-  --brand-surface: #0a1210;
-  --brand-surface-2: #0d1814;
-  --brand-primary: #0cbf6a;
-  --brand-primary-dark: #0a9452;
-  --brand-primary-soft: rgba(12, 191, 106, 0.08);
-  --brand-primary-ring: rgba(12, 191, 106, 0.25);
+  /* Rawgrowth brand palette (Chris's "1. Brand Colors.pdf"):
+     #FFFFFF white | #33CA7F mint | #1A8750 deep | #014421 forest | #010B13 near-black */
+  --brand-bg: #010b13;
+  --brand-surface: #0a1614;
+  --brand-surface-2: #0e1c19;
+  --brand-primary: #33ca7f;
+  --brand-primary-dark: #1a8750;
+  --brand-primary-deep: #014421;
+  --brand-primary-soft: rgba(51, 202, 127, 0.08);
+  --brand-primary-ring: rgba(51, 202, 127, 0.25);
 
   /* Text */
   --text-strong: rgba(255, 255, 255, 0.92);
@@ -107,19 +109,19 @@
   --secondary-foreground: var(--text-strong);
   --muted: rgba(255, 255, 255, 0.04);
   --muted-foreground: var(--text-muted);
-  --accent: rgba(12, 191, 106, 0.1);
+  --accent: rgba(51, 202, 127, 0.1);
   --accent-foreground: var(--brand-primary);
   --border: var(--line);
   --input: rgba(255, 255, 255, 0.08);
-  --ring: rgba(12, 191, 106, 0.5);
-  --sidebar: #070d0a;
+  --ring: rgba(51, 202, 127, 0.5);
+  --sidebar: #061310;
   --sidebar-foreground: var(--text-body);
   --sidebar-primary: var(--brand-primary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: rgba(12, 191, 106, 0.08);
+  --sidebar-accent: rgba(51, 202, 127, 0.08);
   --sidebar-accent-foreground: var(--brand-primary);
   --sidebar-border: var(--line);
-  --sidebar-ring: rgba(12, 191, 106, 0.4);
+  --sidebar-ring: rgba(51, 202, 127, 0.4);
   --chart-1: oklch(1 0 none);
   --chart-2: oklch(0.73 0 none);
   --chart-3: oklch(0.51 0 none);

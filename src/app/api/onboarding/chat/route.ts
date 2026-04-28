@@ -110,8 +110,19 @@ Flow:
    • Tells them to reply "approve" if it looks right, or describe changes they'd like
    • Mentions they can edit it later from their dashboard
 3. Wait for their response.
-   • If they approve ("looks good", "approve", "ship it") → call \`approve_brand_profile\`. The system will automatically emit a short transition line and open the Section 4 uploader for you  -  do NOT write any text after this tool call. Stop immediately.
+   • If they approve ("looks good", "approve", "ship it") → call \`approve_brand_profile\`. The system handles transition messaging on its own. Stop immediately after the tool call - do NOT write more text.
    • If they request changes → call \`generate_brand_profile({ feedback: "verbatim feedback" })\`. A new streaming version will render the same way. After it completes, ask for approval again.
+
+------------------------------------------------------------
+SECTION 3.5  -  Telegram bot connection (only if messaging_channel = telegram)
+------------------------------------------------------------
+After \`approve_brand_profile\` succeeds AND the client said \`messaging_channel = telegram\` in Section 1, you must immediately call \`open_telegram_connector\`. The system will render an inline panel in the chat that lists each Department Head agent that needs a bot and lets the client paste BotFather tokens right there.
+
+Rules:
+- If the channel is slack or whatsapp, SKIP this step entirely - go straight to Section 4 by calling \`show_brand_docs_uploader\`.
+- Do NOT write any text right before or right after the \`open_telegram_connector\` tool call. The system emits a short transition line on its own.
+- Wait silently while the client connects bots or hits Continue. The UI handles BotFather instructions; do NOT repeat them.
+- The client will reply with a one-line summary like "Connected Telegram for Marketing." or "No Telegram bots connected yet". When that message arrives, write ONE short acknowledgement (1-2 sentences) that names which bots are live (or notes none were connected and they can wire them later from /agents), then proceed to Section 4 by calling \`show_brand_docs_uploader\`.
 
 ------------------------------------------------------------
 SECTION 4  -  Brand Documents
@@ -283,6 +294,19 @@ const TOOLS: ChatCompletionTool[] = [
       name: "show_brand_docs_uploader",
       description:
         "Render the inline brand-docs uploader in the chat so the client can drag in logos, guidelines, and assets. Call once at the start of Section 4.",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_telegram_connector",
+      description:
+        "Render the inline Telegram bot connector in the chat. Lists every Department Head agent with a pending Telegram slot and lets the client paste BotFather tokens right inside the conversation. Call this once after `approve_brand_profile` succeeds AND only when messaging_channel = telegram.",
       parameters: {
         type: "object",
         properties: {},
@@ -959,22 +983,54 @@ export async function POST(req: NextRequest) {
     } else if (!profileApproved) {
       nextActionBlock = `Brand profile v${latestProfile?.version} is rendered and waiting on the client's decision. If they approve → call \`approve_brand_profile\`. If they ask for changes → call \`generate_brand_profile({ feedback: "<their exact words>" })\`.`;
     } else if (!brandDocsDone) {
-      // Section 4  -  brand documents
-      const { data: docs } = await supabaseAdmin()
-        .from("rgaios_onboarding_documents")
-        .select("id, type, filename")
-        .eq("organization_id", orgId);
-      const uploadCount = docs?.length ?? 0;
-      const uploaderShown = incoming.some(
+      // Section 3.5  -  Telegram connector (only when messaging_channel = telegram).
+      // The connector renders AFTER approve_brand_profile (which seeds the
+      // pending bot slots) and BEFORE the brand-docs uploader. We detect
+      // its lifecycle by scanning the wire transcript: assistant text
+      // mentions "Telegram bots" / "BotFather" once we've shown it, and
+      // the user replies with a "Connected Telegram for ..." or
+      // "No Telegram bots connected" canned summary from
+      // TelegramConnectorBlock when they hit Continue.
+      const isTelegramClient = client?.messaging_channel === "telegram";
+      const telegramConnectorShown = incoming.some(
         (m) =>
           m.role === "assistant" &&
           typeof m.content === "string" &&
-          /upload|drag|drop/i.test(m.content)
+          /BotFather|Telegram bots wired|Telegram connector/i.test(m.content),
       );
-      if (!uploaderShown && uploadCount === 0) {
-        nextActionBlock = `You are in Section 4 (Brand Documents). Say ONE short inviting sentence asking them to drop in logos, brand guidelines, or other assets. Then IMMEDIATELY call \`show_brand_docs_uploader\`. Do NOT describe the widget.`;
+      const telegramConnectorReplied = incoming.some(
+        (m) =>
+          m.role === "user" &&
+          typeof m.content === "string" &&
+          /^(Connected Telegram for|No Telegram bots connected)/i.test(
+            m.content.trim(),
+          ),
+      );
+
+      if (isTelegramClient && !telegramConnectorReplied) {
+        if (!telegramConnectorShown) {
+          nextActionBlock = `You are in Section 3.5 (Telegram bot connection). The client picked Telegram in Section 1, so they need to wire up at least one Department Head bot before we move on. Call \`open_telegram_connector\` IMMEDIATELY. Do NOT write any text - the system handles the transition line. Do NOT call \`show_brand_docs_uploader\` yet.`;
+        } else {
+          nextActionBlock = `You are in Section 3.5. The Telegram connector is already visible to the client. Wait silently for them to either connect bots or hit Continue. When their canned summary message arrives ("Connected Telegram for ..." or "No Telegram bots connected ..."), write ONE short acknowledgement (1-2 sentences max, name which bots are live or note none) and then IMMEDIATELY call \`show_brand_docs_uploader\` to start Section 4. Do NOT call \`open_telegram_connector\` again.`;
+        }
       } else {
-        nextActionBlock = `You are in Section 4. The uploader is already visible to the client. They have uploaded ${uploadCount} file(s) so far${uploadCount ? `: ${docs!.map((d: { filename: string }) => d.filename).join(", ")}` : ""}. Wait for them to say they're done (or indicate they have nothing). When they do, call \`complete_brand_docs_section\`. Do NOT call \`show_brand_docs_uploader\` again.`;
+        // Section 4  -  brand documents
+        const { data: docs } = await supabaseAdmin()
+          .from("rgaios_onboarding_documents")
+          .select("id, type, filename")
+          .eq("organization_id", orgId);
+        const uploadCount = docs?.length ?? 0;
+        const uploaderShown = incoming.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            /upload|drag|drop/i.test(m.content)
+        );
+        if (!uploaderShown && uploadCount === 0) {
+          nextActionBlock = `You are in Section 4 (Brand Documents). Say ONE short inviting sentence asking them to drop in logos, brand guidelines, or other assets. Then IMMEDIATELY call \`show_brand_docs_uploader\`. Do NOT describe the widget.`;
+        } else {
+          nextActionBlock = `You are in Section 4. The uploader is already visible to the client. They have uploaded ${uploadCount} file(s) so far${uploadCount ? `: ${docs!.map((d: { filename: string }) => d.filename).join(", ")}` : ""}. Wait for them to say they're done (or indicate they have nothing). When they do, call \`complete_brand_docs_section\`. Do NOT call \`show_brand_docs_uploader\` again.`;
+        }
       }
     } else if (!softwareAccessDone) {
       // Section 6  -  find next platform to ask about
@@ -1117,6 +1173,8 @@ export async function POST(req: NextRequest) {
                 reasoningLabel = "Approving your brand profile";
               } else if (tc.name === "show_brand_docs_uploader") {
                 reasoningLabel = "Opening the upload panel";
+              } else if (tc.name === "open_telegram_connector") {
+                reasoningLabel = "Opening the Telegram connector";
               } else if (tc.name === "complete_brand_docs_section") {
                 reasoningLabel = "Locking in your brand documents";
               } else if (tc.name === "save_software_access") {
@@ -1235,19 +1293,42 @@ export async function POST(req: NextRequest) {
                 } else if (tc.name === "approve_brand_profile") {
                   result = await approveBrandProfile(user.id);
                   label = "Brand profile approved";
-                  // Auto-chain straight into Section 4 so the model can't stall.
+                  // Auto-chain so the model can't stall after approval.
+                  // Telegram clients land on the inline bot connector first
+                  // (Section 3.5); Slack/WhatsApp clients skip straight to
+                  // the brand-docs uploader (Section 4).
                   if (result.ok) {
-                    emit({
-                      type: "text",
-                      delta:
-                        "\n\nLocked in. Drop in any logos, brand guidelines, or other assets below  -  or skip if you don't have any yet.\n\n",
-                    });
-                    emit({ type: "brand_docs_uploader" });
-                    result = {
-                      ok: true,
-                      note: "Brand profile approved AND the brand-docs uploader has been shown. Do NOT write any more text. Stop immediately and wait for the next user message.",
-                    };
+                    if (client?.messaging_channel === "telegram") {
+                      emit({
+                        type: "text",
+                        delta:
+                          "\n\nLocked in. Let's get your Telegram bots wired up before we move on - paste a BotFather token for any Department Head you want live now, or skip and wire them later.\n\n",
+                      });
+                      emit({ type: "telegram_connector" });
+                      result = {
+                        ok: true,
+                        note: "Brand profile approved AND the Telegram connector has been shown. Do NOT write any more text. Stop immediately and wait for the next user message.",
+                      };
+                    } else {
+                      emit({
+                        type: "text",
+                        delta:
+                          "\n\nLocked in. Drop in any logos, brand guidelines, or other assets below  -  or skip if you don't have any yet.\n\n",
+                      });
+                      emit({ type: "brand_docs_uploader" });
+                      result = {
+                        ok: true,
+                        note: "Brand profile approved AND the brand-docs uploader has been shown. Do NOT write any more text. Stop immediately and wait for the next user message.",
+                      };
+                    }
                   }
+                } else if (tc.name === "open_telegram_connector") {
+                  emit({ type: "telegram_connector" });
+                  result = {
+                    ok: true,
+                    note: "Telegram connector has been rendered to the client. Wait for their next message before doing anything else.",
+                  };
+                  label = "Telegram connector shown";
                 } else if (tc.name === "show_brand_docs_uploader") {
                   emit({ type: "brand_docs_uploader" });
                   result = {
@@ -1329,7 +1410,8 @@ export async function POST(req: NextRequest) {
                   .replace(/^Locking in software access/, "Software access locked in")
                   .replace(/^Locking in milestone calls/, "Calls locked in")
                   .replace(/^Locking in your brand documents/, "Brand documents locked in")
-                  .replace(/^Opening the upload panel/, "Upload panel opened");
+                  .replace(/^Opening the upload panel/, "Upload panel opened")
+                  .replace(/^Opening the Telegram connector/, "Telegram connector opened");
                 emit({
                   type: "reasoning",
                   status: "done",

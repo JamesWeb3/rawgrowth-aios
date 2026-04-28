@@ -4,21 +4,23 @@
  * surfaces (email templates, server-rendered SVGs, Node scripts, tests)
  * can consume them without parsing CSS.
  *
- * Palette sourced from rawgrowth.ai: deep near-black background, emerald
- * primary #0CBF6A, soft atmospheric greens, white-alpha text. If Chris
- * delivers an updated Figma file, update BOTH this file and globals.css
- * in the same PR.
+ * Palette = Chris's "1. Brand Colors.pdf":
+ *   #FFFFFF white | #33CA7F mint | #1A8750 deep green |
+ *   #014421 forest | #010B13 near-black bg
+ * If Chris delivers an updated Figma file, update BOTH this file and
+ * globals.css in the same PR.
  */
 
 export const COLORS = {
   brand: {
-    bg: "#060b08",
-    surface: "#0a1210",
-    surface2: "#0d1814",
-    primary: "#0cbf6a",
-    primaryDark: "#0a9452",
-    primarySoft: "rgba(12, 191, 106, 0.08)",
-    primaryRing: "rgba(12, 191, 106, 0.25)",
+    bg: "#010b13",
+    surface: "#0a1614",
+    surface2: "#0e1c19",
+    primary: "#33ca7f",
+    primaryDark: "#1a8750",
+    primaryDeep: "#014421",
+    primarySoft: "rgba(51, 202, 127, 0.08)",
+    primaryRing: "rgba(51, 202, 127, 0.25)",
   },
   text: {
     strong: "rgba(255, 255, 255, 0.92)",
@@ -52,8 +54,10 @@ export const SPACING = {
 } as const;
 
 export const FONT_STACK = {
-  sans: '"Inter", "Helvetica Neue", system-ui, sans-serif',
-  serif: '"Fraunces", "Playfair Display", "Georgia", serif',
+  // Brand fonts loaded via next/font/local in src/app/layout.tsx.
+  // Fallback chain kicks in if the @font-face files fail to download.
+  sans: '"Neue Haas Display", "Inter", "Helvetica Neue", system-ui, sans-serif',
+  serif: '"Editor\'s Note", "Fraunces", "Playfair Display", "Georgia", serif',
   mono: '"JetBrains Mono", "Menlo", ui-monospace, monospace',
 } as const;
 
