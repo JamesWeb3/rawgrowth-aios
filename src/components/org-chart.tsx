@@ -140,7 +140,17 @@ function AgentCard({
   agent: Agent;
   onEdit: (agent: Agent) => void;
 }) {
-  const role = roleMeta(agent.role);
+  // Visual-only role override: agents with reports_to IS NULL are
+  // managers regardless of the DB role column (which defaults to
+  // 'general' for legacy seeded rows). The org-chart label needs to
+  // read the actual hierarchy, not the stored string.
+  const isManager = !agent.reportsTo;
+  const baseRole = roleMeta(agent.role);
+  const role = isManager
+    ? { ...baseRole, label: "Manager" }
+    : agent.reportsTo
+      ? { ...baseRole, label: "Sub-agent" }
+      : baseRole;
   const Icon = roleIconMap[role.icon as RoleIconName] ?? Bot;
   const status = statusStyle[agent.status];
 
