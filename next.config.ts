@@ -4,16 +4,19 @@ const nextConfig: NextConfig = {
   // Produce a minimal standalone server bundle for Docker images.
   // Hosted (Vercel) builds ignore this; self-hosted Docker images ship with it.
   output: "standalone",
-  // Pin the workspace root so Turbopack stops walking up to /home/pedroafonso
-  // and printing the "multiple lockfiles" warning every dev boot. Pedro has
-  // an unrelated package-lock.json in $HOME from another project — without
-  // this pin, Turbopack treated $HOME as workspace root and resolved every
-  // package import from /home/pedroafonso/node_modules (which doesn't have
-  // tailwindcss installed), causing "Module not found" on dev boot.
-  // Hardcoded absolute path is the only reliable signal here; process.cwd()
-  // is wrong when next is invoked from a parent shell with a different cwd,
-  // and __dirname is ESM-undefined.
-  turbopack: { root: "/home/pedroafonso/rawclaw-research/rawclaw" },
+  // Pin the workspace root for dev only. Pedro has /home/pedroafonso/
+  // package.json + lockfile from another project; without a pin Turbopack
+  // walks up, picks $HOME as workspace root, and PostCSS resolves
+  // tailwindcss against the wrong node_modules → ERR_MODULE_NOT_FOUND on
+  // first request. CI runs from a different absolute path
+  // (/home/runner/work/...), so a hardcoded literal there breaks
+  // distDirRoot validation. Use the env-provided override when set
+  // (TURBOPACK_ROOT=/home/pedroafonso/rawclaw-research/rawclaw in dev),
+  // otherwise let Turbopack fall back to its own default — which works
+  // fine in CI where there's no parallel $HOME lockfile.
+  turbopack: process.env.TURBOPACK_ROOT
+    ? { root: process.env.TURBOPACK_ROOT }
+    : undefined,
   // Typecheck runs locally and in CI. Skip inside the Docker build so
   // low-RAM VPSes don't OOM/hang during `next build`.
   typescript: { ignoreBuildErrors: true },
