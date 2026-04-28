@@ -12,7 +12,16 @@ const tools = new Map<string, McpTool>();
 
 export function registerTool(tool: McpTool): void {
   if (tools.has(tool.name)) {
-    throw new Error(`Duplicate tool registration: ${tool.name}`);
+    // Turbopack HMR re-runs module side effects on every edit, so the
+    // throw fires every time a dev edits a tool file. In production the
+    // bundle loads once and a real duplicate is a coding bug worth
+    // surfacing - keep the throw there.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(`Duplicate tool registration: ${tool.name}`);
+    }
+    console.warn(
+      `[mcp/registry] re-registering tool ${tool.name} (HMR reload)`,
+    );
   }
   tools.set(tool.name, tool);
 }
