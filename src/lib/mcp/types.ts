@@ -12,7 +12,7 @@ export type ToolResult = {
   isError?: boolean;
 };
 
-// Loose JSON-schema shape — we don't validate in MCP, Claude does on its side
+// Loose JSON-schema shape  -  we don't validate in MCP, Claude does on its side
 export type JsonSchema = {
   type: "object";
   properties: Record<string, unknown>;
@@ -25,7 +25,7 @@ export type McpTool = {
   inputSchema: JsonSchema;
   /** If set, handler is skipped and returns a "not connected" hint when this integration id isn't connected. */
   requiresIntegration?: string;
-  /** Marks a tool as a write — used later by the approvals layer. */
+  /** Marks a tool as a write  -  used later by the approvals layer. */
   isWrite?: boolean;
   handler: (
     args: Record<string, unknown>,

@@ -1,6 +1,6 @@
 /**
  * Minimal Slack Web API client. Mirrors the shape of our telegram
- * client — just a `call()` helper plus a handful of thin wrappers.
+ * client  -  just a `call()` helper plus a handful of thin wrappers.
  *
  * Uses the bot token we stored at OAuth install time. All calls run
  * server-side (from the client's VPS) using their per-client Slack App.
@@ -55,7 +55,7 @@ export async function listChannels(
 ): Promise<SlackChannel[]> {
   const out: SlackChannel[] = [];
   let cursor: string | undefined;
-  // Paginate — workspaces with >100 channels shouldn't silently truncate.
+  // Paginate  -  workspaces with >100 channels shouldn't silently truncate.
   for (let i = 0; i < 20; i++) {
     const r = await call<{
       channels?: SlackChannel[];

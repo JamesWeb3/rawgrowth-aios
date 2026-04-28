@@ -6,7 +6,7 @@ import { tryDecryptSecret } from "@/lib/crypto";
  *
  * Auth model: a single Personal Access Token (PAT) per organization, stored
  * encrypted in rgaios_connections.metadata.access_token. The PAT sees every
- * project across every Supabase org the user belongs to — so individual MCP
+ * project across every Supabase org the user belongs to  -  so individual MCP
  * calls take a `project_ref` to scope writes/queries.
  *
  * We deliberately bypass Nango here: PATs don't expire and don't refresh,

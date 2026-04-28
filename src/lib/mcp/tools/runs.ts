@@ -4,13 +4,13 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 /**
  * MCP tools that let local Claude Code drive a routine run end-to-end in
  * self-hosted mode. The autonomous executor doesn't run in this deploy
- * mode — instead, Claude Code:
+ * mode  -  instead, Claude Code:
  *
  *   1. Lists pending runs for a routine (or picks one up directly with `runs_claim`).
  *   2. Does the actual work with the other MCP tools (gmail, knowledge, etc.).
  *   3. Calls `runs_complete` with a summary to mark it done.
  *
- * These tools are also safe in hosted mode — they work equivalently; the
+ * These tools are also safe in hosted mode  -  they work equivalently; the
  * executor just happens to be the usual caller there.
  */
 
@@ -25,7 +25,7 @@ registerTool({
     properties: {
       routine_id: {
         type: "string",
-        description: "Optional — filter to a single routine.",
+        description: "Optional  -  filter to a single routine.",
       },
       limit: {
         type: "number",
@@ -67,7 +67,7 @@ registerTool({
       "",
       ...rows.map(
         (r, i) =>
-          `${i + 1}. \`${r.id}\` — ${r.rgaios_routines?.title ?? r.routine_id} (source: ${r.source}, queued ${r.created_at})`,
+          `${i + 1}. \`${r.id}\`  -  ${r.rgaios_routines?.title ?? r.routine_id} (source: ${r.source}, queued ${r.created_at})`,
       ),
       "",
       "Claim one with `runs_claim` to see its instructions and mark it running.",
@@ -109,7 +109,7 @@ registerTool({
     if (error) return textError(`runs_claim: ${error.message}`);
     if (!claimed) {
       return textError(
-        `Run ${runId} isn't pending — another worker may have claimed it already. Call runs_list_pending to find a fresh one.`,
+        `Run ${runId} isn't pending  -  another worker may have claimed it already. Call runs_list_pending to find a fresh one.`,
       );
     }
 
@@ -154,7 +154,7 @@ registerTool({
       run_id: { type: "string" },
       summary: {
         type: "string",
-        description: "Plain-text summary — what you did, any links or ids the user needs.",
+        description: "Plain-text summary  -  what you did, any links or ids the user needs.",
       },
     },
     required: ["run_id", "summary"],
@@ -181,7 +181,7 @@ registerTool({
     if (error) return textError(`runs_complete: ${error.message}`);
     if (!data) {
       return textError(
-        `Run ${runId} couldn't be completed — it may already be finished or doesn't belong to this org.`,
+        `Run ${runId} couldn't be completed  -  it may already be finished or doesn't belong to this org.`,
       );
     }
     return text(`Run \`${runId}\` marked as succeeded.`);

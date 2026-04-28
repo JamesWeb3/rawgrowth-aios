@@ -292,6 +292,13 @@ import { spawn } from "node:child_process";
 const PORT = 9876;
 const CLAUDE = "/usr/local/bin/claude";
 
+// CTO brief §02 + R05: 4-concurrent spawn cap. CX22 has 4GB RAM and each
+// claude --print holds ~300-500MB resident. Four concurrent leaves
+// headroom for Next.js + Caddy + Postgres client. Override via env.
+const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT_SPAWNS ?? 4);
+let inFlight = 0;
+const pendingPrompts = []; // queued strings when at cap
+
 const slots = new Map(); // command → { running, redrive }
 
 function trigger(command) {
@@ -315,6 +322,12 @@ function trigger(command) {
 }
 
 function spawnWithPrompt(prompt) {
+  if (inFlight >= MAX_CONCURRENT) {
+    pendingPrompts.push(prompt);
+    console.log(`drain[run] queued, depth=${pendingPrompts.length} inFlight=${inFlight}`);
+    return;
+  }
+  inFlight += 1;
   const started = Date.now();
   const child = spawn(CLAUDE, [
     "--print",
@@ -322,7 +335,10 @@ function spawnWithPrompt(prompt) {
     prompt,
   ], { stdio: ["ignore", "inherit", "inherit"], detached: true });
   child.on("exit", (code) => {
-    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length}`);
+    inFlight -= 1;
+    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length} inFlight=${inFlight}`);
+    const next = pendingPrompts.shift();
+    if (next !== undefined) spawnWithPrompt(next);
   });
   child.unref();
 }
@@ -559,13 +575,19 @@ StandardOutput=append:/var/log/rawgrowth-tick.log
 StandardError=append:/var/log/rawgrowth-tick.log
 UNIT
 
-cat > /etc/systemd/system/rawgrowth-tick.timer <<'UNIT'
+HEARTBEAT_INTERVAL_SEC=${HEARTBEAT_INTERVAL_SEC:-600}
+if ! [[ "$HEARTBEAT_INTERVAL_SEC" =~ ^[0-9]+$ ]] || [ "$HEARTBEAT_INTERVAL_SEC" -lt 10 ]; then
+  red "HEARTBEAT_INTERVAL_SEC must be an integer >= 10 (got: $HEARTBEAT_INTERVAL_SEC)"
+  exit 1
+fi
+
+cat > /etc/systemd/system/rawgrowth-tick.timer <<UNIT
 [Unit]
-Description=Rawgrowth minute tick timer
+Description=Rawgrowth heartbeat tick timer
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=60s
+OnUnitActiveSec=${HEARTBEAT_INTERVAL_SEC}s
 AccuracySec=5s
 Unit=rawgrowth-tick.service
 

@@ -1,0 +1,94 @@
+# ──────────────────────────────────────────────────────────
+# Rawgrowth AIOS v3 — per-client VPS app, shared Supabase cloud.
+#
+#   app    — Next.js standalone server, talks to Supabase directly
+#   caddy  — TLS + reverse proxy
+#
+# Contrast with docker-compose.yml (self_hosted): no local postgres,
+# no postgrest. Multi-tenant isolation comes from Supabase RLS keyed
+# to the organization_id claim in the NextAuth JWT (see migration
+# 0016_v3_rls_by_org.sql).
+#
+# All secrets come from a .env file sitting next to this compose file.
+# See .env.v3.example for the full list.
+# ──────────────────────────────────────────────────────────
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.v3
+    restart: unless-stopped
+    # Reach the host's rawclaw-drain server at http://host.docker.internal:9876
+    # — systemd service spawns Claude Code on inbound webhook events.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DEPLOY_MODE: v3
+      RAWCLAW_DRAIN_URL: http://host.docker.internal:9876
+
+      # Shared Supabase project. Service-role key bypasses RLS (used by
+      # server code); anon key is exposed to the browser bundle.
+      DATABASE_URL: ${DATABASE_URL}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+
+      # Used for app-level secret-at-rest encryption (lib/crypto.ts).
+      JWT_SECRET: ${JWT_SECRET}
+
+      # Bearer required by /api/cron/* endpoints (schedule-tick, claude-token).
+      CRON_SECRET: ${CRON_SECRET:-}
+
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@rawgrowth.ai}
+
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
+      NANGO_WEBHOOK_SECRET: ${NANGO_WEBHOOK_SECRET:-}
+
+      # Anthropic API (Commercial Terms) for Path B fallback. Optional at
+      # boot — required the first time the runtime selector flips to SDK.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # OpenAI is used by the ported onboarding chat (gpt-4o agentic loop)
+      # and embedding endpoints (text-embedding-3-large).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # fastembed (default RAG provider) caches the ~33MB ONNX model in
+      # this directory. Volume-mounted so docker rebuilds + container
+      # recreations don't re-download from HuggingFace + re-pay the
+      # ~10s cold-start.
+      FASTEMBED_CACHE_DIR: /var/lib/rawclaw/fastembed
+
+      # First-boot seed of this VPS's organization. Runs once; no-op on reboots.
+      SEED_ORG_NAME: ${SEED_ORG_NAME}
+      SEED_ORG_SLUG: ${SEED_ORG_SLUG}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+    volumes:
+      - fastembed-cache:/var/lib/rawclaw/fastembed
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS}
+    volumes:
+      - ./docker/Caddyfile.v3:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy-data:
+  caddy-config:
+  fastembed-cache:

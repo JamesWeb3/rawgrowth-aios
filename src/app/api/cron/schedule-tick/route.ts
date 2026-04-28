@@ -17,7 +17,7 @@ export const maxDuration = 300;
  *   2. updates the trigger's last_fired_at to "now"
  *   3. fires executeRun() in the background
  *
- * Auth: matches Vercel's cron convention — Authorization header is
+ * Auth: matches Vercel's cron convention  -  Authorization header is
  * `Bearer ${CRON_SECRET}`. Set CRON_SECRET in Vercel env; the scheduler
  * sends it automatically.
  */
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   const now = new Date();
 
-  // Always sweep pendings that have been sitting too long — regardless of
+  // Always sweep pendings that have been sitting too long  -  regardless of
   // executor state. This covers telegram-triggered runs that pile up while
   // the executor is down, and leftovers from past outages.
   const staleCutoff = new Date(now.getTime() - STALE_PENDING_MS).toISOString();
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     .from("rgaios_routine_runs")
     .update({
       status: "failed",
-      error: "executor offline — run aged out before claim",
+      error: "executor offline  -  run aged out before claim",
       completed_at: now.toISOString(),
     })
     .eq("status", "pending")
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
   const sweptCount = sweptRows?.length ?? 0;
 
   // If the local executor isn't ready, stop here. Don't materialise new
-  // schedule runs — they'd just join the backlog. Sweep still ran above.
+  // schedule runs  -  they'd just join the backlog. Sweep still ran above.
   if (!executorReady) {
     const { count: pendingCount } = await db
       .from("rgaios_routine_runs")
@@ -75,9 +75,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // NOTE: We intentionally do NOT nest `assignee:rgaios_agents!...(reports_to)`
+  // inside this select. PostgREST hint resolution can fail silently if the FK
+  // constraint isn't introspected as expected (stale schema cache, ambiguous
+  // hint, etc.)  -  the embed comes back as `null` instead of erroring, and
+  // the sub-agent filter below would treat every sub-agent routine as a
+  // manager, firing them all on heartbeat and silently breaking brief §9.6.
+  // Two explicit queries are slower by one round-trip but cannot silently
+  // misbehave.
   const { data: triggers, error } = await db
     .from("rgaios_routine_triggers")
-    .select("*, rgaios_routines!inner(id, organization_id, status, title)")
+    .select(
+      "*, rgaios_routines!inner(id, organization_id, status, title, assignee_agent_id)",
+    )
     .eq("kind", "schedule")
     .eq("enabled", true);
   if (error) {
@@ -96,10 +106,35 @@ export async function GET(req: NextRequest) {
       organization_id: string;
       status: string;
       title: string;
+      assignee_agent_id: string | null;
     } | null;
   };
 
   const rows = (triggers ?? []) as unknown as Row[];
+
+  // Resolve reports_to for every assignee in a single follow-up query.
+  // Map<agent_id, reports_to>. Missing key => agent not found (treat as
+  // manager-equivalent: don't block, surface via normal routine lookup).
+  const assigneeIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.rgaios_routines?.assignee_agent_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const reportsToById = new Map<string, string | null>();
+  if (assigneeIds.length > 0) {
+    const { data: agents, error: agentsErr } = await db
+      .from("rgaios_agents")
+      .select("id, reports_to")
+      .in("id", assigneeIds);
+    if (agentsErr) {
+      return NextResponse.json({ error: agentsErr.message }, { status: 500 });
+    }
+    for (const a of agents ?? []) {
+      reportsToById.set(a.id as string, (a.reports_to as string | null) ?? null);
+    }
+  }
 
   const fired: Array<{ trigger_id: string; run_id: string; title: string }> = [];
   const skipped: Array<{ trigger_id: string; reason: string }> = [];
@@ -111,6 +146,17 @@ export async function GET(req: NextRequest) {
           trigger_id: row.id,
           reason: `routine ${row.rgaios_routines?.status ?? "missing"}`,
         });
+        continue;
+      }
+
+      // Brief §9.6: sub-agents do NOT run on heartbeat; only when pinged.
+      // A routine assigned to an agent fires only if that agent is a manager
+      // (reports_to IS NULL). Routines with no assignee fire as before.
+      // We look reports_to up via a separate query above, not via PostgREST
+      // embed, to avoid silent hint resolution failures.
+      const assigneeId = row.rgaios_routines.assignee_agent_id;
+      if (assigneeId && reportsToById.get(assigneeId)) {
+        skipped.push({ trigger_id: row.id, reason: "sub-agent (heartbeat blocked)" });
         continue;
       }
 
@@ -146,7 +192,39 @@ export async function GET(req: NextRequest) {
       const routineId = row.rgaios_routines.id;
       const orgId = row.organization_id;
 
-      // 1. Insert a pending run
+      // Atomic claim: bump last_fired_at conditional on it still matching
+      // the baseline we read above. Two concurrent ticks both pass the
+      // "not yet due" check, but only one's UPDATE returns a row — the
+      // other gets an empty result and skips. Stands in for Pedro's
+      // day1 §1 pg_try_advisory_lock commitment without needing a
+      // separate lock table or the advisory_lock RPC surface.
+      const baselineIso = row.last_fired_at
+        ? new Date(row.last_fired_at).toISOString()
+        : null;
+      const claim = baselineIso
+        ? db
+            .from("rgaios_routine_triggers")
+            .update({ last_fired_at: now.toISOString() })
+            .eq("id", row.id)
+            .eq("last_fired_at", baselineIso)
+            .select("id")
+        : db
+            .from("rgaios_routine_triggers")
+            .update({ last_fired_at: now.toISOString() })
+            .eq("id", row.id)
+            .is("last_fired_at", null)
+            .select("id");
+      const { data: claimed, error: claimErr } = await claim;
+      if (claimErr) {
+        skipped.push({ trigger_id: row.id, reason: `claim failed: ${claimErr.message}` });
+        continue;
+      }
+      if (!claimed || claimed.length === 0) {
+        skipped.push({ trigger_id: row.id, reason: "raced (another tick claimed)" });
+        continue;
+      }
+
+      // 1. Insert a pending run (now safe — we own the slot)
       const { data: run, error: runErr } = await db
         .from("rgaios_routine_runs")
         .insert({
@@ -173,12 +251,6 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // 2. Advance the trigger's last_fired_at
-      await db
-        .from("rgaios_routine_triggers")
-        .update({ last_fired_at: now.toISOString() })
-        .eq("id", row.id);
-
       // 3. Bump routine.last_run_at so the UI reflects immediately
       await db
         .from("rgaios_routines")
@@ -201,10 +273,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Audit a single summary row so you can grep cron activity.
+  // Audit a single summary row so you can grep cron activity. Pinned to
+  // the platform-admin tenant (DEFAULT_ORGANIZATION_ID) instead of null
+  // so any future RLS-bound admin reader can actually see it — RLS
+  // policies of the form `organization_id = rgaios_current_org_id()`
+  // exclude null rows (null = uuid → null, not true), so a null-tenanted
+  // row would be invisible to every legitimate consumer.
   if (fired.length > 0 || skipped.length > 0) {
+    const { DEFAULT_ORGANIZATION_ID } = await import(
+      "@/lib/supabase/constants"
+    );
     await db.from("rgaios_audit_log").insert({
-      organization_id: null, // cross-tenant summary; org_id is nullable on this table
+      organization_id: DEFAULT_ORGANIZATION_ID,
       kind: "cron_schedule_tick",
       actor_type: "system",
       actor_id: "cron",
@@ -216,7 +296,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Count any pending runs across the DB — the self-hosted tick uses this
+  // Count any pending runs across the DB  -  the self-hosted tick uses this
   // to decide whether to poke the drain daemon to wake Claude Code.
   // (Hosted mode doesn't need it; dispatchRun() handles its own executor.)
   const { count: pendingCount } = await db

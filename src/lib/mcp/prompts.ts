@@ -1,14 +1,14 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 
 /**
- * MCP prompts layer — turns the org's active routines into prompts Claude
+ * MCP prompts layer  -  turns the org's active routines into prompts Claude
  * Code (or any MCP client) can pick from. Each prompt's `text` embeds:
  *
  *   • the routine's description/instructions
  *   • the id of the oldest pending run (if any) so Claude can claim it
  *   • a reminder of the two-step complete/fail tool calls
  *
- * Prompts are generated per-request from the DB — no in-memory registry,
+ * Prompts are generated per-request from the DB  -  no in-memory registry,
  * no caching, so routine edits reflect immediately.
  */
 

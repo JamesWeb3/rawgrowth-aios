@@ -159,14 +159,8 @@ export function SkillsMarketplaceView() {
                 <Card className="h-full border-border bg-card/50 transition-colors hover:border-primary/40">
                   <CardContent className="flex h-full flex-col gap-4 p-5">
                     <div className="flex items-start justify-between gap-3">
-                      <div
-                        className="flex size-10 items-center justify-center rounded-lg border border-border"
-                        style={{ backgroundColor: `${s.brand}1a` }}
-                      >
-                        <Icon
-                          className="size-5"
-                          style={{ color: s.brand }}
-                        />
+                      <div className="flex size-10 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary">
+                        <Icon className="size-5" />
                       </div>
                       <Badge
                         variant="secondary"
@@ -285,7 +279,7 @@ function SkillSheet({
         throw new Error(body.error ?? "Save failed");
       }
       toast.success(
-        `Updated "${skill.name}" — ${selected.size} agent${selected.size === 1 ? "" : "s"}`,
+        `Updated "${skill.name}"  -  ${selected.size} agent${selected.size === 1 ? "" : "s"}`,
       );
       onSaved();
       onOpenChange(false);
@@ -307,11 +301,8 @@ function SkillSheet({
       >
         <SheetHeader className="border-b border-border px-6 py-5">
           <div className="flex items-center gap-3">
-            <div
-              className="flex size-11 items-center justify-center rounded-lg border border-border"
-              style={{ backgroundColor: `${skill.brand}1a` }}
-            >
-              <Icon className="size-5.5" style={{ color: skill.brand }} />
+            <div className="flex size-11 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary">
+              <Icon className="size-5.5" />
             </div>
             <div>
               <SheetTitle className="font-serif text-2xl font-normal tracking-tight text-foreground">

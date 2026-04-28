@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useMemo, useRef, useState, type DragEvent } from "react";
 import {
   FileText,
   UploadCloud,
@@ -28,12 +28,45 @@ import {
 } from "@/lib/knowledge/use-knowledge";
 import { KnowledgeFileSheet } from "@/components/knowledge-file-sheet";
 
-export function KnowledgeView() {
+const ALL_AGENTS = "__all__";
+const UNASSIGNED = "__unassigned__";
+
+export type KnowledgeAgentOption = { id: string; name: string };
+
+export function KnowledgeView({
+  agents = [],
+}: {
+  agents?: KnowledgeAgentOption[];
+}) {
   const { files, loaded, uploading, upload, remove } = useKnowledge();
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Per-brief §7: file library is global, with filter by agent. Org-wide
+  // markdown knowledge (no agent_id) falls under "Unassigned".
+  const filteredFiles = useMemo(() => {
+    if (agentFilter === ALL_AGENTS) return files;
+    if (agentFilter === UNASSIGNED) {
+      return files.filter((f) => !f.agent_id);
+    }
+    return files.filter((f) => f.agent_id === agentFilter);
+  }, [files, agentFilter]);
+
+  const counts = useMemo(() => {
+    const map = new Map<string, number>();
+    let unassigned = 0;
+    for (const f of files) {
+      if (f.agent_id) {
+        map.set(f.agent_id, (map.get(f.agent_id) ?? 0) + 1);
+      } else {
+        unassigned += 1;
+      }
+    }
+    return { byAgent: map, unassigned, total: files.length };
+  }, [files]);
 
   const handleFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -73,7 +106,7 @@ export function KnowledgeView() {
 
   return (
     <>
-      {/* Drop zone — always visible so users can append more at any time */}
+      {/* Drop zone  -  always visible so users can append more at any time */}
       <div
         onDragEnter={(e) => {
           e.preventDefault();
@@ -127,28 +160,63 @@ export function KnowledgeView() {
         <EmptyState
           icon={BookOpen}
           title="No knowledge files yet"
-          description="Upload markdown playbooks, SOPs, brand voice docs — anything your agents should reference. Tag them so they're easy to surface."
+          description="Upload markdown playbooks, SOPs, brand voice docs  -  anything your agents should reference. Tag them so they're easy to surface."
         />
       ) : (
         <>
-          <div className="mb-3 flex items-center gap-2 text-[12px] text-muted-foreground">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted-foreground">
             <span>
               <span className="font-semibold text-foreground">
-                {files.length}
+                {filteredFiles.length}
               </span>{" "}
-              file{files.length === 1 ? "" : "s"}
+              of {files.length} file{files.length === 1 ? "" : "s"}
             </span>
+            <label className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide">
+                Agent
+              </span>
+              <select
+                value={agentFilter}
+                onChange={(e) => setAgentFilter(e.target.value)}
+                className="rounded-md border border-border bg-card/50 px-2 py-1 text-[12px] text-foreground transition-colors hover:border-primary/30 focus:border-primary/50 focus:outline-none"
+              >
+                <option value={ALL_AGENTS}>
+                  All agents ({counts.total} file
+                  {counts.total === 1 ? "" : "s"})
+                </option>
+                {agents.map((a) => {
+                  const c = counts.byAgent.get(a.id) ?? 0;
+                  return (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({c} file{c === 1 ? "" : "s"})
+                    </option>
+                  );
+                })}
+                {counts.unassigned > 0 && (
+                  <option value={UNASSIGNED}>
+                    Unassigned ({counts.unassigned} file
+                    {counts.unassigned === 1 ? "" : "s"})
+                  </option>
+                )}
+              </select>
+            </label>
           </div>
-          <div className="flex flex-col gap-2">
-            {files.map((f) => (
-              <FileRow
-                key={f.id}
-                file={f}
-                onView={() => setViewingId(f.id)}
-                onDelete={() => remove(f.id)}
-              />
-            ))}
-          </div>
+          {filteredFiles.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-card/30 px-4 py-8 text-center text-[12px] text-muted-foreground">
+              No files match this filter.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filteredFiles.map((f) => (
+                <FileRow
+                  key={f.id}
+                  file={f}
+                  onView={() => setViewingId(f.id)}
+                  onDelete={() => remove(f.id)}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -264,7 +332,7 @@ function FileRow({
   );
 }
 
-// Tag pill with remove button — used inside the file sheet
+// Tag pill with remove button  -  used inside the file sheet
 export function TagPill({
   tag,
   onRemove,

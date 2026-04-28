@@ -6,7 +6,7 @@ import { nangoCall } from "../proxy";
  *
  * Registered in BOTH hosted and self-hosted modes. (We previously gated
  * to hosted-only on the assumption that self-hosted Claude Code would
- * reach Gmail via Anthropic's native connectors — but those don't
+ * reach Gmail via Anthropic's native connectors  -  but those don't
  * propagate from claude.ai to a VPS-side `claude` CLI session, so the
  * VPS drain has no way to call Gmail without these wrappers.)
  *
@@ -14,7 +14,7 @@ import { nangoCall } from "../proxy";
  * is `gmail`. OAuth scopes required:
  *   - gmail.readonly (for search / read)
  *   - gmail.compose   (for draft)
- *   - gmail.send      (for direct send — gated by approvals later)
+ *   - gmail.send      (for direct send  -  gated by approvals later)
  */
 
 {
@@ -147,7 +147,7 @@ registerTool({
 registerTool({
   name: "gmail_draft",
   description:
-    "Compose a draft email in the user's Gmail drafts folder. The user reviews and sends manually. Safe default — does NOT send on its own.",
+    "Compose a draft email in the user's Gmail drafts folder. The user reviews and sends manually. Safe default  -  does NOT send on its own.",
   requiresIntegration: "gmail",
   isWrite: true,
   inputSchema: {
@@ -167,14 +167,29 @@ registerTool({
     const cc = String(args.cc ?? "").trim();
     if (!to || !subject) return textError("to and subject are required");
 
+    // Brief §P09 + §12: brand-voice guard runs before the draft hits
+    // Gmail. Filter both subject and body so a banned word in either
+    // surface lands an audit row + hard-fails the draft creation.
+    const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
+    const subjectFiltered = await applyBrandFilter(subject, {
+      organizationId: ctx.organizationId,
+      surface: "gmail_send_message:subject",
+    });
+    if (!subjectFiltered.ok) return textError(subjectFiltered.error);
+    const bodyFiltered = await applyBrandFilter(body, {
+      organizationId: ctx.organizationId,
+      surface: "gmail_send_message:body",
+    });
+    if (!bodyFiltered.ok) return textError(bodyFiltered.error);
+
     const headers = [
       `To: ${to}`,
       cc ? `Cc: ${cc}` : "",
-      `Subject: ${subject}`,
+      `Subject: ${subjectFiltered.text}`,
       'Content-Type: text/plain; charset="UTF-8"',
       "MIME-Version: 1.0",
       "",
-      body,
+      bodyFiltered.text,
     ].filter(Boolean);
 
     const raw = Buffer.from(headers.join("\r\n"), "utf8").toString("base64url");

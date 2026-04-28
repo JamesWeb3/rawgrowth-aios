@@ -7,15 +7,15 @@ import { tryDecryptSecret } from "@/lib/crypto";
  * replies feel like a real chatbot (~3-5s end to end vs 10-15s).
  *
  * The model gets full access to this org's Rawgrowth MCP server via
- * the `mcp_servers` parameter — same tools the CLI sees (telegram, gmail,
+ * the `mcp_servers` parameter  -  same tools the CLI sees (telegram, gmail,
  * routines, agents, knowledge, etc.) in a single API roundtrip.
  *
  * Falls back gracefully when the org doesn't have a Claude Max token
- * connected — caller should show "configure Claude Max in Connections"
+ * connected  -  caller should show "configure Claude Max in Connections"
  * rather than silently failing.
  */
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 1024;
 const RECENT_HISTORY = 6;
 
@@ -26,7 +26,7 @@ type AgentChatResult =
 type AnthropicContentBlock = {
   type: string;
   text?: string;
-  // tool_use, tool_result etc — we only render text blocks back to the user.
+  // tool_use, tool_result etc  -  we only render text blocks back to the user.
 };
 
 type AnthropicMessageResponse = {
@@ -131,7 +131,7 @@ async function loadRecentHistory(
 
 /**
  * Anthropic's OAuth token gate REQUIRES the system prompt to start with
- * this exact line — otherwise /v1/messages returns 401 "OAuth
+ * this exact line  -  otherwise /v1/messages returns 401 "OAuth
  * authentication is currently not supported." This is how Claude Max
  * inference is identified vs API-key inference.
  */
@@ -142,14 +142,14 @@ const CLAUDE_CODE_PREFIX =
  * Sentinel reply chatReply must produce when the user asks for an action
  * that requires Rawgrowth MCP tools. The webhook handler watches for this
  * exact prefix and hands off to the drain daemon, which has full tool
- * access. Keep the prefix stable — the handler does a literal startsWith.
+ * access. Keep the prefix stable  -  the handler does a literal startsWith.
  */
 export const CHAT_HANDOFF_SENTINEL_PREFIX =
   "[handoff] Give me a moment while I work on that";
 
 /**
  * Build the persona + instructions block. CRITICAL: do NOT put any of
- * this in the `system` field — Anthropic's OAuth gate strictly requires
+ * this in the `system` field  -  Anthropic's OAuth gate strictly requires
  * `system` to be exactly the Claude Code identity line. Any extra text
  * in `system` returns 429 with a misleading "Error" body.
  *
@@ -162,10 +162,10 @@ function buildPersonaPreamble(
 ): string {
   const lines: string[] = [];
 
-  // ─── Absolute rule first — overrides everything below ────────────
+  // ─── Absolute rule first  -  overrides everything below ────────────
   lines.push(
     "═══════════════════════════════════════════════════════════════════",
-    "ABSOLUTE RULE — read this before doing anything else",
+    "ABSOLUTE RULE  -  read this before doing anything else",
     "═══════════════════════════════════════════════════════════════════",
     "",
     "You have NO TOOLS in this conversation. Zero. None. You cannot:",
@@ -175,21 +175,21 @@ function buildPersonaPreamble(
     "  • check whether a connection is live, look up settings, or query the system",
     "  • do ANY action against ANY external service",
     "",
-    "If the user asks for ANY of the above — even just 'do you have X connected?' — you MUST hand off. Do NOT improvise. Do NOT refuse. Do NOT explain limitations. Do NOT say 'I can't' or 'I don't have access'. The system itself decides what's possible — you just hand off and it figures out the rest.",
+    "If the user asks for ANY of the above  -  even just 'do you have X connected?'  -  you MUST hand off. Do NOT improvise. Do NOT refuse. Do NOT explain limitations. Do NOT say 'I can't' or 'I don't have access'. The system itself decides what's possible  -  you just hand off and it figures out the rest.",
     "",
-    "Hand-off format — reply with ONLY this line and nothing else:",
+    "Hand-off format  -  reply with ONLY this line and nothing else:",
     "",
-    `  ${CHAT_HANDOFF_SENTINEL_PREFIX} — <one short sentence describing what you'll do>`,
+    `  ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  <one short sentence describing what you'll do>`,
     "",
     "Examples that ALL require handoff:",
-    `  user: "scrape my last 5 emails" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — fetching your latest 5 emails now.`,
-    `  user: "what's in my inbox" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — checking your inbox.`,
-    `  user: "do you have gmail connected?" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — checking the Gmail connection status.`,
-    `  user: "send james an email saying hi" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — sending that email to James now.`,
-    `  user: "list my agents" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — pulling the agent list.`,
-    `  user: "create a marketing department" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — building out your marketing department.`,
-    `  user: "what's in my notion?" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — checking Notion now.`,
-    `  user: "look up X" → ${CHAT_HANDOFF_SENTINEL_PREFIX} — looking that up for you.`,
+    `  user: "scrape my last 5 emails" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  fetching your latest 5 emails now.`,
+    `  user: "what's in my inbox" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking your inbox.`,
+    `  user: "do you have gmail connected?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking the Gmail connection status.`,
+    `  user: "send james an email saying hi" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  sending that email to James now.`,
+    `  user: "list my agents" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  pulling the agent list.`,
+    `  user: "create a marketing department" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  building out your marketing department.`,
+    `  user: "what's in my notion?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking Notion now.`,
+    `  user: "look up X" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  looking that up for you.`,
     "",
     "ONLY answer directly (no handoff) if the request is pure conversation requiring no system or external data: greetings, opinions, advice, explanations of concepts, brainstorming, jokes. If in doubt → HANDOFF.",
     "",
@@ -212,7 +212,7 @@ function buildPersonaPreamble(
   }
   lines.push(
     "",
-    "Reply concisely — small screen, phone reading. Three to five short sentences max; one sentence is often best.",
+    "Reply concisely  -  small screen, phone reading. Three to five short sentences max; one sentence is often best.",
     "Plain text or simple Markdown (bold, italics, code). No tables, no headings, no long bullet lists.",
     "Do NOT pretend you've already done an action. Do NOT make up agent names, ids, counts, or data. If you need data → handoff. Always.",
   );
@@ -295,7 +295,7 @@ export async function chatReply(input: {
         // `oauth-2025-04-20` is the gate that lets /v1/messages accept
         // sk-ant-oat01-* tokens. NOTE: stacking `mcp-client-2025-04-04`
         // alongside makes Anthropic return a misleading rate_limit_error
-        // — the two betas can't be combined for OAuth-billed inference
+        //  -  the two betas can't be combined for OAuth-billed inference
         // today. So the chat path can't call MCP tools mid-reply; that
         // capability stays on the slash-command + drain path.
         "anthropic-beta": "oauth-2025-04-20",

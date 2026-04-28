@@ -16,7 +16,7 @@ import "@/lib/mcp/tools";
  * JSON-RPC 2.0 here. Authentication is **per-tenant**: the Authorization
  * header carries a bearer token from rgaios_organizations.mcp_token, which
  * resolves to the caller's organization id. Tools operate scoped to that
- * org — no cross-tenant leakage is possible.
+ * org  -  no cross-tenant leakage is possible.
  *
  * Supported JSON-RPC methods:
  *   - initialize

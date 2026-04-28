@@ -1,0 +1,8 @@
+# Caddyfile for a v3 per-client rawgrowth VPS.
+# v3 talks to Supabase cloud directly (no local postgres/postgrest), so
+# this is a single-purpose reverse proxy for the Next.js app.
+
+{$CADDY_SITE_ADDRESS:localhost} {
+  encode gzip
+  reverse_proxy app:3000
+}

@@ -33,14 +33,14 @@ import {
 } from "@/lib/agents/constants";
 import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent } from "@/lib/agents/dto";
+import { DEPARTMENTS } from "@/lib/agents/dto";
+import { metaFor as deptMeta } from "@/components/departments/departments-view";
 import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
 import { ConnectorsPicker } from "@/components/agents/connectors-picker";
 import { AgentTelegramBotPanel } from "@/components/agents/agent-telegram-bot-panel";
 import { useConfig } from "@/lib/use-config";
 
 const NONE = "__none__";
-
-type Department = "marketing" | "sales" | "fulfilment" | "finance";
 
 type FormState = {
   name: string;
@@ -51,7 +51,7 @@ type FormState = {
   runtime: AgentRuntime;
   budget: number;
   writePolicy: WritePolicy;
-  department: Department | typeof NONE;
+  department: string;
   isDepartmentHead: boolean;
 };
 
@@ -62,7 +62,7 @@ function emptyForm(): FormState {
     role: "general",
     description: "",
     reportsTo: NONE,
-    runtime: "claude-sonnet-4-5",
+    runtime: "claude-sonnet-4-6",
     budget: 500,
     writePolicy: {},
     department: NONE,
@@ -80,7 +80,7 @@ function agentToForm(agent: Agent): FormState {
     runtime: agent.runtime,
     budget: agent.budgetMonthlyUsd,
     writePolicy: agent.writePolicy ?? {},
-    department: (agent.department ?? NONE) as Department | typeof NONE,
+    department: agent.department ?? NONE,
     isDepartmentHead: agent.isDepartmentHead ?? false,
   };
 }
@@ -252,7 +252,7 @@ export function AgentSheet(props: Props) {
 
               <Field label="Reports to">
                 <Select
-                  value={form.reportsTo}
+                  value={form.reportsTo === NONE ? undefined : form.reportsTo}
                   onValueChange={(v) => setForm({ ...form, reportsTo: v ?? NONE })}
                 >
                   <SelectTrigger className="w-full bg-input/40">
@@ -263,7 +263,7 @@ export function AgentSheet(props: Props) {
                     {managerCandidates.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
                         {a.name}
-                        {a.title ? ` — ${a.title}` : ""}
+                        {a.title ? `  -  ${a.title}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -276,9 +276,9 @@ export function AgentSheet(props: Props) {
               hint="Groups this agent under that pillar on the Departments page."
             >
               <Select
-                value={form.department}
+                value={form.department === NONE ? undefined : form.department}
                 onValueChange={(v) =>
-                  setForm({ ...form, department: (v ?? NONE) as Department | typeof NONE })
+                  setForm({ ...form, department: v ?? NONE })
                 }
               >
                 <SelectTrigger className="w-full bg-input/40">
@@ -286,10 +286,20 @@ export function AgentSheet(props: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>Unassigned</SelectItem>
-                  <SelectItem value="marketing">Marketing</SelectItem>
-                  <SelectItem value="sales">Sales</SelectItem>
-                  <SelectItem value="fulfilment">Fulfilment</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
+                  {Array.from(
+                    new Set([
+                      ...DEPARTMENTS,
+                      ...agents
+                        .map((a) => a.department)
+                        .filter((d): d is string => Boolean(d)),
+                    ]),
+                  )
+                    .sort()
+                    .map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {deptMeta(d).label}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -345,7 +355,7 @@ export function AgentSheet(props: Props) {
                   onValueChange={(v) =>
                     setForm({
                       ...form,
-                      runtime: (v ?? "claude-sonnet-4-5") as AgentRuntime,
+                      runtime: (v ?? "claude-sonnet-4-6") as AgentRuntime,
                     })
                   }
                 >

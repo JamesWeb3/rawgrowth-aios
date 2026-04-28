@@ -49,7 +49,7 @@ export function IntegrationsGrid() {
           return (
             <Card
               key={i.id}
-              className="group relative overflow-hidden border-border bg-card/50 backdrop-blur-sm transition-all duration-300 hover:border-primary/30 hover:bg-card"
+              className="group relative overflow-hidden border-border bg-card/50 backdrop-blur-sm transition-[border-color,background-color] duration-300 hover:border-primary/30 hover:bg-card"
             >
               {isConnected && (
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/40 to-transparent" />

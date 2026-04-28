@@ -44,7 +44,7 @@ export async function handleSlackEvent(input: {
 }): Promise<void> {
   const { teamId, event, organizationName, publicAppUrl } = input;
 
-  // Ignore messages from bots (including our own) — prevents infinite
+  // Ignore messages from bots (including our own)  -  prevents infinite
   // reply loops when our agent posts back into the same channel.
   if (event.bot_id) return;
   if (event.subtype === "bot_message" || event.subtype === "message_deleted")
@@ -162,7 +162,7 @@ async function fireBinding(input: {
   const result = await chatReply({
     organizationId: binding.organization_id,
     organizationName,
-    chatId: 0, // Slack channel, not Telegram — just a placeholder for history keying
+    chatId: 0, // Slack channel, not Telegram  -  just a placeholder for history keying
     userMessage: effectiveMessage,
     publicAppUrl,
   });
@@ -175,14 +175,14 @@ async function fireBinding(input: {
   }
 
   // ─── 3a. Tool-handoff path ─────────────────────────────────────
-  // chatReply returned the [handoff] sentinel — agent wants tools.
+  // chatReply returned the [handoff] sentinel  -  agent wants tools.
   // Hand off to the drain daemon with a one-shot prompt that includes
   // the Slack context + an instruction to post the final reply via
   // the slack_post_message MCP tool.
   if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
     const ack = result.reply
       .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-      .replace(/^\s*[—-]\s*/, "")
+      .replace(/^\s*-\s*/, "")
       .trim() || "Working on it";
 
     // Post the immediate "🔧 working on it" so the user sees life
@@ -211,7 +211,7 @@ async function fireBinding(input: {
       `  channel_id: "${channelId}"\n` +
       (threadTs ? `  thread_ts: "${threadTs}"\n` : "") +
       `  text: <your answer>\n\n` +
-      `Do NOT print the answer as your final reply — ONLY post it via slack_post_message. Keep the answer concise (3-5 short sentences max, plain text or simple markdown — no tables, no long lists). After posting, you can stop.`;
+      `Do NOT print the answer as your final reply  -  ONLY post it via slack_post_message. Keep the answer concise (3-5 short sentences max, plain text or simple markdown  -  no tables, no long lists). After posting, you can stop.`;
 
     const drainUrl = process.env.RAWCLAW_DRAIN_URL;
     if (drainUrl) {
@@ -229,7 +229,7 @@ async function fireBinding(input: {
       }
     } else {
       console.error(
-        `[slack] no RAWCLAW_DRAIN_URL set — handoff cannot dispatch`,
+        `[slack] no RAWCLAW_DRAIN_URL set  -  handoff cannot dispatch`,
       );
     }
     await markFired(binding.id);
@@ -288,13 +288,13 @@ async function routeOutput(input: {
       return;
     }
     case "gmail": {
-      // Deferred — requires a server-side Gmail sender we haven't built.
+      // Deferred  -  requires a server-side Gmail sender we haven't built.
       // Post the output back into the source channel as a thread note so
       // the operator sees something actionable, plus a loud TODO.
       await postMessage(botToken, {
         channel: event.channel!,
         text:
-          `📧 Would email to ${cfg.email ?? "(no email configured)"}:\n\n${body}\n\n_(Gmail output isn't wired up yet — this is a placeholder)_`,
+          `📧 Would email to ${cfg.email ?? "(no email configured)"}:\n\n${body}\n\n_(Gmail output isn't wired up yet  -  this is a placeholder)_`,
         thread_ts: event.thread_ts ?? event.ts,
       });
       return;

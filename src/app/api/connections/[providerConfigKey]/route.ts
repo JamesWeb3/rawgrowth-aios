@@ -32,7 +32,7 @@ export async function DELETE(
         try {
           await deleteTelegramWebhook(token);
         } catch {
-          /* ignore — token might already be invalid upstream */
+          /* ignore  -  token might already be invalid upstream */
         }
       }
     } else {
@@ -43,7 +43,7 @@ export async function DELETE(
           existing.nango_connection_id,
         );
       } catch {
-        /* ignore — connection might already be gone upstream */
+        /* ignore  -  connection might already be gone upstream */
       }
     }
 

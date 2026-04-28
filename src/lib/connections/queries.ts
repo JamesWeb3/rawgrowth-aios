@@ -5,7 +5,7 @@ type ConnectionRow =
   Database["public"]["Tables"]["rgaios_connections"]["Row"];
 
 /**
- * Every query is scoped by organization_id — caller must pass it.
+ * Every query is scoped by organization_id  -  caller must pass it.
  * Callers currently use DEFAULT_ORGANIZATION_ID from supabase/constants
  * until auth is wired.
  */

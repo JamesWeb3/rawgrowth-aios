@@ -133,7 +133,7 @@ export function IntegrationConnectionSheet({
 
       // 3. Open Nango's hosted Connect UI and capture the payload fired on
       //    successful auth. The webhook also writes this row in prod, but
-      //    relying on it alone breaks local dev — so we persist client-side.
+      //    relying on it alone breaks local dev  -  so we persist client-side.
       type ConnectPayload = {
         providerConfigKey?: string;
         connectionId?: string;
@@ -512,7 +512,7 @@ function TelegramConnectedCard({
         )}
       </div>
 
-      {/* Activity panel — proves the bot is actually working */}
+      {/* Activity panel  -  proves the bot is actually working */}
       {stats && stats.connected && (
         <div className="rounded-xl border border-border bg-card/30 p-4">
           <div className="mb-3 flex items-center gap-2">
@@ -783,7 +783,7 @@ function SupabasePatForm({
 
       {result && (
         <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-[12px] text-primary">
-          Connected — token sees{" "}
+          Connected  -  token sees{" "}
           <strong className="font-semibold">
             {result.organizations.length} Supabase org
             {result.organizations.length === 1 ? "" : "s"}
@@ -881,7 +881,7 @@ function TelegramBotForm({
             2. Send <code className="font-mono text-foreground/80">/newbot</code>{" "}
             and follow the prompts to name your bot.
           </li>
-          <li>3. BotFather replies with a token — paste it below.</li>
+          <li>3. BotFather replies with a token  -  paste it below.</li>
         </ol>
         {integration.apiKey?.docsUrl && (
           <a

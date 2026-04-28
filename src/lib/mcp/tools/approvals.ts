@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
  * approval requests from Claude Code without bouncing to the web UI.
  *
  * `reviewer_id` is looked up from the org's first owner when called via
- * MCP — audit log still records a real human, since the bearer token
+ * MCP  -  audit log still records a real human, since the bearer token
  * authenticates the organization, not an individual user.
  */
 
@@ -22,7 +22,7 @@ async function resolveReviewerId(organizationId: string): Promise<string> {
     .maybeSingle();
   if (!data) {
     throw new Error(
-      "No owner user found for this organization — cannot record reviewer.",
+      "No owner user found for this organization  -  cannot record reviewer.",
     );
   }
   return data.id;
@@ -69,7 +69,7 @@ registerTool({
           .filter(Boolean)
           .join(" · ");
         return [
-          `- \`${r.id}\` — tool: \`${r.tool_name}\` (${r.status})`,
+          `- \`${r.id}\`  -  tool: \`${r.tool_name}\` (${r.status})`,
           ctxLine ? `    ${ctxLine}` : "",
           r.reason ? `    reason: ${r.reason}` : "",
           `    args: \`${JSON.stringify(r.tool_args).slice(0, 120)}\``,
@@ -119,7 +119,7 @@ registerTool({
     if (decision === "approved") {
       return text(
         [
-          `Approved \`${id}\` — executed \`${result.approval.tool_name}\`.`,
+          `Approved \`${id}\`  -  executed \`${result.approval.tool_name}\`.`,
           result.executionResult
             ? `Result: ${result.executionResult.slice(0, 500)}`
             : "",

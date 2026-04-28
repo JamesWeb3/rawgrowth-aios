@@ -25,6 +25,14 @@ export type Database = {
           sales: boolean;
           fulfilment: boolean;
           finance: boolean;
+          // v3 onboarding state (migration 0017)
+          onboarding_completed: boolean;
+          onboarding_step: number;
+          messaging_channel: string | null;
+          messaging_handle: string | null;
+          slack_workspace_url: string | null;
+          slack_channel_name: string | null;
+          current_month: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -37,6 +45,13 @@ export type Database = {
           sales?: boolean;
           fulfilment?: boolean;
           finance?: boolean;
+          onboarding_completed?: boolean;
+          onboarding_step?: number;
+          messaging_channel?: string | null;
+          messaging_handle?: string | null;
+          slack_workspace_url?: string | null;
+          slack_channel_name?: string | null;
+          current_month?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_organizations"]["Row"]>;
         Relationships: [];
@@ -236,20 +251,23 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          // v3 per-agent bots (migration 0024). Null = org-wide integration.
+          agent_id: string | null;
           provider_config_key: string;
           nango_connection_id: string;
           display_name: string | null;
-          status: "connected" | "error" | "disconnected";
+          status: "connected" | "error" | "disconnected" | "pending_token";
           metadata: Record<string, unknown>;
           connected_at: string;
           updated_at: string;
         };
         Insert: {
           organization_id: string;
+          agent_id?: string | null;
           provider_config_key: string;
           nango_connection_id: string;
           display_name?: string | null;
-          status?: "connected" | "error" | "disconnected";
+          status?: "connected" | "error" | "disconnected" | "pending_token";
           metadata?: Record<string, unknown>;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_connections"]["Row"]>;
@@ -465,6 +483,178 @@ export type Database = {
           detail?: Record<string, unknown>;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_audit_log"]["Row"]>;
+        Relationships: [];
+      };
+
+      // v3 tables below (migrations 0018–0027).
+      rgaios_brand_intakes: {
+        Row: {
+          id: string;
+          organization_id: string;
+          basic_info: Record<string, unknown>;
+          social_presence: Record<string, unknown>;
+          origin_story: Record<string, unknown>;
+          business_model: Record<string, unknown>;
+          target_audience: Record<string, unknown>;
+          goals: Record<string, unknown>;
+          challenges: Record<string, unknown>;
+          brand_voice: Record<string, unknown>;
+          competitors: Record<string, unknown>;
+          content_messaging: Record<string, unknown>;
+          sales: Record<string, unknown>;
+          tools_systems: Record<string, unknown>;
+          additional_context: Record<string, unknown>;
+          call_data: Record<string, unknown>;
+          full_transcript: Record<string, unknown> | null;
+          submitted_at: number | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_brand_intakes"]["Row"]> & {
+          organization_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_brand_intakes"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_brand_profiles: {
+        Row: {
+          id: string;
+          organization_id: string;
+          version: number;
+          content: string;
+          status: "generating" | "ready" | "approved";
+          generated_at: number;
+          approved_at: number | null;
+          approved_by: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_brand_profiles"]["Row"]> & {
+          organization_id: string;
+          generated_at: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_brand_profiles"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_onboarding_documents: {
+        Row: {
+          id: string;
+          organization_id: string;
+          type: "logo" | "guideline" | "asset" | "other";
+          storage_url: string;
+          filename: string;
+          size: number;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_onboarding_documents"]["Row"]> & {
+          organization_id: string;
+          storage_url: string;
+          filename: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_onboarding_documents"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_software_access: {
+        Row: {
+          id: string;
+          organization_id: string;
+          platform: string;
+          access_type: string;
+          confirmed: boolean;
+          notes: string | null;
+          confirmed_at: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_software_access"]["Row"]> & {
+          organization_id: string;
+          platform: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_software_access"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_scheduled_calls: {
+        Row: {
+          id: string;
+          organization_id: string;
+          title: string;
+          month: number;
+          week: number;
+          calendly_url: string | null;
+          scheduled_at: number | null;
+          completed: boolean;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_scheduled_calls"]["Row"]> & {
+          organization_id: string;
+          title: string;
+          month: number;
+          week: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_scheduled_calls"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_scrape_snapshots: {
+        Row: {
+          id: string;
+          organization_id: string;
+          kind: "social" | "competitor" | "site";
+          url: string;
+          title: string | null;
+          content: string | null;
+          embedding: string | null;
+          status: "pending" | "running" | "succeeded" | "failed" | "blocked";
+          error: string | null;
+          scraped_at: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_scrape_snapshots"]["Row"]> & {
+          organization_id: string;
+          kind: "social" | "competitor" | "site";
+          url: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_scrape_snapshots"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_agent_files: {
+        Row: {
+          id: string;
+          organization_id: string;
+          agent_id: string;
+          filename: string;
+          storage_path: string;
+          mime_type: string;
+          size_bytes: number;
+          uploaded_by: string | null;
+          uploaded_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_agent_files"]["Row"]> & {
+          organization_id: string;
+          agent_id: string;
+          filename: string;
+          storage_path: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_agent_files"]["Row"]>;
+        Relationships: [];
+      };
+      rgaios_agent_file_chunks: {
+        Row: {
+          id: string;
+          file_id: string;
+          organization_id: string;
+          agent_id: string;
+          chunk_index: number;
+          content: string;
+          token_count: number | null;
+          embedding: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["rgaios_agent_file_chunks"]["Row"]> & {
+          file_id: string;
+          organization_id: string;
+          agent_id: string;
+          chunk_index: number;
+          content: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rgaios_agent_file_chunks"]["Row"]>;
         Relationships: [];
       };
     };

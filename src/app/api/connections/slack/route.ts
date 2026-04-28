@@ -9,7 +9,7 @@ const PROVIDER_KEY = "slack";
 
 /**
  * GET /api/connections/slack
- * Returns the overall Slack state for this org — whether the client
+ * Returns the overall Slack state for this org  -  whether the client
  * has pasted their Slack App credentials yet, and whether a workspace
  * has been installed on top of those credentials.
  */
@@ -53,7 +53,7 @@ export async function GET() {
 
 /**
  * DELETE /api/connections/slack
- * Fully disconnects Slack from this org — removes the workspace install
+ * Fully disconnects Slack from this org  -  removes the workspace install
  * AND the app credentials. If you only want to uninstall without
  * clearing creds, use /uninstall instead (future endpoint).
  */
@@ -85,7 +85,7 @@ export async function DELETE() {
             signal: AbortSignal.timeout(5_000),
           });
         } catch {
-          /* best-effort — proceed with local delete */
+          /* best-effort  -  proceed with local delete */
         }
       }
     }

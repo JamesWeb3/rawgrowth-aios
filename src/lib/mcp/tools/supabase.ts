@@ -11,7 +11,7 @@ import {
 } from "@/lib/supabase-mgmt/client";
 
 /**
- * Supabase Management API tools — full automation surface for agents:
+ * Supabase Management API tools  -  full automation surface for agents:
  * provision projects, run migrations, query existing DBs.
  *
  * Auth: one PAT per org (rgaios_connections row, provider_config_key='supabase').
@@ -162,7 +162,7 @@ registerTool({
         if (!(err instanceof SupabaseMgmtError) || err.status !== 404) {
           return renderError(err);
         }
-        // 404 right after create can happen briefly — keep polling.
+        // 404 right after create can happen briefly  -  keep polling.
       }
       await new Promise((r) => setTimeout(r, 5_000));
     }
@@ -214,7 +214,7 @@ registerTool({
 registerTool({
   name: "supabase_apply_migration",
   description:
-    "Apply a NAMED, versioned migration to a Supabase project — appears in the migrations history alongside any made via the Supabase CLI. Use this for CREATE TABLE, ALTER TABLE, RLS policies, and other schema changes that should be tracked.",
+    "Apply a NAMED, versioned migration to a Supabase project  -  appears in the migrations history alongside any made via the Supabase CLI. Use this for CREATE TABLE, ALTER TABLE, RLS policies, and other schema changes that should be tracked.",
   requiresIntegration: "supabase",
   isWrite: true,
   inputSchema: {

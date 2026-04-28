@@ -14,6 +14,10 @@ export type KnowledgeFileRow = {
   size_bytes: number | null;
   uploaded_at: string;
   uploaded_by: string | null;
+  // Optional; org-wide markdown knowledge has no agent binding. Per-agent
+  // file rows (rgaios_agent_files) can populate this so the brief §7
+  // filter dropdown groups them under their agent instead of "Unassigned".
+  agent_id?: string | null;
 };
 
 const KNOWLEDGE_KEY = "/api/knowledge";

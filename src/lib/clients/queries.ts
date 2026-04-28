@@ -4,7 +4,7 @@ import { generateMcpToken } from "@/lib/mcp/token-resolver";
 
 /**
  * Admin-facing client provisioning. Every function assumes the caller
- * has already verified admin status — these don't check themselves.
+ * has already verified admin status  -  these don't check themselves.
  */
 
 export type ClientRow = {

@@ -151,7 +151,17 @@ function AgentCard({
   onEdit: (agent: Agent) => void;
   bot: AgentBotSummary | null;
 }) {
-  const role = roleMeta(agent.role);
+  // Visual-only role override: agents with reports_to IS NULL are
+  // managers regardless of the DB role column (which defaults to
+  // 'general' for legacy seeded rows). The org-chart label needs to
+  // read the actual hierarchy, not the stored string.
+  const isManager = !agent.reportsTo;
+  const baseRole = roleMeta(agent.role);
+  const role = isManager
+    ? { ...baseRole, label: "Manager" }
+    : agent.reportsTo
+      ? { ...baseRole, label: "Sub-agent" }
+      : baseRole;
   const Icon = roleIconMap[role.icon as RoleIconName] ?? Bot;
   const status = statusStyle[agent.status];
   const isHead = agent.isDepartmentHead;
@@ -160,8 +170,9 @@ function AgentCard({
     <button
       type="button"
       onClick={() => onEdit(agent)}
+      // eslint-disable-next-line rawgrowth-brand/banned-tailwind-defaults -- transition list explicit; head amber border is intentional accent for department-head emphasis
       className={cn(
-        "group relative w-60 rounded-xl border bg-card/70 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_40px_rgba(12,191,106,.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group relative w-60 rounded-xl border bg-card/70 p-4 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_40px_rgba(12,191,106,.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isHead
           ? "border-amber-400/40 hover:border-amber-300/60 shadow-[0_0_0_1px_rgba(251,191,36,.05)_inset]"
           : "border-border hover:border-primary/40",
@@ -234,13 +245,15 @@ function AgentCard({
         )}
       </div>
 
-      <ConnectorsRow ids={Object.keys(agent.writePolicy ?? {})} />
-
-      <div className="mt-3 flex items-center justify-end">
-        <span className="font-mono text-[10px] text-muted-foreground">
-          {initials(agent.name)}
-        </span>
-      </div>
+      <ConnectorsRow
+        ids={
+          agent.writePolicy &&
+          typeof agent.writePolicy === "object" &&
+          !Array.isArray(agent.writePolicy)
+            ? Object.keys(agent.writePolicy)
+            : []
+        }
+      />
     </button>
   );
 }
@@ -288,7 +301,7 @@ function ConnectorsRow({ ids }: { ids: string[] }) {
 // ────────────────────────── Tree renderer ──────────────────────────
 //
 // Each node renders as a column. When a node has children, a vertical stub
-// drops down from the card, then a row of "connector columns" — one per child.
+// drops down from the card, then a row of "connector columns"  -  one per child.
 // Each child's connector column contains a horizontal segment (sized to stitch
 // into a continuous horizontal bar across siblings) plus a vertical drop into
 // the child card.
@@ -337,7 +350,7 @@ function TreeNode({
                 >
                   {/* Connector zone above child */}
                   <div className="relative flex h-6 w-full justify-center">
-                    {/* Horizontal segment — only when multiple children */}
+                    {/* Horizontal segment  -  only when multiple children */}
                     {multipleChildren && (
                       <div
                         className={cn(
@@ -436,8 +449,8 @@ export function OrgChart() {
     return (
       <EmptyState
         icon={Network}
-        title="No agents yet — your org chart is empty"
-        description="Hire your first agent — a CEO at the top, or go straight to individual contributors. You can add reports underneath them later."
+        title="No agents yet  -  your org chart is empty"
+        description="Hire your first agent  -  a CEO at the top, or go straight to individual contributors. You can add reports underneath them later."
         action={<AgentSheet triggerSize="lg" triggerLabel="Hire first agent" />}
       />
     );
@@ -475,7 +488,7 @@ export function OrgChart() {
         <AgentSheet />
       </div>
 
-      {/* Chart canvas — auto-scales the tree down to fit the available
+      {/* Chart canvas. Auto-scales the tree down to fit the available
           width instead of horizontally scrolling. Wider orgs get smaller
           cards rather than off-screen ones. */}
       <div

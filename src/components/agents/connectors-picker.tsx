@@ -6,7 +6,7 @@ import { CONNECTORS, getConnector } from "@/lib/connectors";
 import type { WritePolicy } from "@/components/agents/tools-picker";
 
 /**
- * Connector picker shown in self-hosted mode. Purely informational —
+ * Connector picker shown in self-hosted mode. Purely informational  - 
  * storing a connector here doesn't grant OAuth or mint tokens. It tells
  * the operator which tools the agent is expected to use, and renders
  * logos on the agent card so the org chart reads at a glance.
@@ -38,7 +38,7 @@ export function ConnectorsPicker({
     <div className="space-y-3">
       <p className="text-[11.5px] leading-relaxed text-muted-foreground">
         Tools this agent uses. Shown as logos on the agent card. Auth
-        happens in your Claude connector settings — not here.
+        happens in your Claude connector settings  -  not here.
       </p>
 
       {selectedIds.length === 0 && !adding ? (

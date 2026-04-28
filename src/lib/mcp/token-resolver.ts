@@ -23,7 +23,7 @@ export function parseBearer(authHeader: string | null): string | null {
 
 /**
  * Look up the organization that owns a given MCP bearer token.
- * Returns null if no match — the caller should 401.
+ * Returns null if no match  -  the caller should 401.
  */
 export async function resolveOrgFromToken(
   token: string,

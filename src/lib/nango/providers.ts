@@ -3,7 +3,7 @@
  * the `providerConfigKey` you register in the Nango dashboard.
  *
  * Keeping this separate from the catalog means we can evolve the two
- * independently — the catalog describes the *product surface* (brand,
+ * independently  -  the catalog describes the *product surface* (brand,
  * description, which auth methods are available), and this map is the
  * runtime wiring to Nango.
  *
@@ -20,7 +20,7 @@ export const NANGO_PROVIDER_CONFIG_KEYS: Record<string, string> = {
   "google-analytics": "google-analytics",
   // GitHub's Nango integration unique_key is non-standard ("getting-started"
   // suffix from when the user spun it up). The integration_id we surface
-  // in our UI / catalog is just "github" — we map it here.
+  // in our UI / catalog is just "github"  -  we map it here.
   github: "github-getting-started",
   shopify: "shopify",
   stripe: "stripe",
@@ -37,7 +37,7 @@ export const NANGO_PROVIDER_CONFIG_KEYS: Record<string, string> = {
   // map to look up the DB row. Without this entry the UI can't tell an
   // existing bot is connected.
   telegram: "telegram",
-  // canva, outlook — add as you register them in Nango
+  // canva, outlook  -  add as you register them in Nango
 };
 
 export function providerConfigKeyFor(integrationId: string): string | null {

@@ -5,7 +5,7 @@
  *   - deleteWebhook  → clean up on disconnect
  *   - sendMessage    → reply to the user after a routine fires
  *
- * No SDK dependency — fetch + JSON is enough.
+ * No SDK dependency  -  fetch + JSON is enough.
  */
 
 const API_ROOT = "https://api.telegram.org";
@@ -81,7 +81,7 @@ export function sendMessage(
 
 /**
  * Replace the contents of a message we previously sent. Use this to turn
- * a placeholder ("…") into the real agent reply once it arrives — Telegram
+ * a placeholder ("…") into the real agent reply once it arrives  -  Telegram
  * animates the swap, so from the user's side it looks like a speech bubble
  * that was thinking and then finished.
  *
@@ -117,7 +117,7 @@ export async function editMessageText(
 /**
  * Show a "typing…" bubble in the chat HEADER (not inline). Auto-clears
  * after 5s or when the next message is sent. Use it for instant feedback
- * while the agent thinks — pairs well with the placeholder-then-edit
+ * while the agent thinks  -  pairs well with the placeholder-then-edit
  * pattern in the webhook handler.
  */
 export function sendChatAction(
@@ -163,13 +163,29 @@ export type TgUpdate = {
 };
 
 /**
- * Resolve a Telegram file_id to a downloadable URL. Returns the path that
- * Telegram serves the binary at — combine with the bot token to fetch.
+ * Resolve a voice/document file_id into a download URL. Two hops:
+ *   1. getFile returns { file_path }
+ *   2. GET https://api.telegram.org/file/bot<TOKEN>/<file_path>
+ */
+export async function getFile(token: string, fileId: string) {
+  return call<{
+    file_id: string;
+    file_unique_id: string;
+    file_size?: number;
+    file_path?: string;
+  }>(token, "getFile", { file_id: fileId });
+}
+
+export function fileDownloadUrl(token: string, filePath: string): string {
+  return `${API_ROOT}/file/bot${token}/${filePath}`;
+}
+
+/**
+ * Resolve a Telegram file_id to a downloadable file_path. Throws if Telegram
+ * doesn't return one. Combine with downloadFile() below.
  */
 export async function getFilePath(token: string, fileId: string): Promise<string> {
-  const file = await call<{ file_path?: string }>(token, "getFile", {
-    file_id: fileId,
-  });
+  const file = await getFile(token, fileId);
   if (!file.file_path) {
     throw new Error(`Telegram getFile returned no file_path for ${fileId}`);
   }
@@ -177,16 +193,16 @@ export async function getFilePath(token: string, fileId: string): Promise<string
 }
 
 /**
- * Download a Telegram-hosted file as raw bytes. Telegram limits this to
- * 20MB per request — voice notes and Telegram-compressed photos are well
- * under that ceiling.
+ * Download a Telegram-hosted file as raw bytes. Telegram caps this at 20MB
+ * per request — voice notes and Telegram-compressed photos fit easily.
  */
 export async function downloadFile(
   token: string,
   filePath: string,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
-  const url = `${API_ROOT}/file/bot${token}/${filePath}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  const res = await fetch(fileDownloadUrl(token, filePath), {
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!res.ok) {
     throw new Error(`Telegram file download failed: ${res.status}`);
   }

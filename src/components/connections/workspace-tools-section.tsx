@@ -15,7 +15,7 @@ import { IntegrationConnectionSheet } from "@/components/integration-connection-
 import { useConnections } from "@/lib/connections/use-connections";
 
 /**
- * The "workspace tools" cards on /connections — Gmail, Google Drive,
+ * The "workspace tools" cards on /connections  -  Gmail, Google Drive,
  * GitHub. Each card opens the existing IntegrationConnectionSheet which
  * runs the Nango Connect UI flow.
  *

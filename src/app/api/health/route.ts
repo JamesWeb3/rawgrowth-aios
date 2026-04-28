@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 /**
  * Cheap liveness + DB-reachability probe used by docker-compose healthchecks
- * and the update pipeline. Never returns 5xx for app-logic errors — only
+ * and the update pipeline. Never returns 5xx for app-logic errors  -  only
  * for hard infrastructure failure (DB unreachable).
  */
 export async function GET() {

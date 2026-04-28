@@ -3,7 +3,7 @@ import type { Database } from "./types";
 
 /**
  * Server-side Supabase client, keyed with the SERVICE_ROLE secret so it
- * bypasses RLS. Use ONLY from Next.js route handlers / server actions —
+ * bypasses RLS. Use ONLY from Next.js route handlers / server actions  - 
  * never expose SUPABASE_SERVICE_ROLE_KEY to the browser.
  *
  * When NextAuth + RLS land, we'll add a per-request client that issues

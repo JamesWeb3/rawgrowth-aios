@@ -12,12 +12,12 @@ import { autoPickSkillsForAgent } from "@/lib/skills/rank";
 
 /**
  * MCP tools for the agent lifecycle. Let clients create, list, update, and
- * fire agents from inside Claude Code — no need to bounce to the web UI
+ * fire agents from inside Claude Code  -  no need to bounce to the web UI
  * for every tweak.
  *
  * In self-hosted mode the `runtime` column is ignored (no autonomous
  * executor runs) but we still accept a value for forward-compat with the
- * hosted product. Default to claude-sonnet-4-5 so creates always work.
+ * hosted product. Default to claude-sonnet-4-6 so creates always work.
  */
 
 const VALID_ROLES = AGENT_ROLES.map((r) => r.value) as readonly string[];
@@ -39,7 +39,7 @@ registerTool({
     ]);
     if (agents.length === 0) {
       return text(
-        "No agents yet. Create one with `agents_create` — minimum required is `name`.",
+        "No agents yet. Create one with `agents_create`  -  minimum required is `name`.",
       );
     }
     const skillsByAgent = new Map<string, string[]>();
@@ -61,7 +61,7 @@ registerTool({
         const skillsLine = skills.length
           ? ` · skills: ${skills.join(", ")}`
           : "";
-        return `- **${a.name}**${a.title ? ` — ${a.title}` : ""} · role: ${a.role} · status: ${a.status}${skillsLine} · id: \`${a.id}\``;
+        return `- **${a.name}**${a.title ? `  -  ${a.title}` : ""} · role: ${a.role} · status: ${a.status}${skillsLine} · id: \`${a.id}\``;
       }),
     ];
 
@@ -102,7 +102,7 @@ function integrationsToPolicy(
 registerTool({
   name: "agents_create",
   description:
-    "Hire a new agent. Required: name. Optional: title (e.g. 'Head of Growth'), role (one of: ceo, cto, engineer, marketer, sdr, ops, designer, general — default: general), description (what the agent is responsible for), reports_to (id of another agent), budget_monthly_usd (default 500), integrations (array of connector ids the agent uses — e.g. ['gmail','notion','slack']), department (one of: marketing, sales, fulfilment, finance), skill_ids (optional explicit list of skill catalog ids — if omitted the tool auto-picks 1-3 relevant skills based on role/title/description/department). Pass skill_ids: [] to explicitly skip auto-assignment.",
+    "Hire a new agent. Required: name. Optional: title (e.g. 'Head of Growth'), role (one of: ceo, cto, engineer, marketer, sdr, ops, designer, general  -  default: general), description (what the agent is responsible for), reports_to (id of another agent), budget_monthly_usd (default 500), integrations (array of connector ids the agent uses  -  e.g. ['gmail','notion','slack']), department (one of: marketing, sales, fulfilment, finance), skill_ids (optional explicit list of skill catalog ids  -  if omitted the tool auto-picks 1-3 relevant skills based on role/title/description/department). Pass skill_ids: [] to explicitly skip auto-assignment.",
   isWrite: true,
   inputSchema: {
     type: "object",
@@ -178,7 +178,7 @@ registerTool({
       role,
       reportsTo: args.reports_to ? String(args.reports_to) : null,
       description: String(args.description ?? "").trim(),
-      runtime: "claude-sonnet-4-5",
+      runtime: "claude-sonnet-4-6",
       budgetMonthlyUsd: Number(args.budget_monthly_usd ?? 500),
       department,
       writePolicy,
@@ -196,7 +196,7 @@ registerTool({
         .filter((v) => v.length > 0);
       const unknown = ids.filter((id) => !getSkill(id));
       if (unknown.length > 0) {
-        // Agent was already created — don't fail; just skip the unknowns
+        // Agent was already created  -  don't fail; just skip the unknowns
         // and report. The caller can always assign manually later.
         assignedSkillIds = ids.filter((id) => getSkill(id));
       } else {
@@ -224,11 +224,11 @@ registerTool({
       ? `- skills: ${assignedSkillIds
           .map((id) => getSkill(id)?.name ?? id)
           .join(", ")}${Array.isArray(explicitSkills) ? "" : " (auto-picked)"}`
-      : `- skills: (none — use \`skills_assign\` later if you want some)`;
+      : `- skills: (none  -  use \`skills_assign\` later if you want some)`;
 
     return text(
       [
-        `Hired **${agent.name}**${agent.title ? ` — ${agent.title}` : ""}.`,
+        `Hired **${agent.name}**${agent.title ? `  -  ${agent.title}` : ""}.`,
         `- id: \`${agent.id}\``,
         `- role: ${agent.role}`,
         `- status: ${agent.status}`,
@@ -304,7 +304,7 @@ registerTool({
     }
     if (args.status !== undefined) patch.status = String(args.status);
     if (args.integrations !== undefined) {
-      // Explicit replacement — pass [] to clear.
+      // Explicit replacement  -  pass [] to clear.
       patch.writePolicy = integrationsToPolicy(args.integrations) ?? {};
     }
     if (args.department !== undefined) {
@@ -323,7 +323,7 @@ registerTool({
     const integrations = Object.keys(agent.writePolicy ?? {});
     return text(
       [
-        `Updated **${agent.name}** — role: ${agent.role}, status: ${agent.status}, budget: $${agent.budgetMonthlyUsd}/mo`,
+        `Updated **${agent.name}**  -  role: ${agent.role}, status: ${agent.status}, budget: $${agent.budgetMonthlyUsd}/mo`,
         integrations.length
           ? `Connectors: ${integrations.join(", ")}`
           : `Connectors: (none)`,

@@ -21,23 +21,23 @@ export function DashboardStats() {
   const cards = [
     {
       label: "Active agents",
-      value: data ? String(data.activeAgents) : "—",
+      value: data ? String(data.activeAgents) : " - ",
       hint: data ? `${data.activelyRunning} running` : "loading…",
     },
     {
       label: "Open issues",
-      value: data ? String(data.openIssues) : "—",
-      hint: "failed runs (7d)",
+      value: data ? String(data.openIssues) : " - ",
+      hint: "failed runs in 7d",
     },
     {
       label: "Pending approvals",
-      value: data ? String(data.pendingApprovals) : "—",
-      hint: data ? `${data.pendingApprovals} awaiting` : "loading…",
+      value: data ? String(data.pendingApprovals) : " - ",
+      hint: "awaiting review",
     },
     {
       label: "Runs this week",
-      value: data ? String(data.runsThisWeek) : "—",
-      hint: "completed (7d)",
+      value: data ? String(data.runsThisWeek) : " - ",
+      hint: "completed in 7d",
     },
   ];
 
@@ -52,7 +52,7 @@ export function DashboardStats() {
             <div className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
               {s.label}
             </div>
-            <div className="mt-2 font-serif text-2xl text-foreground">
+            <div className="mt-2 text-3xl font-semibold tracking-tight tabular-nums text-foreground sm:text-4xl">
               {s.value}
             </div>
             <div className="mt-1 text-[11px] text-muted-foreground">

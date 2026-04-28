@@ -94,18 +94,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // creation or refresh — pull the connection so we can store display name
+  // creation or refresh  -  pull the connection so we can store display name
   let displayName: string | null = null;
   try {
     const conn = await nango().getConnection(providerConfigKey, connectionId);
     displayName =
-      // Common identifiers across providers — first one that exists wins
+      // Common identifiers across providers  -  first one that exists wins
       (conn.credentials as { email?: string } | undefined)?.email ??
       (conn.connection_config as { login?: string } | undefined)?.login ??
       (conn.connection_config as { email?: string } | undefined)?.email ??
       null;
   } catch {
-    /* non-fatal — we'll store the connection without a display name */
+    /* non-fatal  -  we'll store the connection without a display name */
   }
 
   await upsertConnection({

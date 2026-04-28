@@ -66,7 +66,7 @@ export async function DELETE(
       .eq("role", "owner");
     if ((count ?? 0) <= 1) {
       return NextResponse.json(
-        { error: "Cannot remove the last owner — promote someone else first" },
+        { error: "Cannot remove the last owner  -  promote someone else first" },
         { status: 400 },
       );
     }

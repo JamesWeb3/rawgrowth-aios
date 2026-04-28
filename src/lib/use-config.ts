@@ -7,7 +7,7 @@ type Config = { deployMode: "hosted" | "self_hosted" };
 
 /**
  * Fetches the server-side config flags once and caches them forever.
- * Cheap — the endpoint returns a few bytes and the response is reused
+ * Cheap  -  the endpoint returns a few bytes and the response is reused
  * across every consumer via SWR's shared cache.
  */
 export function useConfig() {

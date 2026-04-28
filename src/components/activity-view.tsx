@@ -70,7 +70,7 @@ const statusMeta: Record<RunSummary["status"], StatusMeta> = {
 };
 
 function formatRelative(iso: string | null) {
-  if (!iso) return "—";
+  if (!iso) return " - ";
   const diff = Date.now() - new Date(iso).getTime();
   const secs = Math.max(0, Math.round(diff / 1000));
   if (secs < 60) return `${secs}s ago`;
@@ -86,7 +86,7 @@ function formatDuration(
   started: string | null,
   completed: string | null,
 ): string {
-  if (!started) return "—";
+  if (!started) return " - ";
   const end = completed ? new Date(completed).getTime() : Date.now();
   const ms = end - new Date(started).getTime();
   if (ms < 1000) return `${ms}ms`;
@@ -119,7 +119,7 @@ export function ActivityView() {
       <EmptyState
         icon={ActivityIcon}
         title="No runs yet"
-        description="When your routines fire — manually, via Telegram, on a schedule, or from an integration event — they'll show up here live as they execute."
+        description="When your routines fire  -  manually, via Telegram, on a schedule, or from an integration event  -  they'll show up here live as they execute."
       />
     );
   }

@@ -20,7 +20,7 @@ import {
 export type AuthMethod = "api_key" | "oauth" | "webhook";
 
 export type IntegrationEventDef = {
-  id: string; // e.g. "fathom.meeting.ended" — also the trigger event id
+  id: string; // e.g. "fathom.meeting.ended"  -  also the trigger event id
   label: string; // e.g. "Meeting ended"
 };
 
@@ -216,7 +216,7 @@ export const INTEGRATIONS: IntegrationEntry[] = [
   {
     id: "google-drive",
     name: "Google Drive",
-    description: "Files, folders, and shared drives — for agent context.",
+    description: "Files, folders, and shared drives  -  for agent context.",
     category: "Knowledge",
     Icon: SiGoogledrive,
     brand: "#1FA463",
@@ -244,7 +244,7 @@ export const INTEGRATIONS: IntegrationEntry[] = [
   {
     id: "github",
     name: "GitHub",
-    description: "Repos, PRs, issues, code search — for engineering agents.",
+    description: "Repos, PRs, issues, code search  -  for engineering agents.",
     category: "Engineering",
     Icon: SiGithub,
     brand: "#181717",
@@ -258,7 +258,7 @@ export const INTEGRATIONS: IntegrationEntry[] = [
     id: "supabase",
     name: "Supabase",
     description:
-      "Provision projects, run migrations, query Postgres — across every project the PAT can see.",
+      "Provision projects, run migrations, query Postgres  -  across every project the PAT can see.",
     category: "Data",
     Icon: SiSupabase,
     brand: "#3ECF8E",

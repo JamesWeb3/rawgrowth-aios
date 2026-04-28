@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.7
+
+# ─────────────────────────────────────────────────────────────
+# Rawgrowth AIOS v3 — per-client VPS image with Supabase cloud
+# Delta from ./Dockerfile (self-hosted):
+#   - DEPLOY_MODE=v3 default
+#   - whisper.cpp binary + base.en model bundled for voice fallback
+#   - (no local postgres/postgrest deps; Supabase is remote)
+# ─────────────────────────────────────────────────────────────
+
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+FROM node:24-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# ── whisper.cpp build stage ───────────────────────────────────
+# Bundles a static whisper-cli binary + the base.en GGML model as
+# the Path-B voice transcription fallback. Used only when
+# ANTHROPIC_API_KEY is missing / Path-A call fails. base.en is ~150MB
+# and hits good-enough accuracy for short Telegram voice notes in
+# English. Swap WHISPER_MODEL to small.en if a client needs more.
+FROM alpine:3.19 AS whisper
+RUN apk add --no-cache build-base cmake git curl
+WORKDIR /src
+RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git . && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF && \
+    cmake --build build -j --config Release && \
+    mkdir -p /out/bin /out/model && \
+    cp build/bin/whisper-cli /out/bin/whisper-cli && \
+    curl -fsSL -o /out/model/ggml-base.en.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+
+FROM node:24-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0 \
+    DEPLOY_MODE=v3 \
+    WHISPER_BIN=/usr/local/bin/whisper-cli \
+    WHISPER_MODEL=/usr/local/share/whisper/ggml-base.en.bin
+
+RUN apk add --no-cache libstdc++ libgcc
+
+# Drop root
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Next.js standalone
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Migrations + entrypoint
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/supabase/migrations ./supabase/migrations
+COPY --from=builder --chown=nextjs:nodejs /app/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# Whisper binary + model
+COPY --from=whisper /out/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=whisper /out/model/ggml-base.en.bin /usr/local/share/whisper/ggml-base.en.bin
+
+# Runtime Node deps (pg/jwt/bcrypt pulled with full transitives)
+RUN npm install --omit=dev --no-save --no-package-lock \
+      pg@^8 jsonwebtoken@^9 bcryptjs@^3
+
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/whisper-cli
+
+USER nextjs
+
+EXPOSE 3000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["node", "server.js"]

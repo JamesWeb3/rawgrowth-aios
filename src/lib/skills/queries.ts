@@ -33,7 +33,7 @@ export async function listSkillsForAgent(
 }
 
 /**
- * Add one or more skills to an agent. Idempotent — existing rows are
+ * Add one or more skills to an agent. Idempotent  -  existing rows are
  * preserved; only the missing (agent_id, skill_id) pairs are inserted.
  * Returns the list of skill ids that were newly added.
  */
@@ -83,7 +83,7 @@ export async function removeSkillFromAgent(
 }
 
 /**
- * Replace the full set of agents assigned to a given skill. Idempotent —
+ * Replace the full set of agents assigned to a given skill. Idempotent  - 
  * computes diff, deletes what's leaving, inserts what's joining.
  */
 export async function replaceSkillAssignments(

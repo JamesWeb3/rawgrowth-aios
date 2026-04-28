@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file required" }, { status: 400 });
     }
 
-    // Basic type sniff — accept markdown, plain text, or unknown (we treat as text)
+    // Basic type sniff  -  accept markdown, plain text, or unknown (we treat as text)
     const allowedMime = new Set([
       "text/markdown",
       "text/plain",

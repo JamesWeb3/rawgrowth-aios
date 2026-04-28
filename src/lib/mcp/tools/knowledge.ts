@@ -7,7 +7,7 @@ import { registerTool, text, textError } from "../registry";
 import { isSelfHosted } from "@/lib/deploy-mode";
 
 /**
- * Knowledge tools — read from the org's uploaded markdown files.
+ * Knowledge tools  -  read from the org's uploaded markdown files.
  *
  * Only registered in HOSTED mode. Self-hosted clients drag local files
  * into Claude Code's context directly, so we don't need Supabase Storage.
@@ -58,7 +58,7 @@ registerTool({
       "",
       ...filtered.map(
         (f) =>
-          `- **${f.title}** — id: \`${f.id}\`${
+          `- **${f.title}**  -  id: \`${f.id}\`${
             f.tags.length ? ` · tags: ${f.tags.join(", ")}` : ""
           } · ${new Date(f.uploaded_at).toLocaleDateString()}`,
       ),

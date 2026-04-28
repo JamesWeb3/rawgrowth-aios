@@ -19,7 +19,7 @@ import { encryptSecret, decryptSecret } from "@/lib/crypto";
  *   4. Calls Anthropic's /v1/oauth/token endpoint from the VPS itself
  *   5. Stores the resulting access_token (encrypted) in rgaios_connections
  *
- * The state we hand to Anthropic carries the code_verifier — encrypted —
+ * The state we hand to Anthropic carries the code_verifier  -  encrypted  - 
  * so we don't need a DB table for the in-flight half of the flow.
  */
 
@@ -42,7 +42,7 @@ export const CLAUDE_OAUTH_SCOPES = [
   "user:file_upload",
 ];
 
-/** PKCE pair — verifier is the secret, challenge is what we send to Anthropic. */
+/** PKCE pair  -  verifier is the secret, challenge is what we send to Anthropic. */
 export function makePkcePair(): { verifier: string; challenge: string } {
   // 64 random bytes → ~86 chars base64url. Well within RFC 7636 (43–128).
   const verifier = randomBytes(64).toString("base64url");
@@ -101,7 +101,7 @@ export function unpackState(state: string): UnpackedState | null {
     const raw = decryptSecret(state);
     const parsed = JSON.parse(raw) as { v?: string; o?: string; t?: number };
     if (!parsed.v || !parsed.o) return null;
-    // Reject states older than 30 minutes — user took too long.
+    // Reject states older than 30 minutes  -  user took too long.
     if (parsed.t && Date.now() - parsed.t > 30 * 60_000) return null;
     return {
       verifier: parsed.v,
@@ -118,13 +118,13 @@ export function unpackState(state: string): UnpackedState | null {
  * the VPS for the token to be usable from the VPS. The Anthropic-issued
  * code is pasted by the user, but we exchange it here, server-side.
  *
- * Anthropic's token endpoint quirks (verified via probe — 2026-04-24):
+ * Anthropic's token endpoint quirks (verified via probe  -  2026-04-24):
  *   • Wants application/json, NOT form-urlencoded
  *   • Wants the same `state` param sent on /authorize, in the body
  *     (this is non-standard OAuth but Anthropic enforces it)
  *
  * Pasted codes from platform.claude.com/oauth/code/callback look like
- * `<authorization-code>#<state>` — we split on `#` and use the first half.
+ * `<authorization-code>#<state>`  -  we split on `#` and use the first half.
  */
 export async function exchangeCodeForToken(input: {
   code: string;

@@ -9,11 +9,11 @@ export const runtime = "nodejs";
  *
  * Returns recent activity for this org's Telegram connection so the
  * Connections page can show "is the bot actually working" at a glance:
- *   • bot_id, bot_username (safe to expose — public-ish identifiers)
- *   • last_inbound_at  — last time anyone messaged the bot
- *   • last_outbound_at — last time an agent replied
- *   • messages_today   — count of inbound messages since UTC midnight
- *   • pending          — count of inbox messages with no reply yet
+ *   • bot_id, bot_username (safe to expose  -  public-ish identifiers)
+ *   • last_inbound_at   -  last time anyone messaged the bot
+ *   • last_outbound_at  -  last time an agent replied
+ *   • messages_today    -  count of inbound messages since UTC midnight
+ *   • pending           -  count of inbox messages with no reply yet
  *
  * Returns connected:false if no Telegram connection exists.
  */

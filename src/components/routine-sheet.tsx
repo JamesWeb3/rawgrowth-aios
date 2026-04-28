@@ -246,7 +246,7 @@ export function RoutineSheet(props: Props) {
 
             <Field
               label="Instructions"
-              hint="Describe what the agent should do when triggered. Written as a playbook in plain English — the agent will follow it using its connected tools."
+              hint="Describe what the agent should do when triggered. Written as a playbook in plain English  -  the agent will follow it using its connected tools."
             >
               <Textarea
                 value={form.description}
@@ -279,7 +279,7 @@ export function RoutineSheet(props: Props) {
                   {agents.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.name}
-                      {a.title ? ` — ${a.title}` : ""}
+                      {a.title ? `  -  ${a.title}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -497,7 +497,7 @@ function ScheduleTriggerConfig({
       )}
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
         <Clock3 className="size-3" />
-        Cron <code className="font-mono text-foreground">{trigger.cron || "—"}</code>
+        Cron <code className="font-mono text-foreground">{trigger.cron || " - "}</code>
         <span className="text-border">•</span>
         <span className="font-mono">{trigger.timezone}</span>
       </div>

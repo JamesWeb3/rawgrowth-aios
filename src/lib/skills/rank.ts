@@ -4,8 +4,8 @@ import { SKILLS_CATALOG, type Skill, type SkillCategory } from "./catalog";
  * Ranking + auto-pick helpers for the RawClaw skills catalog.
  *
  * Two callers:
- *   - `skills_catalog_list` MCP tool — free-text search with a sort
- *   - `agents_create` MCP tool — auto-assigns 1-3 skills to new agents
+ *   - `skills_catalog_list` MCP tool  -  free-text search with a sort
+ *   - `agents_create` MCP tool  -  auto-assigns 1-3 skills to new agents
  *     based on role / title / description / department
  *
  * Keeping the scoring function in one place avoids drift when we tune
@@ -60,7 +60,7 @@ const ROLE_TO_CATEGORY: Record<string, SkillCategory> = {
   sdr: "sales",
   ops: "ops",
   designer: "design",
-  // general: no preferred category — fall back to text match only.
+  // general: no preferred category  -  fall back to text match only.
 };
 
 const MIN_SCORE = 3; // threshold below which we don't auto-assign
@@ -98,7 +98,7 @@ export function autoPickSkillsForAgent(input: {
   if (!query) return [];
 
   const ranked = rankCatalog(query);
-  // Prefer skills whose category matches the role-derived category —
+  // Prefer skills whose category matches the role-derived category  - 
   // bubble them up within the top slice.
   if (roleCategory) {
     ranked.sort((a, b) => {

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [v3, main]
+  pull_request:
+    branches: [v3, main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run test:unit
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build
+        env:
+          NEXTAUTH_SECRET: ci-placeholder-secret-32-chars-long
+          NEXTAUTH_URL: http://localhost:3000
+          JWT_SECRET: ci-placeholder-jwt-secret-32-chars
+          DATABASE_URL: postgres://fake:fake@localhost:5432/fake
+          NEXT_PUBLIC_SUPABASE_URL: https://fake.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: fake
+          DEPLOY_MODE: v3

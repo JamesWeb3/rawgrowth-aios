@@ -89,7 +89,7 @@ export function RoutinesView() {
       <EmptyState
         icon={Repeat}
         title="No routines yet"
-        description="Build automated workflows — trigger on a schedule, webhook, or integration event; let an agent execute the playbook you write."
+        description="Build automated workflows  -  trigger on a schedule, webhook, or integration event; let an agent execute the playbook you write."
         action={
           <RoutineSheet triggerSize="lg" triggerLabel="Create first routine" />
         }
@@ -133,7 +133,7 @@ export function RoutinesView() {
               routine={r}
               assigneeLabel={
                 assignee
-                  ? `${assignee.name}${assignee.title ? ` — ${assignee.title}` : ""}`
+                  ? `${assignee.name}${assignee.title ? `  -  ${assignee.title}` : ""}`
                   : "Unassigned"
               }
               isActive={isActive}
@@ -183,7 +183,7 @@ function RoutineRow({
   return (
     <div className="group rounded-xl border border-border bg-card/50 transition-colors hover:border-primary/30 hover:bg-card">
       <div className="flex items-stretch">
-        {/* Main content — click to edit */}
+        {/* Main content  -  click to edit */}
         <button
           type="button"
           onClick={onEdit}
@@ -201,7 +201,7 @@ function RoutineRow({
                     className={cn(
                       "gap-1",
                       isActive && "bg-primary/15 text-primary",
-                      isPaused && "bg-amber-500/15 text-amber-400",
+                      isPaused && "bg-muted/40 text-muted-foreground",
                       !isActive && !isPaused && "bg-white/5 text-muted-foreground",
                     )}
                   >
@@ -209,7 +209,7 @@ function RoutineRow({
                       className={cn(
                         "size-1.5 rounded-full",
                         isActive && "bg-primary shadow-[0_0_6px_rgba(12,191,106,.6)]",
-                        isPaused && "bg-amber-400",
+                        isPaused && "bg-muted-foreground/80",
                         !isActive && !isPaused && "bg-muted-foreground/60",
                       )}
                     />
@@ -228,7 +228,7 @@ function RoutineRow({
               {enabledTriggers.length === 0 && (
                 <Badge
                   variant="secondary"
-                  className="bg-amber-500/10 text-[10px] text-amber-400"
+                  className="bg-muted/30 text-[10px] text-muted-foreground"
                 >
                   No active triggers
                 </Badge>

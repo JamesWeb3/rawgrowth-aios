@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "invalid or expired state — start the connection flow over.",
+            "invalid or expired state  -  start the connection flow over.",
         },
         { status: 400 },
       );

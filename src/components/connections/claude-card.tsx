@@ -328,17 +328,17 @@ export function ClaudeConnectionCard() {
               </div>
               <p className="mt-1.5 text-[11px] text-muted-foreground">
                 The code looks like a long string with a <code>#</code> in
-                the middle. Paste the whole thing — we&apos;ll handle the
+                the middle. Paste the whole thing  -  we&apos;ll handle the
                 formatting.
               </p>
             </div>
           </div>
         ) : (
-          // Step 1: not started — show the Connect button + intro
+          // Step 1: not started  -  show the Connect button + intro
           <div className="space-y-4">
             <p className="text-[12.5px] leading-relaxed text-muted-foreground">
               Click below to sign in with your Claude Max. Anthropic will
-              show you a code on a callback page — paste it back here and
+              show you a code on a callback page  -  paste it back here and
               you&apos;re done.
             </p>
             <Button
