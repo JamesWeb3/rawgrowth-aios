@@ -82,24 +82,31 @@ export function NewDepartmentForm() {
         console.error("[departments/new] telegram seed threw:", seedErr);
       }
 
-      for (const sub of subs) {
-        if (!sub.name.trim()) continue;
-        const r = await fetch("/api/agents", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            name: sub.name.trim(),
-            title: sub.title.trim() || sub.name.trim(),
-            role: "sub_agent",
-            department: deptSlug,
-            reportsTo: managerId,
+      // Sub-agents only depend on managerId, not each other - fan out in
+      // parallel so the user isn't waiting N x 150ms on a creation flow
+      // they're staring at. Promise.all rejects on the first failure,
+      // matching the original throw semantics.
+      await Promise.all(
+        subs
+          .filter((s) => s.name.trim())
+          .map(async (sub) => {
+            const r = await fetch("/api/agents", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                name: sub.name.trim(),
+                title: sub.title.trim() || sub.name.trim(),
+                role: "sub_agent",
+                department: deptSlug,
+                reportsTo: managerId,
+              }),
+            });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              throw new Error(`Sub-agent create failed: ${j.error ?? r.statusText}`);
+            }
           }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          throw new Error(`Sub-agent create failed: ${j.error ?? r.statusText}`);
-        }
-      }
+      );
 
       window.location.href = "/agents/tree";
     } catch (err) {

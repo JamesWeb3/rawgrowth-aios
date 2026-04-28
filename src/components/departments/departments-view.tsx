@@ -33,11 +33,15 @@ type DeptMeta = {
   brand: string;
 };
 
-// Brand-only palette per CTO brief §P08  -  primary green for active
-// departments, muted neutral for the rest. No Tailwind blue/indigo/
-// yellow/orange/purple/pink anywhere.
+// Brand-only palette per CTO brief §P08: primary green for active
+// departments, muted neutral for the rest.
 const PRIMARY = "#0cbf6a";
 const MUTED = "#94a3b8";
+
+// Sentinel passed back from the dept Select when the operator picks
+// "Remove from department". Centralised here so the value and the
+// guard-check (line below in onValueChange) can never drift.
+const UNASSIGN_VALUE = "__unassign__";
 
 const SEEDED_META: Record<string, DeptMeta> = {
   marketing: { label: "Marketing", icon: Megaphone, brand: PRIMARY },
@@ -49,7 +53,7 @@ const SEEDED_META: Record<string, DeptMeta> = {
 
 const CUSTOM_BRANDS = [PRIMARY, MUTED];
 
-function metaFor(dept: string): DeptMeta {
+export function metaFor(dept: string): DeptMeta {
   if (dept in SEEDED_META) return SEEDED_META[dept];
   // Stable per-slug hue + capitalised label fallback.
   const brand =
@@ -63,11 +67,6 @@ function metaFor(dept: string): DeptMeta {
   };
 }
 
-const META = new Proxy(SEEDED_META, {
-  get(_target, key: string) {
-    return metaFor(key);
-  },
-}) as Record<string, DeptMeta>;
 
 export function DepartmentsView() {
   const { agents, updateAgent } = useAgents();
@@ -92,7 +91,7 @@ export function DepartmentsView() {
       await updateAgent(agent.id, { department: dept });
       toast.success(
         dept
-          ? `Moved ${agent.name} to ${META[dept].label}`
+          ? `Moved ${agent.name} to ${metaFor(dept).label}`
           : `Unassigned ${agent.name}`,
       );
     } catch (err) {
@@ -132,7 +131,7 @@ function DepartmentCard({
   agents: Agent[];
   onReassign: (agent: Agent, dept: Department | null) => void;
 }) {
-  const meta = META[department];
+  const meta = metaFor(department);
   const Icon = meta.icon;
 
   return (
@@ -245,21 +244,19 @@ function AgentRow({
       </div>
       <Select
         value={agent.department ?? undefined}
-        onValueChange={(v) => onReassign(agent, v === "__unassign__" ? null : (v as Department))}
+        onValueChange={(v) => onReassign(agent, v === UNASSIGN_VALUE ? null : (v as Department))}
       >
         <SelectTrigger className="h-8 w-36 bg-input/40 text-[12px]">
           <SelectValue placeholder="Unassigned" />
         </SelectTrigger>
         <SelectContent>
-          {Array.from(new Set([...DEPARTMENTS, ...Object.keys(SEEDED_META)]))
-            .sort()
-            .map((d) => (
-              <SelectItem key={d} value={d}>
-                {metaFor(d).label}
-              </SelectItem>
-            ))}
+          {DEPARTMENTS.map((d) => (
+            <SelectItem key={d} value={d}>
+              {metaFor(d).label}
+            </SelectItem>
+          ))}
           {agent.department && (
-            <SelectItem value="__unassign__" className="text-muted-foreground">
+            <SelectItem value={UNASSIGN_VALUE} className="text-muted-foreground">
               Remove from department
             </SelectItem>
           )}

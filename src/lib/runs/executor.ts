@@ -30,20 +30,18 @@ const MAX_STEPS = 10;
 // Wall-clock cap per CTO brief §02 + R05. Drains cleanly via AbortController.
 const WALL_CLOCK_MS = 120_000;
 
-/** Map our agent.runtime strings to AI SDK model ids. */
-function runtimeToModel(runtime: string): string {
-  switch (runtime) {
-    case "claude-opus-4-7":
-      return "claude-opus-4-7";
-    case "claude-haiku-4-5":
-    case "claude-haiku-4-5-20251001":
-      return "claude-haiku-4-5";
-    case "claude-sonnet-4-5":
-      return "claude-sonnet-4-5";
-    case "claude-sonnet-4-6":
-    default:
-      return "claude-sonnet-4-6";
-  }
+// Aliases for runtime ids that the AI SDK expects in a different form.
+// Anything not in this map is passed through verbatim; unknown values
+// (e.g. gpt-4.1, gemini-2.5-pro) reach @ai-sdk/anthropic as-is and the
+// SDK will surface its own error rather than silently routing to Sonnet.
+const RUNTIME_ALIASES: Record<string, string> = {
+  "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+};
+const DEFAULT_RUNTIME = "claude-sonnet-4-6";
+
+function runtimeToModel(runtime: string | null | undefined): string {
+  if (!runtime) return DEFAULT_RUNTIME;
+  return RUNTIME_ALIASES[runtime] ?? runtime;
 }
 
 /**
@@ -115,7 +113,7 @@ export async function executeRun(runId: string): Promise<void> {
         result = { text, steps: [] as unknown[] };
       } else {
         result = await generateText({
-          model: anthropic(runtimeToModel(agent?.runtime ?? "claude-sonnet-4-6")),
+          model: anthropic(runtimeToModel(agent?.runtime)),
           system: systemPrompt,
           prompt: userMessage,
           tools,

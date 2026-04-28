@@ -98,10 +98,7 @@ function padToTarget(v: number[]): number[] {
       `Embedding ${v.length}d exceeds target ${TARGET_DIMENSIONS}d; refusing to truncate.`,
     );
   }
-  const out = new Array<number>(TARGET_DIMENSIONS);
-  for (let i = 0; i < v.length; i++) out[i] = v[i];
-  for (let i = v.length; i < TARGET_DIMENSIONS; i++) out[i] = 0;
-  return out;
+  return [...v, ...new Array<number>(TARGET_DIMENSIONS - v.length).fill(0)];
 }
 
 // Lazy-loaded singleton for the local fastembed model. Cold-init is

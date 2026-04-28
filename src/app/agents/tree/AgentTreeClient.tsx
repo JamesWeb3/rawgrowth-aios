@@ -16,6 +16,7 @@ import "reactflow/dist/style.css";
 import { AddSubAgentModal } from "@/components/agents/AddSubAgentModal";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
 import { wouldCreateCycle } from "@/lib/tree";
+import { metaFor as deptMeta } from "@/components/departments/departments-view";
 
 type AgentNode = {
   id: string;
@@ -127,7 +128,7 @@ function AgentNodeCard({ data }: NodeProps<NodeData>) {
             (agent.department ? "text-primary" : "text-[var(--text-muted)]")
           }
         >
-          {agent.department ?? "Unassigned"}
+          {agent.department ? deptMeta(agent.department).label : "Unassigned"}
         </span>
       </div>
       <div className="mt-3 flex items-center gap-2">

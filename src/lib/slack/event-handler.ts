@@ -182,7 +182,7 @@ async function fireBinding(input: {
   if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
     const ack = result.reply
       .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-      .replace(/^\s*[ - -]\s*/, "")
+      .replace(/^\s*-\s*/, "")
       .trim() || "Working on it";
 
     // Post the immediate "🔧 working on it" so the user sees life

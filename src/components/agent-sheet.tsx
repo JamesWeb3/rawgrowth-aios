@@ -34,6 +34,7 @@ import {
 import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent } from "@/lib/agents/dto";
 import { DEPARTMENTS } from "@/lib/agents/dto";
+import { metaFor as deptMeta } from "@/components/departments/departments-view";
 import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
 import { ConnectorsPicker } from "@/components/agents/connectors-picker";
 import { useConfig } from "@/lib/use-config";
@@ -51,10 +52,6 @@ type FormState = {
   writePolicy: WritePolicy;
   department: string;
 };
-
-function deptLabel(slug: string): string {
-  return slug.charAt(0).toUpperCase() + slug.slice(1).replace(/_/g, " ");
-}
 
 function emptyForm(): FormState {
   return {
@@ -295,7 +292,7 @@ export function AgentSheet(props: Props) {
                     .sort()
                     .map((d) => (
                       <SelectItem key={d} value={d}>
-                        {deptLabel(d)}
+                        {deptMeta(d).label}
                       </SelectItem>
                     ))}
                 </SelectContent>

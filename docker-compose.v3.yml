@@ -59,11 +59,19 @@ services:
       # and embedding endpoints (text-embedding-3-large).
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
+      # fastembed (default RAG provider) caches the ~33MB ONNX model in
+      # this directory. Volume-mounted so docker rebuilds + container
+      # recreations don't re-download from HuggingFace + re-pay the
+      # ~10s cold-start.
+      FASTEMBED_CACHE_DIR: /var/lib/rawclaw/fastembed
+
       # First-boot seed of this VPS's organization. Runs once; no-op on reboots.
       SEED_ORG_NAME: ${SEED_ORG_NAME}
       SEED_ORG_SLUG: ${SEED_ORG_SLUG}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+    volumes:
+      - fastembed-cache:/var/lib/rawclaw/fastembed
 
   caddy:
     image: caddy:2-alpine
@@ -83,3 +91,4 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+  fastembed-cache:

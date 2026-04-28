@@ -307,7 +307,7 @@ export async function POST(
       if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
         const acknowledgement = result.reply
           .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-          .replace(/^\s*[ - -]\s*/, "")
+          .replace(/^\s*-\s*/, "")
           .trim() || "Working on it";
 
         if (placeholderId !== null) {
@@ -487,7 +487,7 @@ export async function POST(
       if (result.reply.startsWith(CHAT_HANDOFF_SENTINEL_PREFIX)) {
         const acknowledgement = result.reply
           .slice(CHAT_HANDOFF_SENTINEL_PREFIX.length)
-          .replace(/^\s*[ - -]\s*/, "")
+          .replace(/^\s*-\s*/, "")
           .trim() || "Working on it";
 
         if (placeholderId !== null) {
