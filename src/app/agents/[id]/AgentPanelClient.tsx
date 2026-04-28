@@ -168,14 +168,14 @@ export function AgentPanelClient({
 
   return (
     <div className="flex h-screen flex-col bg-[var(--brand-bg)]">
-      <header className="shrink-0 border-b border-[var(--line)] px-6 py-4">
-        <p className="text-xs uppercase tracking-widest text-primary">
-          {agent.department ?? "Agent"}
-        </p>
-        <h1 className="mt-1 text-2xl text-[var(--text-strong)]">
+      <header className="shrink-0 border-b border-[var(--line)] px-6 py-5">
+        <h1 className="font-serif text-3xl font-normal tracking-tight text-foreground">
           {agent.name}
         </h1>
-        <p className="text-sm text-[var(--text-muted)]">{agent.title}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {agent.title}
+          {agent.department ? ` · ${agent.department}` : ""}
+        </p>
       </header>
 
       <nav className="shrink-0 border-b border-[var(--line)] px-6">

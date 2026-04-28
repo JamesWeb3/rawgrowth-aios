@@ -15,21 +15,21 @@ export default async function OnboardingPage() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <header className="rg-fade-in shrink-0 border-b border-[rgba(255,255,255,0.06)] bg-[#0A1210]/60">
-        <div className="mx-auto flex max-w-2xl items-center gap-3 px-6 py-4 md:px-8">
+        <div className="mx-auto flex max-w-2xl items-center gap-3 px-6 py-5 md:px-8">
           <Image
             src="/rawgrowth.png"
             alt="Rawgrowth"
-            width={28}
-            height={28}
+            width={32}
+            height={32}
             priority
-            className="h-7 w-7 object-contain"
+            className="h-8 w-8 object-contain"
           />
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium uppercase tracking-widest text-[#0CBF6A]">
+            <h1 className="font-serif text-2xl font-normal tracking-tight text-foreground">
               Onboarding
-            </p>
-            <p className="text-sm text-[rgba(255,255,255,0.85)]">
-              Let's get to know your business
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Let's get to know your business.
             </p>
           </div>
         </div>

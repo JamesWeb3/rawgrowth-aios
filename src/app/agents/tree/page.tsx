@@ -38,11 +38,11 @@ export default async function AgentTreePage() {
 
   return (
     <div className="flex h-screen flex-col bg-[var(--brand-bg)]">
-      <header className="shrink-0 border-b border-[var(--line)] px-6 py-4">
-        <h1 className="text-sm uppercase tracking-widest text-primary">
-          Agent Tree
+      <header className="shrink-0 border-b border-[var(--line)] px-6 py-5">
+        <h1 className="font-serif text-3xl font-normal tracking-tight text-foreground">
+          Agent tree
         </h1>
-        <p className="text-lg text-[var(--text-strong)]">
+        <p className="mt-1 text-sm text-muted-foreground">
           Your org chart. Right-click any node to add a sub-agent.
         </p>
       </header>
