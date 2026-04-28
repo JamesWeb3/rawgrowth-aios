@@ -33,6 +33,7 @@ export default async function AgentTreePage() {
     role: a.role,
     department: a.department ?? null,
     reportsTo: a.reportsTo ?? null,
+    isDepartmentHead: a.isDepartmentHead,
     telegramStatus: telegramByAgent.get(a.id) ?? null,
   }));
 

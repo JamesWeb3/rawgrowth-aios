@@ -12,6 +12,7 @@ import ReactFlow, {
   type NodeProps,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { useSWRConfig } from "swr";
 
 import { AddSubAgentModal } from "@/components/agents/AddSubAgentModal";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
@@ -25,11 +26,13 @@ type AgentNode = {
   role: string | null;
   department: string | null;
   reportsTo: string | null;
+  isDepartmentHead: boolean;
   telegramStatus: string | null;
 };
 
 type NodeData = {
   agent: AgentNode;
+  isDropTarget: boolean;
   onAddSub: (
     parentId: string,
     parentName: string,
@@ -82,6 +85,7 @@ function layout(agents: AgentNode[]): {
     position: pos.get(a.id) ?? { x: 0, y: 0 },
     data: {
       agent: a,
+      isDropTarget: false,
       // Will be rebound in the client component via a shared ref.
       onAddSub: () => {},
       onAttachTelegram: () => {},
@@ -103,12 +107,24 @@ function layout(agents: AgentNode[]): {
 
 // ── custom node ─────────────────────────────────────────────────────────
 function AgentNodeCard({ data }: NodeProps<NodeData>) {
-  const { agent, onAddSub, onAttachTelegram } = data;
+  const { agent, isDropTarget, onAddSub, onAttachTelegram } = data;
   const isManager = !agent.reportsTo;
+
+  // Hover-target outline uses brand primary token, never tailwind palette.
+  // We use `outline` (not box-shadow) for the live drop target ring so the
+  // brand lint rule that bans flat tailwind shadows stays clean. Only
+  // `border-color` and `outline-color` transition - we avoid `transition-all`
+  // to keep paint cheap on a graph that may have 20+ cards.
+  const outlineClasses = isDropTarget
+    ? "border-primary outline outline-2 outline-offset-1 outline-[var(--brand-primary-ring)]"
+    : "border-[var(--line-strong)] outline outline-2 outline-offset-1 outline-transparent";
 
   return (
     <div
-      className="min-w-[220px] rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-4 py-3 text-left shadow-[0_1px_0_rgba(12,191,106,0.08)]"
+      className={
+        "min-w-[220px] rounded-md border bg-[var(--brand-surface)] px-4 py-3 text-left shadow-[0_1px_0_rgba(12,191,106,0.08)] transition-[border-color,outline-color] duration-150 cursor-grab active:cursor-grabbing " +
+        outlineClasses
+      }
       onContextMenu={(e) => {
         e.preventDefault();
         onAddSub(agent.id, agent.name, agent.department);
@@ -175,6 +191,7 @@ export function AgentTreeClient({
   initialNodes: AgentNode[];
 }) {
   const [agents, setAgents] = useState<AgentNode[]>(initialNodes);
+  const [hoverTargetId, setHoverTargetId] = useState<string | null>(null);
   const [addModalFor, setAddModalFor] = useState<{
     parentId: string;
     parentName: string;
@@ -185,6 +202,11 @@ export function AgentTreeClient({
     name: string;
     role: "manager" | "sub-agent";
   } | null>(null);
+
+  // SWR shares the agents cache across the dashboard. After a successful
+  // reparent we invalidate `/api/agents` so other panes (departments view,
+  // org chart sidebar) refetch instead of showing stale parents.
+  const { mutate: globalMutate } = useSWRConfig();
 
   const onAddSub = useCallback(
     (parentId: string, parentName: string, parentDepartment: string | null) => {
@@ -202,10 +224,52 @@ export function AgentTreeClient({
   const graph = useMemo(() => {
     const { nodes, edges } = layout(agents);
     for (const n of nodes) {
-      n.data = { ...n.data, onAddSub, onAttachTelegram };
+      n.data = {
+        ...n.data,
+        isDropTarget: n.id === hoverTargetId,
+        onAddSub,
+        onAttachTelegram,
+      };
     }
     return { nodes, edges };
-  }, [agents, onAddSub, onAttachTelegram]);
+  }, [agents, hoverTargetId, onAddSub, onAttachTelegram]);
+
+  // Find the node whose bounding box contains (cx, cy), excluding `selfId`.
+  // React Flow exposes `getIntersectingNodes` only via useReactFlow inside a
+  // ReactFlowProvider; we don't wrap the component in one yet, so we walk
+  // graph.nodes manually. positionAbsolute is preferred over `position` because
+  // nested subflows would otherwise resolve relative to a parent node.
+  const hitTest = useCallback(
+    (cx: number, cy: number, selfId: string): Node<NodeData> | null => {
+      for (const candidate of graph.nodes) {
+        if (candidate.id === selfId) continue;
+        const w = candidate.width ?? DEFAULT_NODE_W;
+        const h = candidate.height ?? DEFAULT_NODE_H;
+        const p = candidate.positionAbsolute ?? candidate.position;
+        if (cx >= p.x && cx <= p.x + w && cy >= p.y && cy <= p.y + h) {
+          return candidate;
+        }
+      }
+      return null;
+    },
+    [graph.nodes],
+  );
+
+  // Live highlight while dragging - cheap because hoverTargetId only flips
+  // when the pointer crosses a card boundary, which re-renders just two cards.
+  const onNodeDrag = useCallback(
+    (_event: unknown, dragged: Node<NodeData>) => {
+      const w = dragged.width ?? DEFAULT_NODE_W;
+      const h = dragged.height ?? DEFAULT_NODE_H;
+      const p = dragged.positionAbsolute ?? dragged.position;
+      const cx = p.x + w / 2;
+      const cy = p.y + h / 2;
+      const target = hitTest(cx, cy, dragged.id);
+      const nextId = target ? target.id : null;
+      setHoverTargetId((prev) => (prev === nextId ? prev : nextId));
+    },
+    [hitTest],
+  );
 
   // ── drag-to-reorganize ───────────────────────────────────────────────
   // When a node is dropped, find which other node's bounding box contains
@@ -214,31 +278,29 @@ export function AgentTreeClient({
   // the server. Updates are optimistic; we revert on PATCH failure.
   const onNodeDragStop = useCallback(
     async (_event: unknown, dropped: Node<NodeData>) => {
-      // reactflow v11 populates width/height after measurement. Fall back
-      // to the card's intrinsic min size for the very first interaction.
+      // Always clear the live-drag highlight before any early return.
+      setHoverTargetId(null);
+
       const droppedW = dropped.width ?? DEFAULT_NODE_W;
       const droppedH = dropped.height ?? DEFAULT_NODE_H;
-      const cx = dropped.position.x + droppedW / 2;
-      const cy = dropped.position.y + droppedH / 2;
-
-      // Iterate the latest graph snapshot, skipping the dragged node.
-      let target: Node<NodeData> | null = null;
-      for (const candidate of graph.nodes) {
-        if (candidate.id === dropped.id) continue;
-        const w = candidate.width ?? DEFAULT_NODE_W;
-        const h = candidate.height ?? DEFAULT_NODE_H;
-        const x0 = candidate.position.x;
-        const y0 = candidate.position.y;
-        if (cx >= x0 && cx <= x0 + w && cy >= y0 && cy <= y0 + h) {
-          target = candidate;
-          break;
-        }
-      }
+      const p = dropped.positionAbsolute ?? dropped.position;
+      const cx = p.x + droppedW / 2;
+      const cy = p.y + droppedH / 2;
+      const target = hitTest(cx, cy, dropped.id);
 
       const newParentId: string | null = target ? target.id : null;
       const current = agents.find((a) => a.id === dropped.id);
       if (!current) return;
       if (current.reportsTo === newParentId) return;
+
+      // Department Head guard: heads anchor the top of their department, so
+      // never let one be dragged under a non-head (or any other agent). They
+      // can still be promoted to root by dropping on empty canvas.
+      if (current.isDepartmentHead && newParentId !== null) {
+        toast.error("Department Heads cannot be reparented under another agent.");
+        setAgents((prev) => [...prev]);
+        return;
+      }
 
       // Local cycle guard before we even touch the network.
       if (newParentId !== null) {
@@ -274,6 +336,9 @@ export function AgentTreeClient({
           };
           throw new Error(body.error ?? `HTTP ${res.status}`);
         }
+        // Bust the SWR cache so any panel using useAgents() (departments,
+        // sidebar, agent list) picks up the new parent edge on next render.
+        await globalMutate("/api/agents");
         toast.success(
           newParentId
             ? `Reassigned to report to ${target?.data.agent.name}.`
@@ -288,7 +353,7 @@ export function AgentTreeClient({
         toast.error(`Reparent failed: ${(err as Error).message}`);
       }
     },
-    [agents, graph.nodes],
+    [agents, globalMutate, hitTest],
   );
 
   return (
@@ -297,6 +362,7 @@ export function AgentTreeClient({
         nodes={graph.nodes}
         edges={graph.edges}
         nodeTypes={nodeTypes}
+        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         fitView
         fitViewOptions={{ padding: 0.18, includeHiddenNodes: false }}
@@ -324,6 +390,8 @@ export function AgentTreeClient({
                 role: created.role ?? null,
                 department: created.department ?? null,
                 reportsTo: addModalFor.parentId,
+                // Sub-agents created from this modal are never heads.
+                isDepartmentHead: false,
                 telegramStatus: null,
               },
             ]);
