@@ -37,7 +37,7 @@ Run once for the whole fleet (not per-VPS).
      "sb_publishable_..." \
      "sb_secret_..."
    ```
-4. Apply migrations `0001` through `0030` via the Supabase SQL editor,
+4. Apply migrations `0001` through `0032` via the Supabase SQL editor,
    or point `scripts/migrate.ts` at the connection string:
    ```bash
    DATABASE_URL=postgres://... npm run self-hosted:migrate
