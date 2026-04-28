@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
           ? body.writePolicy
           : undefined,
       department: body.department ?? null,
+      isDepartmentHead: body.isDepartmentHead ?? false,
     });
     return NextResponse.json({ agent }, { status: 201 });
   } catch (err) {

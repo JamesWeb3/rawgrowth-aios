@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
 import {
   Bot,
   Crown,
@@ -13,6 +14,7 @@ import {
   Pencil,
   Network,
 } from "lucide-react";
+import { SiTelegram } from "react-icons/si";
 
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +24,13 @@ import { AGENT_ROLES, type AgentStatus } from "@/lib/agents/constants";
 import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent } from "@/lib/agents/dto";
 import { getConnector } from "@/lib/connectors";
+import { jsonFetcher } from "@/lib/swr";
+
+type AgentBotSummary = {
+  id: string;
+  agent_id: string;
+  bot_username: string | null;
+};
 
 // ────────────────────────── Role icons ──────────────────────────
 
@@ -136,9 +145,11 @@ function buildTree(agents: Agent[]): AgentNode[] {
 function AgentCard({
   agent,
   onEdit,
+  bot,
 }: {
   agent: Agent;
   onEdit: (agent: Agent) => void;
+  bot: AgentBotSummary | null;
 }) {
   // Visual-only role override: agents with reports_to IS NULL are
   // managers regardless of the DB role column (which defaults to
@@ -153,13 +164,19 @@ function AgentCard({
       : baseRole;
   const Icon = roleIconMap[role.icon as RoleIconName] ?? Bot;
   const status = statusStyle[agent.status];
+  const isHead = agent.isDepartmentHead;
 
   return (
     <button
       type="button"
       onClick={() => onEdit(agent)}
-      // eslint-disable-next-line rawgrowth-brand/banned-tailwind-defaults -- arbitrary shadow value is brand-compliant; box-shadow in transition list
-      className="group relative w-60 rounded-xl border border-border bg-card/70 p-4 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-[0_12px_40px_rgba(12,191,106,.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      // eslint-disable-next-line rawgrowth-brand/banned-tailwind-defaults -- transition list explicit; head amber border is intentional accent for department-head emphasis
+      className={cn(
+        "group relative w-60 rounded-xl border bg-card/70 p-4 text-left transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_40px_rgba(12,191,106,.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isHead
+          ? "border-amber-400/40 hover:border-amber-300/60 shadow-[0_0_0_1px_rgba(251,191,36,.05)_inset]"
+          : "border-border hover:border-primary/40",
+      )}
     >
       <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100">
         <div className="flex size-6 items-center justify-center rounded-md bg-primary/15 text-primary">
@@ -168,12 +185,24 @@ function AgentCard({
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary">
+        <div
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-lg border",
+            isHead
+              ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+              : "border-border bg-primary/10 text-primary",
+          )}
+        >
           <Icon className="size-5" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold text-foreground">
-            {agent.name}
+          <div className="flex items-center gap-1.5">
+            <div className="truncate text-[13px] font-semibold text-foreground">
+              {agent.name}
+            </div>
+            {isHead && (
+              <Crown className="size-3 shrink-0 text-amber-400" />
+            )}
           </div>
           <div className="truncate text-[11px] text-muted-foreground">
             {agent.title || role.label}
@@ -186,12 +215,34 @@ function AgentCard({
           <span className={cn("size-1.5 rounded-full", status.dotClass)} />
           {status.label}
         </Badge>
+        {isHead && (
+          <Badge
+            variant="secondary"
+            className="bg-amber-400/15 text-[10px] text-amber-300"
+          >
+            Head
+          </Badge>
+        )}
         <Badge
           variant="secondary"
           className="bg-white/5 text-[10px] text-muted-foreground"
         >
           {role.label}
         </Badge>
+        {bot && (
+          <Badge
+            variant="secondary"
+            title={
+              bot.bot_username
+                ? `Telegram bot @${bot.bot_username}`
+                : "Telegram bot connected"
+            }
+            className="gap-1 bg-[#26A5E4]/15 text-[10px] text-[#7FCBEB]"
+          >
+            <SiTelegram className="size-2.5" />
+            {bot.bot_username ? `@${bot.bot_username}` : "Bot"}
+          </Badge>
+        )}
       </div>
 
       <ConnectorsRow
@@ -261,16 +312,22 @@ const SUBTREE_GAP = 32; // horizontal gap between sibling subtrees
 function TreeNode({
   node,
   onEdit,
+  botByAgentId,
 }: {
   node: AgentNode;
   onEdit: (agent: Agent) => void;
+  botByAgentId: Map<string, AgentBotSummary>;
 }) {
   const hasChildren = node.children.length > 0;
   const multipleChildren = node.children.length > 1;
 
   return (
     <div className="flex flex-col items-center">
-      <AgentCard agent={node} onEdit={onEdit} />
+      <AgentCard
+        agent={node}
+        onEdit={onEdit}
+        bot={botByAgentId.get(node.id) ?? null}
+      />
 
       {hasChildren && (
         <>
@@ -308,7 +365,11 @@ function TreeNode({
                     <div className="w-px bg-border" />
                   </div>
 
-                  <TreeNode node={child} onEdit={onEdit} />
+                  <TreeNode
+                    node={child}
+                    onEdit={onEdit}
+                    botByAgentId={botByAgentId}
+                  />
                 </div>
               );
             })}
@@ -324,6 +385,19 @@ function TreeNode({
 export function OrgChart() {
   const { agents, hasHydrated } = useAgents();
 
+  // Per-Department-Head Telegram bots — surfaced inline on the agent card
+  // so the operator can see at a glance which heads are reachable via DM.
+  const { data: botsData } = useSWR<{ bots: AgentBotSummary[] }>(
+    "/api/connections/agent-telegram",
+    jsonFetcher,
+    { refreshInterval: 60_000 },
+  );
+  const botByAgentId = useMemo(() => {
+    const m = new Map<string, AgentBotSummary>();
+    for (const b of botsData?.bots ?? []) m.set(b.agent_id, b);
+    return m;
+  }, [botsData]);
+
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const editingAgent = useMemo(
     () => agents.find((a) => a.id === editingAgentId) ?? null,
@@ -332,6 +406,38 @@ export function OrgChart() {
 
   const tree = useMemo(() => buildTree(agents), [agents]);
   const runningCount = agents.filter((a) => a.status === "running").length;
+  const headsCount = agents.filter((a) => a.isDepartmentHead).length;
+
+  // Auto-fit: when the natural chart width exceeds the visible canvas,
+  // scale the whole tree down so it fits without horizontal scrolling.
+  // Floor at 0.4 so cards don't get unreadable on dense orgs.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const recalc = () => {
+      const canvas = canvasRef.current;
+      const content = contentRef.current;
+      if (!canvas || !content) return;
+      // Reset transform before measuring so we get the natural size.
+      content.style.transform = "none";
+      const naturalW = content.scrollWidth;
+      const naturalH = content.scrollHeight;
+      // 80px = total horizontal padding inside the canvas (p-10 each side).
+      const available = canvas.clientWidth - 80;
+      const next =
+        naturalW <= available ? 1 : Math.max(0.4, available / naturalW);
+      setScale(next);
+      setContentHeight(naturalH * next);
+    };
+    recalc();
+    if (!canvasRef.current) return;
+    const ro = new ResizeObserver(recalc);
+    ro.observe(canvasRef.current);
+    return () => ro.disconnect();
+  }, [tree, agents.length]);
 
   if (!hasHydrated) {
     return (
@@ -366,19 +472,52 @@ export function OrgChart() {
             </span>{" "}
             running
           </span>
+          {headsCount > 0 && (
+            <>
+              <span className="text-border">•</span>
+              <span className="inline-flex items-center gap-1">
+                <Crown className="size-3 text-amber-400" />
+                <span className="font-semibold text-foreground">
+                  {headsCount}
+                </span>{" "}
+                head{headsCount === 1 ? "" : "s"}
+              </span>
+            </>
+          )}
         </div>
         <AgentSheet />
       </div>
 
-      {/* Chart canvas  -  scrolls horizontally for wide orgs */}
-      <div className="relative overflow-x-auto rounded-2xl border border-border bg-card/30 p-10">
+      {/* Chart canvas. Auto-scales the tree down to fit the available
+          width instead of horizontally scrolling. Wider orgs get smaller
+          cards rather than off-screen ones. */}
+      <div
+        ref={canvasRef}
+        className="relative overflow-hidden rounded-2xl border border-border bg-card/30 p-10"
+        style={contentHeight !== null ? { minHeight: contentHeight + 80 } : undefined}
+      >
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/20 to-transparent" />
+        {scale < 1 && (
+          <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-border bg-background/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+            {Math.round(scale * 100)}%
+          </div>
+        )}
         <div
-          className="mx-auto flex items-start justify-center gap-8"
-          style={{ minWidth: Math.max(CARD_WIDTH, tree.length * (CARD_WIDTH + 64)) }}
+          ref={contentRef}
+          className="mx-auto flex items-start justify-center gap-8 origin-top"
+          style={{
+            minWidth: Math.max(CARD_WIDTH, tree.length * (CARD_WIDTH + 64)),
+            transform: `scale(${scale})`,
+            width: "fit-content",
+          }}
         >
           {tree.map((root) => (
-            <TreeNode key={root.id} node={root} onEdit={(a) => setEditingAgentId(a.id)} />
+            <TreeNode
+              key={root.id}
+              node={root}
+              onEdit={(a) => setEditingAgentId(a.id)}
+              botByAgentId={botByAgentId}
+            />
           ))}
         </div>
       </div>

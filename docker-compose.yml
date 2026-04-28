@@ -81,6 +81,11 @@ services:
       NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
       NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
       NANGO_WEBHOOK_SECRET: ${NANGO_WEBHOOK_SECRET:-}
+      # OpenAI key — currently used by /lib/agent/voice-transcribe.ts to
+      # turn Telegram voice notes into text via Whisper. Optional: if
+      # missing, voice notes degrade to a "voice transcription needs
+      # OpenAI configured" reply rather than a silent failure.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # First-boot seed (no-op once any org exists)
       SEED_ORG_NAME: ${SEED_ORG_NAME:-Local Dev}
       SEED_ORG_SLUG: ${SEED_ORG_SLUG:-local-dev}
