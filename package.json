@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test:smoke": "playwright test tests/smoke.spec.ts",
+    "test:smoke:routes": "./scripts/smoke-routes.sh",
     "test:unit": "tsx --test tests/unit/*.spec.ts",
     "dev": "next dev",
     "dev:bootstrap": "./scripts/dev-bootstrap.sh",
