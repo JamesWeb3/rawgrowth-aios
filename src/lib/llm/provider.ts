@@ -53,8 +53,8 @@ export type ChatMessage = {
 /**
  * OpenAI Function-calling tool shape  -  the abstraction's canonical form.
  * For anthropic-api we translate to AI SDK `tool()` wrappers; for
- * anthropic-cli we drop them with a warning (CLI tools come from the
- * operator's claude_desktop_config, not request-time wiring).
+ * anthropic-cli we serialize the schema into the system prompt and parse
+ * tool calls back out of fenced ```tool_call``` blocks.
  */
 export type OpenAITool = ChatCompletionTool;
 
@@ -295,19 +295,30 @@ async function runAnthropicApi(req: ChatRequest): Promise<ChatResponse> {
 /**
  * Spawn `claude --print --dangerously-skip-permissions` and pipe the
  * merged system+user prompt as stdin. Reuses the host's Claude Max OAuth
- * token in ~/.claude, no API key on the request path. Tools come from the
- * operator's claude_desktop_config MCP registration; if the caller passes
- * `tools` in CLI mode we log a one-line warning and proceed without them.
+ * token in ~/.claude, no API key on the request path.
+ *
+ * Tool-handling path (when `req.tools` is non-empty):
+ *  1. A tool manifest is appended to the system prompt describing every
+ *     tool's name, description, and JSON-schema input.
+ *  2. The model is instructed to emit each tool call as a fenced block:
+ *     ```tool_call name=<tool_name>
+ *     {"key":"value"}
+ *     ```
+ *     Plain-text assistant prose may be mixed in around the blocks.
+ *  3. `parseCliToolCalls` extracts every block into a `ChatToolCall`,
+ *     strips the blocks from the visible text, and returns both. Invalid
+ *     JSON inside a block surfaces as a placeholder ChatToolCall with
+ *     `_parseError` so the caller can return a clean error rather than
+ *     crash.
+ *
+ * Empty `tools` keeps the legacy text-only path: no manifest is injected
+ * and no parsing is performed (safe for the Telegram chatReply path).
  *
  * abortSignal is honoured: if it fires mid-spawn we SIGTERM the child,
  * which lets the executor's wall-clock cap drain a stuck CLI.
  */
 async function runAnthropicCli(req: ChatRequest): Promise<ChatResponse> {
-  if (req.tools && req.tools.length > 0) {
-    console.warn(
-      `[llm/provider] anthropic-cli mode ignores ${req.tools.length} request-time tool(s); register MCP server in ~/.claude/claude_desktop_config.json instead`,
-    );
-  }
+  const hasTools = !!(req.tools && req.tools.length > 0);
   // XML tags instead of "User:"/"Assistant:" labels so Claude doesn't
   // continue the pattern with a fake user turn ("User: telegram") at the
   // end of its reply. The CLI sees a single message; reply is whatever
@@ -320,17 +331,105 @@ async function runAnthropicCli(req: ChatRequest): Promise<ChatResponse> {
         }>`,
     )
     .join("\n");
-  const merged = [
-    req.system,
+
+  const systemBlocks: string[] = [req.system];
+  if (hasTools) {
+    systemBlocks.push("", formatToolManifest(req.tools!));
+  }
+  systemBlocks.push(
     "",
     "<conversation>",
     conversation,
     "</conversation>",
     "",
-    "Reply with ONLY your next assistant message. Do not add user/assistant labels, do not continue the conversation past one turn, do not echo the input back.",
-  ].join("\n");
-  const text = await spawnClaudeCli(merged, req.abortSignal);
-  return { text, toolCalls: [] };
+    hasTools
+      ? "Reply with ONLY your next assistant message. You MAY emit one or more ```tool_call``` blocks (as described above) before, between, or after plain-text prose. Do not add user/assistant labels, do not continue the conversation past one turn, do not echo the input back."
+      : "Reply with ONLY your next assistant message. Do not add user/assistant labels, do not continue the conversation past one turn, do not echo the input back.",
+  );
+  const merged = systemBlocks.join("\n");
+
+  const raw = await spawnClaudeCli(merged, req.abortSignal);
+  if (!hasTools) return { text: raw, toolCalls: [] };
+  return parseCliToolCalls(raw);
+}
+
+/**
+ * Build the tool-manifest section appended to the CLI system prompt.
+ * Format is intentionally compact: one ## header per tool plus a single
+ * fenced JSON-schema block. The contract section at the bottom tells the
+ * model exactly how to emit calls so `parseCliToolCalls` can extract them.
+ */
+function formatToolManifest(tools: OpenAITool[]): string {
+  const lines: string[] = ["<tools>"];
+  for (const t of tools) {
+    const name = t.function.name;
+    const desc = (t.function.description ?? "").trim();
+    const schema = t.function.parameters ?? { type: "object", properties: {} };
+    lines.push(`## ${name}`);
+    if (desc) lines.push(desc);
+    lines.push("Input schema:");
+    lines.push("```json");
+    lines.push(JSON.stringify(schema));
+    lines.push("```");
+    lines.push("");
+  }
+  lines.push("</tools>");
+  lines.push("");
+  lines.push("To call a tool, emit ONE fenced block per call, formatted exactly as:");
+  lines.push("```tool_call name=<tool_name>");
+  lines.push("<JSON-input-on-one-or-more-lines>");
+  lines.push("```");
+  lines.push(
+    "Use only tool names listed above. Input MUST be valid JSON. Tool calls and plain-text prose may be mixed in any order.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Strip ```tool_call name=...``` fenced blocks out of `rawText` and return
+ * the cleaned text plus a `ChatToolCall` per block. Invalid JSON inside a
+ * block becomes a placeholder ChatToolCall with `input = { _raw, _parseError }`
+ * so the caller's tool dispatcher can surface a clean error message rather
+ * than the whole route crashing.
+ *
+ * Exported for unit testing - the same function powers `runAnthropicCli`.
+ */
+export function parseCliToolCalls(rawText: string): ChatResponse {
+  const toolCalls: ChatToolCall[] = [];
+  // Match a fenced block whose info-string starts with "tool_call name=<name>".
+  // Non-greedy body up to the closing ``` on its own line (or end of string).
+  const blockRe = /```tool_call\s+name=([\w_]+)\s*\n([\s\S]*?)\n```/g;
+  let cleaned = "";
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let idx = 0;
+  while ((m = blockRe.exec(rawText)) !== null) {
+    cleaned += rawText.slice(lastIndex, m.index);
+    const name = m[1];
+    const body = m[2];
+    let input: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(body);
+      input =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : { _value: parsed };
+    } catch (e) {
+      input = {
+        _raw: body,
+        _parseError: e instanceof Error ? e.message : String(e),
+      };
+    }
+    toolCalls.push({ id: `${name}_${idx}`, name, input });
+    idx += 1;
+    lastIndex = m.index + m[0].length;
+  }
+  cleaned += rawText.slice(lastIndex);
+  // Collapse stretches of whitespace left behind by stripped blocks so the
+  // user-facing reply doesn't have giant gaps. We only touch consecutive
+  // blank lines, never the model's own line breaks within prose.
+  const text = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  return { text, toolCalls };
 }
 
 /**
