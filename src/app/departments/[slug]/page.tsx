@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { DashboardStats } from "@/components/dashboard/stats";
 import { OrgChart } from "@/components/org-chart";
+import { AgentSheet } from "@/components/agent-sheet";
 import { getOrgContext } from "@/lib/auth/admin";
 import { DEFAULT_DEPARTMENTS } from "@/lib/agents/dto";
 import { DepartmentAgentList } from "./DepartmentAgentList";
@@ -47,6 +48,12 @@ export default async function DepartmentDetailPage({
     <PageShell
       title={title}
       description={`${title} agents and KPIs`}
+      actions={
+        <AgentSheet
+          triggerLabel={`+ Hire into ${title}`}
+          triggerSize="sm"
+        />
+      }
     >
       <DashboardStats department={slug} />
 
