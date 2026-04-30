@@ -189,6 +189,42 @@ export async function seedDefaultAgentsForOrg(
     subAgentsSkipped: 0,
   };
 
+  // CEO agent at the root of the org chart (Chris brief P1 #10). One per
+  // org, sits above every department head, brokered via agent_invoke.
+  // Idempotency: by-role lookup so renames don't dup.
+  const { data: existingCeo } = await db
+    .from("rgaios_agents")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("role", "ceo")
+    .is("department", null)
+    .is("reports_to", null)
+    .maybeSingle();
+
+  if (!existingCeo?.id) {
+    const ceoPayload: AgentInsert = {
+      organization_id: organizationId,
+      name: "Atlas",
+      title: "Chief AI Coordinator",
+      role: "ceo",
+      description:
+        "Routes work between department heads, synthesizes cross-department briefs, escalates to the human owner only when policy demands it.",
+      runtime: DEFAULT_AGENT_RUNTIME,
+      department: null,
+      is_department_head: false,
+      reports_to: null,
+    };
+    const { error: ceoErr } = await db
+      .from("rgaios_agents")
+      .insert(ceoPayload);
+    if (ceoErr) {
+      console.error(
+        "[seedDefaultAgents] CEO insert failed:",
+        ceoErr.message,
+      );
+    }
+  }
+
   for (const dept of DEFAULT_AGENT_SEED) {
     // Manager idempotency check.
     const { data: existingHead } = await db
