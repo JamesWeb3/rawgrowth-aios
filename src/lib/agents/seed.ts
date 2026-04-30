@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { DEFAULT_AGENT_RUNTIME } from "./constants";
 import type { AgentRole } from "./constants";
 import type { Database } from "@/lib/supabase/types";
+import { autoTrainAgent } from "@/lib/agents/auto-train";
 
 /**
  * Default agent seed for a fresh organization.
@@ -214,14 +215,22 @@ export async function seedDefaultAgentsForOrg(
       is_department_head: false,
       reports_to: null,
     };
-    const { error: ceoErr } = await db
+    const { data: ceoInserted, error: ceoErr } = await db
       .from("rgaios_agents")
-      .insert(ceoPayload);
-    if (ceoErr) {
+      .insert(ceoPayload)
+      .select("id")
+      .single();
+    if (ceoErr || !ceoInserted) {
       console.error(
         "[seedDefaultAgents] CEO insert failed:",
-        ceoErr.message,
+        ceoErr?.message,
       );
+    } else {
+      await autoTrainAgent({
+        orgId: organizationId,
+        agentId: ceoInserted.id,
+        roleLabel: "CEO",
+      });
     }
   }
 
@@ -265,6 +274,11 @@ export async function seedDefaultAgentsForOrg(
       }
       managerId = inserted.id;
       result.managersInserted += 1;
+      await autoTrainAgent({
+        orgId: organizationId,
+        agentId: managerId,
+        roleLabel: dept.manager.name,
+      });
     }
 
     for (const sub of dept.subAgents) {
@@ -289,17 +303,24 @@ export async function seedDefaultAgentsForOrg(
         is_department_head: false,
         reports_to: managerId,
       };
-      const { error: subErr } = await db
+      const { data: subInserted, error: subErr } = await db
         .from("rgaios_agents")
-        .insert(subPayload);
-      if (subErr) {
+        .insert(subPayload)
+        .select("id")
+        .single();
+      if (subErr || !subInserted) {
         console.error(
           `[seedDefaultAgents] sub-agent insert failed for ${sub.name}:`,
-          subErr.message,
+          subErr?.message,
         );
         continue;
       }
       result.subAgentsInserted += 1;
+      await autoTrainAgent({
+        orgId: organizationId,
+        agentId: subInserted.id,
+        roleLabel: sub.name,
+      });
     }
   }
 
