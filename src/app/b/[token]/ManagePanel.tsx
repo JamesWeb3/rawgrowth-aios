@@ -43,7 +43,21 @@ export function ManagePanel({ token, justConfirmed }: { token: string; justConfi
     }
   }
 
-  if (error) return <p className="text-sm text-red-400">{error}</p>;
+  if (error) {
+    const isNotFound = /not_found|404/i.test(error);
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center">
+        <p className="font-serif text-2xl tracking-tight text-foreground">
+          {isNotFound ? "We couldn't find that booking" : "Something went wrong"}
+        </p>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+          {isNotFound
+            ? "The link may have expired, been cancelled, or already rescheduled. Check your latest calendar invite for an updated link."
+            : error}
+        </p>
+      </div>
+    );
+  }
   if (!booking) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
   return (
