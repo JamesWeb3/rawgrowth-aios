@@ -31,9 +31,19 @@ export function AppShell({
   orgs?: Org[];
 }) {
   const pathname = usePathname();
-  const isAuthRoute = pathname?.startsWith("/auth");
+  // Routes that render outside the authed AppShell:
+  // - /auth/* (signin / forgot password / etc)
+  // - /book/* (public booking pages by org slug)
+  // - /b/* (public booking manage links by token)
+  // The shell mounts authed sidebar widgets (SidebarDepartments, badges)
+  // that fetch /api/* on hydration; on a public page this triggers a
+  // 307 -> /auth/signin client-side and the public page never renders.
+  const isPublicRoute =
+    pathname?.startsWith("/auth") ||
+    pathname?.startsWith("/book") ||
+    pathname?.startsWith("/b/");
 
-  if (isAuthRoute) {
+  if (isPublicRoute) {
     return <>{children}</>;
   }
 
