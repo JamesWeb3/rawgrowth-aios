@@ -55,9 +55,11 @@ function layout(agents: AgentNode[]): {
   nodes: Node<NodeData>[];
   edges: Edge[];
 } {
-  // Simple tiered layout: depth in the reports_to tree picks the y band,
-  // sibling order picks x. Works up to ~30 nodes; above that we'd need
-  // a real layout engine (d3-dag, elk).
+  // Tiered layout with subtree-width centering: each node is centered
+  // over its leaves (the leaf row defines the x-axis), and parents
+  // sit above their children. Avoids the previous "global cursor"
+  // layout that put Atlas + 5 dept heads + 8 subs all on one wide
+  // horizontal line, which fitView then scaled to unreadable.
   const byParent = new Map<string | null, AgentNode[]>();
   for (const a of agents) {
     const arr = byParent.get(a.reportsTo) ?? [];
@@ -66,18 +68,36 @@ function layout(agents: AgentNode[]): {
   }
 
   const pos = new Map<string, { x: number; y: number }>();
-  const ROW = 160;
-  const COL = 260;
-  let cursor = 0;
-  function place(parentId: string | null, depth: number) {
-    const kids = byParent.get(parentId) ?? [];
-    for (const kid of kids) {
-      pos.set(kid.id, { x: cursor * COL, y: depth * ROW });
-      cursor += 1;
-      place(kid.id, depth + 1);
-    }
+  const ROW = 180;
+  const COL = 280;
+
+  // Count leaves under each subtree (used to allocate x-width).
+  const leafCount = new Map<string, number>();
+  function countLeaves(id: string): number {
+    if (leafCount.has(id)) return leafCount.get(id)!;
+    const kids = byParent.get(id) ?? [];
+    const n = kids.length === 0 ? 1 : kids.reduce((sum, k) => sum + countLeaves(k.id), 0);
+    leafCount.set(id, n);
+    return n;
   }
-  place(null, 0);
+  for (const a of agents) countLeaves(a.id);
+
+  // Place: each parent's x is the centroid of its children's x-range.
+  let leafCursor = 0;
+  function place(node: AgentNode, depth: number) {
+    const kids = byParent.get(node.id) ?? [];
+    if (kids.length === 0) {
+      pos.set(node.id, { x: leafCursor * COL, y: depth * ROW });
+      leafCursor += 1;
+      return;
+    }
+    for (const k of kids) place(k, depth + 1);
+    const childPositions = kids.map((k) => pos.get(k.id)!.x);
+    const minX = Math.min(...childPositions);
+    const maxX = Math.max(...childPositions);
+    pos.set(node.id, { x: (minX + maxX) / 2, y: depth * ROW });
+  }
+  for (const root of byParent.get(null) ?? []) place(root, 0);
 
   const nodes: Node<NodeData>[] = agents.map((a) => ({
     id: a.id,
