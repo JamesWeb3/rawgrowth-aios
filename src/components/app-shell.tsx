@@ -38,9 +38,12 @@ export function AppShell({
   // The shell mounts authed sidebar widgets (SidebarDepartments, badges)
   // that fetch /api/* on hydration; on a public page this triggers a
   // 307 -> /auth/signin client-side and the public page never renders.
+  // Trailing slash matters: `/book/...` is the public booking surface,
+  // but `/booking/...` is the *admin* booking module which still needs
+  // the AppShell sidebar.
   const isPublicRoute =
-    pathname?.startsWith("/auth") ||
-    pathname?.startsWith("/book") ||
+    pathname?.startsWith("/auth/") ||
+    pathname?.startsWith("/book/") ||
     pathname?.startsWith("/b/");
 
   if (isPublicRoute) {
