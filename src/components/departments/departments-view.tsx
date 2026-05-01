@@ -9,6 +9,7 @@ import {
   Wallet,
   UserRound,
   HelpCircle,
+  Crown,
   Code2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -99,11 +100,20 @@ export function DepartmentsView() {
     }
   }
 
+  // The CEO sits intentionally outside any department - pull it out of
+  // the unassigned bucket so the dept view doesn't make Atlas look like
+  // a problem to fix.
+  const ceoAgents = grouped.unassigned.filter((a) => a.role === "ceo");
+  const trulyUnassigned = grouped.unassigned.filter((a) => a.role !== "ceo");
+
   return (
     <div className="space-y-8">
-      {grouped.unassigned.length > 0 && (
+      {ceoAgents.length > 0 && (
+        <CoordinatorSection agents={ceoAgents} />
+      )}
+      {trulyUnassigned.length > 0 && (
         <UnassignedSection
-          agents={grouped.unassigned}
+          agents={trulyUnassigned}
           onReassign={reassign}
         />
       )}
@@ -179,6 +189,52 @@ function DepartmentCard({
             ))}
           </ul>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CoordinatorSection({ agents }: { agents: Agent[] }) {
+  return (
+    <Card className="border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5">
+      <CardContent className="p-5">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-lg border border-[var(--brand-primary)]/40 bg-[var(--brand-primary)]/12 text-[var(--brand-primary)]">
+            <Crown className="size-5" />
+          </div>
+          <div>
+            <h3 className="text-[15px] font-semibold text-foreground">
+              Coordinator
+            </h3>
+            <div className="text-[11.5px] text-muted-foreground">
+              Sits above every department - routes work to the right head.
+            </div>
+          </div>
+        </div>
+        <ul className="space-y-2">
+          {agents.map((a) => (
+            <li
+              key={a.id}
+              className="flex items-center justify-between rounded-md border border-[var(--brand-primary)]/20 bg-card/40 p-3"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex size-8 items-center justify-center rounded-md border border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/12 text-[var(--brand-primary)]">
+                  <Crown className="size-4" />
+                </div>
+                <div>
+                  <div className="text-[13px] font-medium text-foreground">{a.name}</div>
+                  <div className="text-[11px] text-muted-foreground">{a.title}</div>
+                </div>
+              </div>
+              <Badge
+                variant="secondary"
+                className="bg-[var(--brand-primary)]/15 text-[10px] text-[var(--brand-primary)]"
+              >
+                CEO
+              </Badge>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );
