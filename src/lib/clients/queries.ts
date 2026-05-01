@@ -126,10 +126,22 @@ export async function createClient(
   const slug = await resolveSlug(slugify(name));
   const mcpToken = generateMcpToken();
 
-  // Create org first so we have the id for the owner's organization_id
+  // Create org first so we have the id for the owner's organization_id.
+  // We also flip the four core pillars on by default so the dashboard
+  // shows the per-pillar charts immediately - we seed Marketing/Sales/
+  // Fulfilment/Finance dept heads + sub-agents below, so flag mismatch
+  // would surface a misleading "No pillars wired yet" empty state.
   const { data: org, error: orgErr } = await db
     .from("rgaios_organizations")
-    .insert({ name, slug, mcp_token: mcpToken })
+    .insert({
+      name,
+      slug,
+      mcp_token: mcpToken,
+      marketing: true,
+      sales: true,
+      fulfilment: true,
+      finance: true,
+    })
     .select("id, name, slug, mcp_token")
     .single();
   if (orgErr || !org) {

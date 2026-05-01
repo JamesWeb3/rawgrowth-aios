@@ -9,6 +9,12 @@ import { Label } from "@/components/ui/label";
 
 type Calendar = { id: string; summary: string; primary: boolean };
 
+const browserTimezone = (): string => {
+  if (typeof Intl === "undefined") return "UTC";
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
+  catch { return "UTC"; }
+};
+
 export function CalendarBindingForm() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -18,6 +24,8 @@ export function CalendarBindingForm() {
   const [calendarSummary, setCalendarSummary] = useState("");
   const [defaultTimezone, setDefaultTimezone] = useState("UTC");
   const [saving, setSaving] = useState(false);
+  const [browserTz, setBrowserTz] = useState<string | null>(null);
+  useEffect(() => { setBrowserTz(browserTimezone()); }, []);
 
   useEffect(() => {
     (async () => {
@@ -75,13 +83,24 @@ export function CalendarBindingForm() {
       )}
 
       {calendars.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No calendars listed. Connect Google Calendar in{" "}
-          <a href="/connections" className="underline">
-            Connections
-          </a>{" "}
-          first.
-        </p>
+        <div className="rounded-md border border-dashed border-border bg-card/30 p-6 text-center">
+          <p className="text-sm font-medium text-foreground">
+            Google Calendar not connected
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+            Authorise Google Calendar first - we use the OAuth grant from{" "}
+            <a href="/connections" className="text-primary hover:underline">
+              Connections
+            </a>
+            . Once connected, this page will list your calendars.
+          </p>
+          <a
+            href="/connections"
+            className="mt-3 inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80"
+          >
+            Open Connections
+          </a>
+        </div>
       ) : (
         <div>
           <Label className="mb-2 block text-xs font-medium uppercase tracking-[1.5px] text-muted-foreground">
@@ -115,6 +134,15 @@ export function CalendarBindingForm() {
           onChange={(e) => setDefaultTimezone(e.target.value)}
           placeholder="America/Sao_Paulo"
         />
+        {browserTz && browserTz !== defaultTimezone && (
+          <button
+            type="button"
+            onClick={() => setDefaultTimezone(browserTz)}
+            className="mt-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] text-primary hover:bg-primary/25"
+          >
+            Use {browserTz}
+          </button>
+        )}
       </div>
 
       <Button onClick={onSave} disabled={saving || !calendarId}>

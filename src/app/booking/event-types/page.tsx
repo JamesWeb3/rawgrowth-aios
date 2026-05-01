@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CalendarPlus } from "lucide-react";
 
 import { PageShell } from "@/components/page-shell";
 import { getOrgContext } from "@/lib/auth/admin";
@@ -26,9 +27,24 @@ export default async function BookingEventTypesPage() {
       }
     >
       {eventTypes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No event types yet. Create one to get a public booking link.
-        </p>
+        <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center">
+          <CalendarPlus className="mx-auto size-9 text-primary/70" strokeWidth={1.4} />
+          <h3 className="mt-4 font-serif text-xl tracking-tight text-foreground">
+            No event types yet
+          </h3>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            An event type is a bookable slot definition (e.g. "30-min discovery
+            call"). Each one becomes a public link guests can grab time on.
+            Pin one to an agent and the agent gets a system message on every
+            confirmed booking.
+          </p>
+          <Link
+            href="/booking/event-types/new"
+            className="mt-5 inline-flex h-8 items-center rounded-[min(var(--radius-md),12px)] bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+          >
+            Create first event type
+          </Link>
+        </div>
       ) : (
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {eventTypes.map((e) => (

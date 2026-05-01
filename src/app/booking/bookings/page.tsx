@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CalendarRange } from "lucide-react";
 
 import { PageShell } from "@/components/page-shell";
 import { getOrgContext } from "@/lib/auth/admin";
@@ -14,7 +16,22 @@ export default async function BookingsPage() {
   return (
     <PageShell title="Bookings" description="All confirmed, cancelled, and rescheduled bookings.">
       {bookings.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No bookings yet.</p>
+        <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center">
+          <CalendarRange className="mx-auto size-9 text-primary/70" strokeWidth={1.4} />
+          <h3 className="mt-4 font-serif text-xl tracking-tight text-foreground">
+            No bookings yet
+          </h3>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Confirmed slots from your public booking pages land here, with the
+            guest's contact info, the agent that was pinged, and the Meet link.
+          </p>
+          <Link
+            href="/booking/event-types"
+            className="mt-5 inline-flex h-8 items-center rounded-[min(var(--radius-md),12px)] border border-border px-3 text-sm hover:border-primary/40"
+          >
+            See event types
+          </Link>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-sm">
