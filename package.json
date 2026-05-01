@@ -22,7 +22,8 @@
     "self-hosted:logs": "docker compose logs -f app",
     "client:provision": "./scripts/provision-vps.sh",
     "client:update": "./scripts/update-vps.sh",
-    "client:cc-install": "./scripts/cc-install.sh"
+    "client:cc-install": "./scripts/cc-install.sh",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",
@@ -83,6 +84,7 @@
   "overrides": {
     "path-to-regexp": "^6.3.0",
     "postcss": "^8.5.10",
+    "tar": "^7.5.11",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
@@ -96,6 +98,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "patch-package": "^8.0.1",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
