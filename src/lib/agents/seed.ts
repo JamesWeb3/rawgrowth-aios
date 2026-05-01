@@ -202,7 +202,8 @@ export async function seedDefaultAgentsForOrg(
     .is("reports_to", null)
     .maybeSingle();
 
-  if (!existingCeo?.id) {
+  let ceoId: string | null = existingCeo?.id ?? null;
+  if (!ceoId) {
     const ceoPayload: AgentInsert = {
       organization_id: organizationId,
       name: "Atlas",
@@ -226,9 +227,10 @@ export async function seedDefaultAgentsForOrg(
         ceoErr?.message,
       );
     } else {
+      ceoId = ceoInserted.id;
       await autoTrainAgent({
         orgId: organizationId,
-        agentId: ceoInserted.id,
+        agentId: ceoId,
         roleLabel: "CEO",
       });
     }
@@ -259,6 +261,7 @@ export async function seedDefaultAgentsForOrg(
         runtime: DEFAULT_AGENT_RUNTIME,
         department: dept.department,
         is_department_head: true,
+        reports_to: ceoId,
       };
       const { data: inserted, error: insertErr } = await db
         .from("rgaios_agents")
