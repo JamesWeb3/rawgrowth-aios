@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { PageShell } from "@/components/page-shell";
-import { Button } from "@/components/ui/button";
 import { getOrgContext } from "@/lib/auth/admin";
 import { listEventTypes } from "@/lib/booking/queries";
 
@@ -18,9 +17,12 @@ export default async function BookingEventTypesPage() {
       title="Event types"
       description="Slot definitions guests can book against."
       actions={
-        <Button size="sm" render={<Link href="/booking/event-types/new" />}>
+        <Link
+          href="/booking/event-types/new"
+          className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80"
+        >
           + New
-        </Button>
+        </Link>
       }
     >
       {eventTypes.length === 0 ? (
