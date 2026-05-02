@@ -435,6 +435,32 @@ export default function AgentChatTab({
         </div>
       )}
 
+      {/* Chat header strip - thread controls */}
+      {hydrated && messages.length > 0 && (
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--line)] bg-[var(--brand-surface)]/40 px-4 py-2">
+          <span className="text-[11px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
+            {messages.length} message{messages.length === 1 ? "" : "s"} in this thread
+          </span>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!confirm("Start a new chat? This clears the visible thread (the audit log on Memory tab is kept).")) return;
+              try {
+                await fetch(`/api/agents/${agentId}/chat`, { method: "DELETE" });
+                setMessages([]);
+                setInput("");
+                setError("");
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+            className="inline-flex h-6 items-center gap-1 rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-2 text-[11px] text-[var(--text-body)] hover:border-[var(--brand-primary)]/50 hover:text-[var(--brand-primary)]"
+          >
+            + New chat
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4">
         <div className="mx-auto max-w-2xl space-y-5 py-6">

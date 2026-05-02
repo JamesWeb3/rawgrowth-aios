@@ -72,6 +72,44 @@ export async function GET(
 }
 
 /**
+ * DELETE /api/agents/[id]/chat
+ * "New chat" - deletes all chat messages for this agent in the current
+ * org. Memory tab still shows the audit log; the chat tab starts fresh.
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getOrgContext();
+  if (!ctx?.activeOrgId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const orgId = ctx.activeOrgId;
+  const { id: agentId } = await params;
+  const db = supabaseAdmin();
+
+  const { data: agent } = await db
+    .from("rgaios_agents")
+    .select("id")
+    .eq("id", agentId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!agent) {
+    return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+  }
+
+  const { error } = await db
+    .from("rgaios_agent_chat_messages")
+    .delete()
+    .eq("organization_id", orgId)
+    .eq("agent_id", agentId);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
+}
+
+/**
  * POST /api/agents/[id]/chat
  *
  * Accepts { messages: [{role, content}, ...] }. Last entry is the new
@@ -217,6 +255,27 @@ export async function POST(
       extraPreamble +=
         (extraPreamble ? "\n\n" : "") +
         `Relevant context retrieved from this agent's uploaded files (cite when you use them):\n\n${block}`;
+    }
+
+    // Org-level knowledge files (markdown SOPs, playbooks). Uploaded
+    // on /knowledge and shared across every agent in the org.
+    const { data: knowledgeRows } = await db
+      .from("rgaios_knowledge_files")
+      .select("filename, content")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+    if (knowledgeRows && knowledgeRows.length > 0) {
+      const block = (knowledgeRows as Array<{ filename: string; content: string | null }>)
+        .filter((k) => k.content && k.content.trim().length > 0)
+        .map((k) => `# ${k.filename}\n${(k.content ?? "").slice(0, 2000)}`)
+        .slice(0, 5)
+        .join("\n\n---\n\n");
+      if (block.length > 0) {
+        extraPreamble +=
+          (extraPreamble ? "\n\n" : "") +
+          `Org knowledge files (markdown SOPs + playbooks the whole org shares):\n\n${block}`;
+      }
     }
 
     // Company corpus (rgaios_company_chunks - intake + brand + scrape +
