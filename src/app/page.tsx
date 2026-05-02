@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DashboardStats } from "@/components/dashboard/stats";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getPillarData } from "@/lib/dashboard/pillar-data";
 
 export const dynamic = "force-dynamic";
 
@@ -30,37 +31,23 @@ async function getPillarFlags() {
 
 const COLOR_PRIMARY = "#0cbf6a";
 
-// ────────────────────────── Mock data (sample) ─────────────────────────
-
-const marketingTrafficSpark = [4200, 4500, 4900, 5100, 5500, 5300, 5900, 6200, 6500, 7100, 7800, 8400];
-const salesFunnel = [
-  { label: "Leads", value: 2840, percent: 100 },
-  { label: "Qualified", value: 1120, percent: 39 },
-  { label: "Proposal", value: 420, percent: 15 },
-  { label: "Won", value: 148, percent: 5 },
-];
-const fulfilmentByRegion = [
-  { region: "North", orders: 205 },
-  { region: "South", orders: 174 },
-  { region: "East", orders: 234 },
-  { region: "West", orders: 182 },
-];
-const financeMonthly = [
-  { month: "Jul", revenue: 48, expenses: 30 },
-  { month: "Aug", revenue: 53, expenses: 33 },
-  { month: "Sep", revenue: 58, expenses: 35 },
-  { month: "Oct", revenue: 62, expenses: 36 },
-  { month: "Nov", revenue: 70, expenses: 41 },
-  { month: "Dec", revenue: 78, expenses: 44 },
-  { month: "Jan", revenue: 80, expenses: 46 },
-  { month: "Feb", revenue: 84, expenses: 48 },
-  { month: "Mar", revenue: 89, expenses: 51 },
-  { month: "Apr", revenue: 92, expenses: 52 },
-  { month: "May", revenue: 96, expenses: 55 },
-  { month: "Jun", revenue: 102, expenses: 58 },
-];
+// ────────────────────────── Pillar data ────────────────────────────────
+// Real data lands via getPillarData(orgId). When the org has zero rows
+// for a pillar (fresh client, nothing happened yet), the helper returns
+// null and the card renders an empty state instead of fake numbers.
 
 // ────────────────────────── Building blocks ────────────────────────────
+
+function EmptyPillar({ line1, line2 }: { line1: string; line2: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/10 p-6 text-center">
+      <p className="text-[12px] font-medium text-foreground">{line1}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+        {line2}
+      </p>
+    </div>
+  );
+}
 
 function PillarCard({
   title,
@@ -93,12 +80,6 @@ function PillarCard({
               <h3 className="text-[12px] font-semibold uppercase tracking-[1.8px] text-foreground">
                 {title}
               </h3>
-              <span
-                className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-primary"
-                title="Sample data until your integrations are connected"
-              >
-                Demo
-              </span>
             </div>
             <p className="mt-1.5 text-[12px] text-muted-foreground">{subtitle}</p>
           </div>
@@ -179,7 +160,7 @@ function HBar({ label, value, max, suffix = "" }: { label: string; value: number
 }
 
 // Two-series bar (revenue vs expenses per period). Tiny + readable.
-function StackedMonthlyBars({ data }: { data: typeof financeMonthly }) {
+function StackedMonthlyBars({ data }: { data: Array<{ month: string; revenue: number; expenses: number }> }) {
   const max = Math.max(...data.map((d) => d.revenue));
   return (
     <div className="grid grid-cols-12 gap-1.5">
@@ -233,6 +214,9 @@ export default async function DashboardPage() {
   const pillars = await getPillarFlags();
   const anyPillarOn =
     pillars.marketing || pillars.sales || pillars.fulfilment || pillars.finance;
+  const pillarData = ctx?.activeOrgId
+    ? await getPillarData(ctx.activeOrgId)
+    : { marketing: null, sales: null, fulfilment: null, finance: null };
   return (
     <PageShell
       title="Dashboard"
@@ -275,115 +259,186 @@ export default async function DashboardPage() {
         {pillars.marketing && (
           <PillarCard
             title="Marketing"
-            subtitle="Traffic this quarter"
-            kpi={{ value: "8.4K", delta: "+12.3% vs prev", positive: true }}
+            subtitle="Agent activity, last 12 weeks"
+            kpi={
+              pillarData.marketing
+                ? {
+                    value: String(
+                      pillarData.marketing.weekly.reduce(
+                        (s, v) => s + v,
+                        0,
+                      ),
+                    ),
+                    delta: `${pillarData.marketing.pctChange >= 0 ? "+" : ""}${pillarData.marketing.pctChange.toFixed(1)}% vs prev wk`,
+                    positive: pillarData.marketing.pctChange >= 0,
+                  }
+                : undefined
+            }
           >
-            <Sparkline values={marketingTrafficSpark} />
-            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-              <div className="rounded-md bg-muted/30 p-2.5">
-                <div className="font-serif text-lg text-foreground">312</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Leads / wk
+            {pillarData.marketing ? (
+              <>
+                <Sparkline values={pillarData.marketing.weekly} />
+                <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-md bg-muted/30 p-2.5">
+                    <div className="font-serif text-lg text-foreground">
+                      {pillarData.marketing.totalThisWeek}
+                    </div>
+                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      This wk
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-muted/30 p-2.5">
+                    <div className="font-serif text-lg text-foreground">
+                      {pillarData.marketing.prevWeek}
+                    </div>
+                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Prev wk
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-muted/30 p-2.5">
+                    <div className="font-serif text-lg text-foreground">
+                      {Math.round(
+                        pillarData.marketing.weekly.reduce(
+                          (s, v) => s + v,
+                          0,
+                        ) / 12,
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Avg/wk
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-md bg-muted/30 p-2.5">
-                <div className="font-serif text-lg text-foreground">$24</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  CAC
-                </div>
-              </div>
-              <div className="rounded-md bg-muted/30 p-2.5">
-                <div className="font-serif text-lg text-foreground">2.4%</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Conv
-                </div>
-              </div>
-            </div>
+              </>
+            ) : (
+              <EmptyPillar
+                line1="No marketing activity yet"
+                line2="Chat with the Marketing Manager or fire a marketing routine to start populating this chart."
+              />
+            )}
           </PillarCard>
         )}
 
         {pillars.sales && (
           <PillarCard
             title="Sales"
-            subtitle="Pipeline this quarter"
-            kpi={{ value: "5.2%", delta: "lead → won rate", positive: true }}
+            subtitle="Pipeline funnel, last 30 days"
+            kpi={
+              pillarData.sales
+                ? {
+                    value: `${pillarData.sales.conversion}%`,
+                    delta: "lead → won rate",
+                    positive: pillarData.sales.conversion >= 0,
+                  }
+                : undefined
+            }
           >
-            <div className="space-y-3">
-              {salesFunnel.map((stage) => (
-                <div key={stage.label}>
-                  <div className="flex items-baseline justify-between text-[12px]">
-                    <span className="text-muted-foreground">{stage.label}</span>
-                    <span className="font-mono text-foreground">
-                      {stage.value.toLocaleString()}{" "}
-                      <span className="ml-1 text-[10px] text-muted-foreground">
-                        ({stage.percent}%)
+            {pillarData.sales ? (
+              <div className="space-y-3">
+                {pillarData.sales.funnel.map((stage) => (
+                  <div key={stage.label}>
+                    <div className="flex items-baseline justify-between text-[12px]">
+                      <span className="text-muted-foreground">{stage.label}</span>
+                      <span className="font-mono text-foreground">
+                        {stage.value.toLocaleString()}{" "}
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          ({stage.percent}%)
+                        </span>
                       </span>
-                    </span>
+                    </div>
+                    <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/30">
+                      <div
+                        className="h-full rounded-full bg-primary"
+                        style={{ width: `${stage.percent}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/30">
-                    <div
-                      className="h-full rounded-full bg-primary"
-                      style={{ width: `${stage.percent}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyPillar
+                line1="No sales runs yet"
+                line2="Hire an SDR / Sales Manager and assign a routine to start tracking the funnel."
+              />
+            )}
           </PillarCard>
         )}
 
         {pillars.fulfilment && (
           <PillarCard
             title="Fulfilment"
-            subtitle="Orders by region this week"
-            kpi={{ value: "847", delta: "+5.1% vs prev", positive: true }}
+            subtitle="Runs by ops/general agent, last 7 days"
+            kpi={
+              pillarData.fulfilment
+                ? {
+                    value: String(pillarData.fulfilment.totalThisWeek),
+                    delta: "tasks executed",
+                    positive: pillarData.fulfilment.totalThisWeek > 0,
+                  }
+                : undefined
+            }
           >
-            <div className="space-y-3">
-              {fulfilmentByRegion.map((r) => (
-                <HBar
-                  key={r.region}
-                  label={r.region}
-                  value={r.orders}
-                  max={Math.max(...fulfilmentByRegion.map((x) => x.orders))}
-                  suffix=" orders"
-                />
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-center">
-              <div className="rounded-md bg-muted/30 p-2.5">
-                <div className="font-serif text-lg text-foreground">94%</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  On-time
-                </div>
+            {pillarData.fulfilment ? (
+              <div className="space-y-3">
+                {pillarData.fulfilment.byAgent.map((r) => (
+                  <HBar
+                    key={r.region}
+                    label={r.region}
+                    value={r.orders}
+                    max={Math.max(
+                      ...pillarData.fulfilment!.byAgent.map((x) => x.orders),
+                    )}
+                    suffix=" runs"
+                  />
+                ))}
               </div>
-              <div className="rounded-md bg-muted/30 p-2.5">
-                <div className="font-serif text-lg text-foreground">2.1d</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Avg cycle
-                </div>
-              </div>
-            </div>
+            ) : (
+              <EmptyPillar
+                line1="No fulfilment runs yet"
+                line2="Assign routines to your Operations Manager or Project Coordinator. Each run lands here."
+              />
+            )}
           </PillarCard>
         )}
 
         {pillars.finance && (
           <PillarCard
             title="Finance"
-            subtitle="Revenue vs expenses, last 12 months ($K)"
-            kpi={{ value: "$38.2K", delta: "net profit / mo", positive: true }}
+            subtitle="Routine runs (succeeded vs failed) - last 12 months"
+            kpi={
+              pillarData.finance
+                ? {
+                    value: String(pillarData.finance.netThisMonth),
+                    delta: "net runs this month",
+                    positive: pillarData.finance.netThisMonth >= 0,
+                  }
+                : undefined
+            }
           >
-            <StackedMonthlyBars data={financeMonthly} />
-            <div className="mt-4 flex items-center justify-between text-[11px]">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="size-2 rounded-sm bg-primary" /> Revenue
-              </div>
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="size-2 rounded-sm bg-muted" /> Expenses
-              </div>
-              <div className="text-muted-foreground">
-                Margin: <span className="font-mono text-primary">42%</span>
-              </div>
-            </div>
+            {pillarData.finance ? (
+              <>
+                <StackedMonthlyBars data={pillarData.finance.monthly} />
+                <div className="mt-4 flex items-center justify-between text-[11px]">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="size-2 rounded-sm bg-primary" /> Succeeded
+                  </div>
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="size-2 rounded-sm bg-muted" /> Failed
+                  </div>
+                  <div className="text-muted-foreground">
+                    Success rate:{" "}
+                    <span className="font-mono text-primary">
+                      {pillarData.finance.marginPct}%
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <EmptyPillar
+                line1="No routine runs yet"
+                line2="Once routines start firing, monthly success/fail counts populate this chart."
+              />
+            )}
           </PillarCard>
         )}
       </div>
