@@ -1,5 +1,8 @@
+import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { dispatchRun } from "@/lib/runs/dispatch";
+import { chatReply } from "@/lib/agent/chat";
+import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 
 /**
  * Chat-driven task creation. The agent ends a reply with one or more
@@ -146,6 +149,13 @@ export async function extractAndCreateTasks(input: {
       .single();
     const runId = (run as { id: string } | null)?.id ?? null;
     if (runId) {
+      // Two paths:
+      //   1. dispatchRun (drain server / hosted after())
+      //   2. inline fallback: in dev/v3-without-drain, the dispatched
+      //      run sits pending forever. Run executeChatTask in
+      //      next/after so the request returns fast but the assignee
+      //      actually does the work via chatReply, output lands in
+      //      output_payload, status flips succeeded/failed.
       try {
         dispatchRun(runId, orgId);
       } catch (err) {
@@ -153,6 +163,16 @@ export async function extractAndCreateTasks(input: {
           `[tasks] dispatchRun failed for run ${runId}: ${(err as Error).message}`,
         );
       }
+      after(async () => {
+        await executeChatTask({
+          orgId,
+          runId,
+          assigneeAgentId: assignee.id,
+          title,
+          description,
+          delegatedByAgentId: speakerAgentId,
+        });
+      });
     }
 
     // Audit log so the activity feed picks it up.
@@ -182,4 +202,124 @@ export async function extractAndCreateTasks(input: {
   }
 
   return { visibleReply, tasks };
+}
+
+/**
+ * Execute a chat-created task inline. The assignee agent reads the
+ * task title + description as a user message, builds its full preamble
+ * (brand + RAG + persona), and replies. Output lands in
+ * rgaios_routine_runs.output_payload + assistant chat history so the
+ * Tasks tab can render the result alongside the routine.
+ *
+ * Idempotent on the run row's status field: if another worker (drain)
+ * picked it up first and flipped status away from 'pending' we bail.
+ */
+export async function executeChatTask(input: {
+  orgId: string;
+  runId: string;
+  assigneeAgentId: string;
+  title: string;
+  description: string;
+  delegatedByAgentId: string;
+}): Promise<void> {
+  const db = supabaseAdmin();
+  const startedAt = new Date().toISOString();
+
+  // Claim the row: only flip pending → running once. Skip if a drain
+  // worker already moved it.
+  const { data: claimed } = await db
+    .from("rgaios_routine_runs")
+    .update({ status: "running", started_at: startedAt } as never)
+    .eq("id", input.runId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return;
+
+  // Pull org name + assignee details
+  const { data: org } = await db
+    .from("rgaios_organizations")
+    .select("name")
+    .eq("id", input.orgId)
+    .maybeSingle();
+  const orgName = (org as { name: string } | null)?.name ?? null;
+
+  // Build preamble with task framing - lead with the actual task,
+  // then attach the standard agent preamble underneath.
+  const userMessage =
+    `[Task assigned to you]\nTitle: ${input.title}\n\nDescription: ${input.description}\n\nProduce the deliverable now. Be concrete - no "I'll get on it" language.`;
+
+  let extraPreamble = "";
+  try {
+    extraPreamble = await buildAgentChatPreamble({
+      orgId: input.orgId,
+      agentId: input.assigneeAgentId,
+      orgName,
+      queryText: userMessage,
+    });
+  } catch {}
+
+  const result = await chatReply({
+    organizationId: input.orgId,
+    organizationName: orgName,
+    chatId: 0,
+    userMessage,
+    publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    agentId: input.assigneeAgentId,
+    historyOverride: [],
+    extraPreamble,
+    noHandoff: true,
+  });
+
+  const completedAt = new Date().toISOString();
+  if (result.ok) {
+    await db
+      .from("rgaios_routine_runs")
+      .update({
+        status: "succeeded",
+        completed_at: completedAt,
+        output_payload: { reply: result.reply, executed_inline: true },
+      } as never)
+      .eq("id", input.runId);
+
+    // Mirror the output as an assistant chat message so the assignee's
+    // Chat tab shows the work that just happened (operator can scroll
+    // there to see the deliverable in context).
+    await db.from("rgaios_agent_chat_messages").insert({
+      organization_id: input.orgId,
+      agent_id: input.assigneeAgentId,
+      user_id: null,
+      role: "assistant",
+      content: `📋 ${input.title}\n\n${result.reply}`,
+      metadata: {
+        kind: "chat_task_output",
+        run_id: input.runId,
+        delegated_by: input.delegatedByAgentId,
+      },
+    } as never);
+
+    try {
+      await db.from("rgaios_audit_log").insert({
+        organization_id: input.orgId,
+        kind: "task_executed",
+        actor_type: "agent",
+        actor_id: input.assigneeAgentId,
+        detail: {
+          run_id: input.runId,
+          agent_id: input.assigneeAgentId,
+          title: input.title,
+          delegated_by: input.delegatedByAgentId,
+        },
+      } as never);
+    } catch {}
+  } else {
+    await db
+      .from("rgaios_routine_runs")
+      .update({
+        status: "failed",
+        completed_at: completedAt,
+        error: result.error,
+      } as never)
+      .eq("id", input.runId);
+  }
 }

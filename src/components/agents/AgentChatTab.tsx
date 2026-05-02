@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   Bot,
@@ -199,6 +200,7 @@ export default function AgentChatTab({
   agentRole,
   agentTitle,
 }: AgentChatTabProps) {
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -336,9 +338,11 @@ export default function AgentChatTab({
             setError(event.message || "Stream error");
           } else if (event.type === "tasks_created" && Array.isArray(event.tasks)) {
             // Surface the just-created tasks as inline assistant chips
-            // so the operator sees them land. The Tasks tab itself
-            // re-fetches on next mount; for live feedback in chat we
-            // append a system bubble.
+            // so the operator sees them land. router.refresh() also
+            // re-runs the server component so the Tasks tab picks up
+            // the new routine + run rows + executed output without a
+            // manual reload. Re-fires on a delay so the inline executor
+            // has a chance to flip status pending → succeeded first.
             const lines = (event.tasks as Array<{
               title: string;
               assigneeName: string;
@@ -350,6 +354,8 @@ export default function AgentChatTab({
                 content: `Created ${event.tasks.length} task${event.tasks.length === 1 ? "" : "s"}:\n${lines}`,
               },
             ]);
+            router.refresh();
+            setTimeout(() => router.refresh(), 8000);
           }
           // event.type === "done" is implicit; the reader exits when
           // the server closes the stream.
