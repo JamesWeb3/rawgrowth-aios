@@ -29,6 +29,17 @@ const nextConfig: NextConfig = {
     "onnxruntime-node",
     "@anush008/tokenizers",
   ],
+  // Auto-train + default-org seed read role-template starter MDs at
+  // runtime via fs.readFile from src/lib/agents/starter-content/. Next
+  // standalone output only copies files it can statically trace through
+  // imports - the .md files are read by string path so they don't get
+  // included. This silently broke the hire flow in prod (ENOENT). List
+  // them explicitly so they ship inside the standalone bundle.
+  outputFileTracingIncludes: {
+    "/api/agents": ["./src/lib/agents/starter-content/**/*"],
+    "/api/admin/clients": ["./src/lib/agents/starter-content/**/*"],
+    "/api/onboarding/chat": ["./src/lib/agents/starter-content/**/*"],
+  },
 };
 
 export default nextConfig;
