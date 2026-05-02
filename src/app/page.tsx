@@ -76,7 +76,7 @@ function PillarCard({
   children: ReactNode;
 }) {
   return (
-    <Card className="relative overflow-hidden border-border bg-card/40 backdrop-blur-sm transition-all hover:border-primary/30 hover:shadow-[0_0_32px_rgba(12,191,106,.06)]">
+    <Card className="relative overflow-hidden border-border bg-card/40 backdrop-blur-sm transition-[border-color,box-shadow] duration-200 hover:border-primary/30 hover:shadow-[0_0_32px_rgba(12,191,106,.06)]">
       <div
         className="pointer-events-none absolute inset-x-0 top-0 h-px"
         style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }}

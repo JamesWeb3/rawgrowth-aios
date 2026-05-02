@@ -31,9 +31,8 @@ through deliberate offer redesign + targeted distribution. Premium tier
 ## Voice & tone
 Direct. Operator-grade. We assume the reader runs a real business and is
 allergic to fluff. Sentences are short. Verbs are concrete. Numbers
-beat adjectives. We never say "leverage", "synergy", "unlock",
-"empower", "game-changer", "deep dive", "streamline", "utilize",
-"cutting-edge", "revolutionary", or "certainly".
+beat adjectives. We avoid the standard SaaS cliche set (full list lives
+in src/lib/brand/tokens.ts).
 
 ## Positioning
 We are the place founders go when their growth has plateaued and they

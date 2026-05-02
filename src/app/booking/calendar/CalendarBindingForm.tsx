@@ -25,6 +25,9 @@ export function CalendarBindingForm() {
   const [defaultTimezone, setDefaultTimezone] = useState("UTC");
   const [saving, setSaving] = useState(false);
   const [browserTz, setBrowserTz] = useState<string | null>(null);
+  // Read TZ on mount so SSR ("UTC") doesn't mismatch client hydration.
+  // The set is intentionally one-shot on mount, not a cascading effect.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setBrowserTz(browserTimezone()); }, []);
 
   useEffect(() => {

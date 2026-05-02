@@ -9,7 +9,6 @@ import {
   X,
   Eye,
   MoreHorizontal,
-  BookOpen,
   CalendarClock,
 } from "lucide-react";
 
@@ -21,7 +20,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
-import { EmptyState } from "@/components/empty-state";
 import {
   useKnowledge,
   type KnowledgeFileRow,
