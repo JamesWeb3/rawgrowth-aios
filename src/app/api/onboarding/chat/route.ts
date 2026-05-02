@@ -10,6 +10,7 @@ import {
 } from "@/lib/llm/provider";
 import { drainScrapeQueue } from "@/lib/scrape/worker";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { mirrorBrandProfile } from "@/lib/knowledge/company-corpus";
 import {
   QUESTIONNAIRE_SECTIONS,
   QUESTIONNAIRE_FIELDS,
@@ -600,7 +601,7 @@ async function approveBrandProfile(userId: string) {
   // 'generating' or already 'approved') doesn't get flipped under us.
   const { data: latest } = await supabaseAdmin()
     .from("rgaios_brand_profiles")
-    .select("id")
+    .select("id, content")
     .eq("organization_id", userId)
     .eq("status", "ready")
     .order("version", { ascending: false })
@@ -615,6 +616,21 @@ async function approveBrandProfile(userId: string) {
     .update({ status: "approved", approved_at: nowMs, approved_by: userId })
     .eq("id", latest.id);
   if (profileErr) return { ok: false, error: profileErr.message };
+
+  // Mirror the freshly-approved brand markdown into rgaios_company_chunks
+  // so chat preamble RAG can surface it. Without this, fresh clients
+  // finish onboarding with a brand profile but zero corpus chunks - so
+  // the company-corpus RPC returns empty hits and agents only get the
+  // direct brand-profile injection (no semantic match across the rest
+  // of the org's content). Best-effort.
+  try {
+    await mirrorBrandProfile(userId, latest.id, latest.content);
+  } catch (err) {
+    console.warn(
+      "[approve_brand_profile] corpus mirror failed:",
+      (err as Error).message,
+    );
+  }
 
   const { error: clientErr } = await supabaseAdmin()
     .from("rgaios_organizations")
