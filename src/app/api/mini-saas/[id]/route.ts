@@ -64,7 +64,11 @@ export async function POST(
     .eq("id", id);
 
   try {
-    const { html } = await generateMiniSaas(prompt);
+    const { html } = await generateMiniSaas({
+      organizationId: ctx.activeOrgId,
+      organizationName: ctx.activeOrgName,
+      prompt,
+    });
     await supabaseAdmin()
       .from("rgaios_mini_saas")
       .update({

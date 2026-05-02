@@ -80,10 +80,16 @@ export async function POST(req: NextRequest) {
   }
   const id = (inserted as { id: string }).id;
 
-  // Generate inline. Caller awaits - Engineering Manager generations
-  // are typically 10-30s with a code-y prompt; well under maxDuration.
+  // Generate inline via chatReply (Claude Max OAuth). Caller awaits -
+  // Engineering Manager generations are typically 10-30s with a code-y
+  // prompt; well under maxDuration.
   try {
-    const { html } = await generateMiniSaas(prompt);
+    const { html } = await generateMiniSaas({
+      organizationId: ctx.activeOrgId,
+      organizationName: ctx.activeOrgName,
+      prompt,
+      agentId: engineeringAgentId ?? undefined,
+    });
     await supabaseAdmin()
       .from("rgaios_mini_saas")
       .update({

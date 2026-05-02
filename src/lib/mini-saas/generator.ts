@@ -1,4 +1,4 @@
-import { chatComplete } from "@/lib/llm/provider";
+import { chatReply } from "@/lib/agent/chat";
 
 /**
  * Generate a self-contained single-page web app from a natural-language
@@ -6,13 +6,12 @@ import { chatComplete } from "@/lib/llm/provider";
  * external deps - so the operator can preview it in an iframe sandbox
  * without a build step.
  *
- * Persona is the Engineering Manager + sub-agents (Backend/Frontend/QA
- * Engineer) collapsed into one prompt for v0. Future: route through
- * the actual agent chain so each contributes (FE generates UI, BE
- * generates handlers, QA generates assertions).
+ * Routes through chatReply (Claude Max OAuth) so it works on any v3
+ * deploy that has the Claude Max connection wired - no separate
+ * OPENAI/ANTHROPIC key needed.
  */
 
-const SYSTEM_PROMPT = `You are the Engineering Manager at the user's AI org. Your job: ship a tiny self-contained web app from a one-line description.
+const ENGINEERING_BRIEF = `You are the Engineering Manager at the user's AI org. Your job: ship a tiny self-contained web app from a one-line description.
 
 Output rules:
 - Return ONE complete HTML document, top to bottom: <!doctype html>...</html>.
@@ -24,17 +23,31 @@ Output rules:
 - Add a small header with the app title + a one-line description.
 - Reasonable empty state if there is no data yet.
 
-Output ONLY the HTML. No markdown fences. No commentary. No "here is your app" preamble.`;
+Output ONLY the HTML. No markdown fences. No commentary. No "here is your app" preamble. No <task> blocks.`;
 
-export async function generateMiniSaas(prompt: string): Promise<{ html: string }> {
-  const res = await chatComplete({
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
+export async function generateMiniSaas(input: {
+  organizationId: string;
+  organizationName: string | null;
+  prompt: string;
+  agentId?: string;
+}): Promise<{ html: string }> {
+  const res = await chatReply({
+    organizationId: input.organizationId,
+    organizationName: input.organizationName,
+    chatId: 0,
+    userMessage: input.prompt,
+    publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    agentId: input.agentId,
+    historyOverride: [],
+    extraPreamble: ENGINEERING_BRIEF,
+    noHandoff: true,
   });
+  if (!res.ok) {
+    throw new Error(res.error);
+  }
 
   // Strip accidental markdown fences if the model added them anyway.
-  let html = res.text.trim();
+  let html = res.reply.trim();
   if (html.startsWith("```")) {
     html = html.replace(/^```(?:html)?\s*/, "").replace(/```\s*$/, "");
   }
