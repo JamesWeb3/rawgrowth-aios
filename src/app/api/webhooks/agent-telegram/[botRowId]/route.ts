@@ -70,7 +70,7 @@ function startProgressUpdates(opts: {
         opts.token,
         opts.chatId,
         opts.messageId,
-        `⌛ ${opts.acknowledgement}\nStill working — I'll keep going in the background.`,
+        `⌛ ${opts.acknowledgement}\nStill working - I'll keep going in the background.`,
       ).catch(() => {});
       return;
     }

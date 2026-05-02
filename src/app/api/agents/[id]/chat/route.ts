@@ -110,7 +110,8 @@ export async function DELETE(
 
   // Pull current (non-archived) messages, merge archive flag into their
   // metadata, write back. metadata is jsonb so we can carry an archive
-  // marker without a schema migration.
+  // marker without a schema migration. Parallelize the per-row updates -
+  // sequential awaits made "+ New chat" lag noticeably with 30+ messages.
   const { data: rows } = await db
     .from("rgaios_agent_chat_messages")
     .select("id, metadata")
@@ -118,14 +119,17 @@ export async function DELETE(
     .eq("agent_id", agentId)
     .or("metadata->>archived.is.null,metadata->>archived.eq.false");
   const stamp = new Date().toISOString();
-  for (const r of (rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
-    const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
-    await db
-      .from("rgaios_agent_chat_messages")
-      .update({ metadata: next as never })
-      .eq("id", r.id);
-  }
-  return NextResponse.json({ ok: true, archived: rows?.length ?? 0 });
+  const typedRows = (rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>;
+  await Promise.all(
+    typedRows.map((r) => {
+      const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
+      return db
+        .from("rgaios_agent_chat_messages")
+        .update({ metadata: next as never })
+        .eq("id", r.id);
+    }),
+  );
+  return NextResponse.json({ ok: true, archived: typedRows.length });
 }
 
 /**

@@ -468,7 +468,7 @@ export default function AgentChatTab({
               <button
                 type="button"
                 onClick={async () => {
-                  if (!confirm("Start a new chat? Past messages are archived (visible via History) — never deleted.")) return;
+                  if (!confirm("Start a new chat? Past messages are archived (visible via History) - never deleted.")) return;
                   try {
                     await fetch(`/api/agents/${agentId}/chat`, { method: "DELETE" });
                     setMessages([]);
