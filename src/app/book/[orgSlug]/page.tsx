@@ -20,7 +20,7 @@ export default async function PublicOrgBookingPage({
       <div className="mb-10">
         <h1 className="font-serif text-4xl tracking-tight">{org.name}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Book a slot below. You'll get a calendar invite + Meet link.
+          Book a slot below. You&apos;ll get a calendar invite + Meet link.
         </p>
       </div>
 

@@ -33,8 +33,8 @@ export default async function BookingEventTypesPage() {
             No event types yet
           </h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            An event type is a bookable slot definition (e.g. "30-min discovery
-            call"). Each one becomes a public link guests can grab time on.
+            An event type is a bookable slot definition (e.g. &quot;30-min discovery
+            call&quot;). Each one becomes a public link guests can grab time on.
             Pin one to an agent and the agent gets a system message on every
             confirmed booking.
           </p>

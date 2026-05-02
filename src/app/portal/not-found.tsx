@@ -11,7 +11,7 @@ export default function PortalNotFound() {
           Portal not found
         </h1>
         <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
-          The portal id in this URL doesn't match any provisioned client.
+          The portal id in this URL doesn&apos;t match any provisioned client.
           Double-check the link, or head back to your dashboard.
         </p>
         <Link

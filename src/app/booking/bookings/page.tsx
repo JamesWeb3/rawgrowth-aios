@@ -23,7 +23,7 @@ export default async function BookingsPage() {
           </h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
             Confirmed slots from your public booking pages land here, with the
-            guest's contact info, the agent that was pinged, and the Meet link.
+            guest&apos;s contact info, the agent that was pinged, and the Meet link.
           </p>
           <Link
             href="/booking/event-types"
