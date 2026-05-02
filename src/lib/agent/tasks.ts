@@ -63,13 +63,14 @@ export async function extractAndCreateTasks(input: {
   // without N round trips.
   const { data: agents } = await db
     .from("rgaios_agents")
-    .select("id, name, role, department")
+    .select("id, name, role, department, is_department_head")
     .eq("organization_id", orgId);
   const allAgents = (agents ?? []) as Array<{
     id: string;
     name: string;
     role: string | null;
     department: string | null;
+    is_department_head: boolean | null;
   }>;
   const speaker = allAgents.find((a) => a.id === speakerAgentId);
 
@@ -78,15 +79,21 @@ export async function extractAndCreateTasks(input: {
     name: string;
   } {
     const raw = (label ?? "self").trim().toLowerCase();
-    if (raw === "self" || raw === "" || raw === speaker?.role?.toLowerCase()) {
+    if (raw === "self" || raw === "") {
       return {
         id: speakerAgentId,
         name: speaker?.name ?? "this agent",
       };
     }
-    const byRole = allAgents.find(
+    // Prefer department-head when multiple agents share the same role.
+    // E.g. role='marketer' matches both Marketing Manager (head) +
+    // Content Strategist (sub) - delegating "to the marketer" should
+    // hit the head, not whichever row Postgres returned first.
+    const roleMatches = allAgents.filter(
       (a) => (a.role ?? "").toLowerCase() === raw,
     );
+    const byRole =
+      roleMatches.find((a) => a.is_department_head) ?? roleMatches[0];
     if (byRole) return { id: byRole.id, name: byRole.name };
     const byName = allAgents.find(
       (a) => a.name.toLowerCase() === raw,
@@ -155,7 +162,7 @@ export async function extractAndCreateTasks(input: {
       //      run sits pending forever. Run executeChatTask in
       //      next/after so the request returns fast but the assignee
       //      actually does the work via chatReply, output lands in
-      //      output_payload, status flips succeeded/failed.
+      //      output, status flips succeeded/failed.
       try {
         dispatchRun(runId, orgId);
       } catch (err) {
@@ -163,8 +170,11 @@ export async function extractAndCreateTasks(input: {
           `[tasks] dispatchRun failed for run ${runId}: ${(err as Error).message}`,
         );
       }
-      after(async () => {
-        await executeChatTask({
+      // Try Next.js after() so we return fast + execute in background.
+      // Falls back to fire-and-forget Promise when called outside a
+      // request scope (smoke scripts, cron tick, etc).
+      const exec = () =>
+        executeChatTask({
           orgId,
           runId,
           assigneeAgentId: assignee.id,
@@ -172,7 +182,11 @@ export async function extractAndCreateTasks(input: {
           description,
           delegatedByAgentId: speakerAgentId,
         });
-      });
+      try {
+        after(exec);
+      } catch {
+        void exec();
+      }
     }
 
     // Audit log so the activity feed picks it up.
@@ -208,7 +222,7 @@ export async function extractAndCreateTasks(input: {
  * Execute a chat-created task inline. The assignee agent reads the
  * task title + description as a user message, builds its full preamble
  * (brand + RAG + persona), and replies. Output lands in
- * rgaios_routine_runs.output_payload + assistant chat history so the
+ * rgaios_routine_runs.output + assistant chat history so the
  * Tasks tab can render the result alongside the routine.
  *
  * Idempotent on the run row's status field: if another worker (drain)
@@ -278,7 +292,7 @@ export async function executeChatTask(input: {
       .update({
         status: "succeeded",
         completed_at: completedAt,
-        output_payload: { reply: result.reply, executed_inline: true },
+        output: { reply: result.reply, executed_inline: true },
       } as never)
       .eq("id", input.runId);
 
