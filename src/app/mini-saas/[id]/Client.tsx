@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { RefreshCw, Code2, Eye, Trash2 } from "lucide-react";
+import { RefreshCw, Code2, Eye, Trash2, ExternalLink } from "lucide-react";
 
 type App = {
   id: string;
@@ -21,6 +21,23 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
   const [tab, setTab] = useState<"preview" | "prompt" | "code">("preview");
   const [prompt, setPrompt] = useState(app.prompt);
   const [regenerating, setRegenerating] = useState(false);
+
+  // Render the app via blob URL instead of srcDoc so the iframe gets
+  // a real (unique) origin and localStorage / sessionStorage work.
+  // srcDoc + sandbox="allow-scripts" gives an opaque origin where
+  // storage APIs throw SecurityError, silently breaking any generated
+  // app that persists state.
+  const blobUrl = useMemo(() => {
+    if (!app.generated_html) return null;
+    if (typeof window === "undefined") return null;
+    const blob = new Blob([app.generated_html], { type: "text/html" });
+    return URL.createObjectURL(blob);
+  }, [app.generated_html]);
+  useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
 
   async function regenerate() {
     setRegenerating(true);
@@ -48,6 +65,10 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
       const body = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !body.ok) throw new Error(body.error ?? "delete failed");
       toast.success("Deleted");
+      // refresh the list page's server data BEFORE we navigate, so the
+      // user lands on /mini-saas already showing the row gone instead
+      // of a stale cached copy.
+      router.refresh();
       router.push("/mini-saas");
     } catch (err) {
       toast.error((err as Error).message);
@@ -106,13 +127,30 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
                 )}
               </p>
             </div>
-          ) : app.generated_html ? (
-            <iframe
-              title={app.title}
-              srcDoc={app.generated_html}
-              sandbox="allow-scripts"
-              className="h-[640px] w-full bg-[#0A1210]"
-            />
+          ) : blobUrl ? (
+            <div>
+              <iframe
+                title={app.title}
+                src={blobUrl}
+                sandbox="allow-scripts allow-forms"
+                className="h-[640px] w-full bg-[#0A1210]"
+              />
+              <div className="flex items-center justify-between border-t border-border bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
+                <span>
+                  Sandboxed iframe (unique origin) - localStorage works,
+                  but isolated from your dashboard.
+                </span>
+                <a
+                  href={blobUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
+                >
+                  Open full screen
+                  <ExternalLink className="size-3" />
+                </a>
+              </div>
+            </div>
           ) : (
             <div className="flex h-[600px] items-center justify-center text-muted-foreground">
               Nothing yet.
