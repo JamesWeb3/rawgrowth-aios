@@ -6,6 +6,7 @@ import {
   updateKnowledgeFileTags,
 } from "@/lib/knowledge/queries";
 import { currentOrganizationId } from "@/lib/supabase/constants";
+import { deleteCompanyChunksFor } from "@/lib/knowledge/company-corpus";
 
 export const runtime = "nodejs";
 
@@ -36,7 +37,20 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    await deleteKnowledgeFile((await currentOrganizationId()), id);
+    const orgId = await currentOrganizationId();
+    await deleteKnowledgeFile(orgId, id);
+    // Clean up the corpus chunks too. company_chunks has no FK back to
+    // knowledge_files, so without this they orphan and keep polluting
+    // RAG forever. Best-effort.
+    try {
+      await deleteCompanyChunksFor({
+        orgId,
+        source: "knowledge_file",
+        sourceId: id,
+      });
+    } catch (err) {
+      console.warn("[knowledge] corpus cleanup failed:", (err as Error).message);
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
