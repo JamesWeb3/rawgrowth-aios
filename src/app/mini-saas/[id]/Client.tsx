@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -22,35 +22,14 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
   const [prompt, setPrompt] = useState(app.prompt);
   const [regenerating, setRegenerating] = useState(false);
 
-  // Render the app via blob URL instead of srcDoc so the iframe gets
-  // a real (unique) origin and localStorage / sessionStorage work.
-  // srcDoc + sandbox="allow-scripts" gives an opaque origin where
-  // storage APIs throw SecurityError, silently breaking any generated
-  // app that persists state.
-  //
-  // Create the blob URL inside an effect (not useMemo) so React 19
-  // strict-mode double-invoke doesn't create + revoke + re-create on
-  // every render; first version had useMemo + cleanup race that left
-  // the iframe with a revoked URL = blank screen.
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!app.generated_html) {
-      setBlobUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(
-      new Blob([app.generated_html], { type: "text/html" }),
-    );
-    setBlobUrl(url);
-    return () => {
-      // Defer revoke so the iframe / opened window has time to load
-      // it. URL.revokeObjectURL is sticky for already-loaded resources
-      // but blocks NEW navigations to the same URL - revoking too
-      // early in strict-mode double-mount blanked the preview.
-      const u = url;
-      setTimeout(() => URL.revokeObjectURL(u), 30_000);
-    };
-  }, [app.generated_html]);
+  // Render via srcDoc - simplest + most reliable. Blob-URL approach
+  // raced against React 19 strict-mode dev double-mount + Turbopack
+  // cleanup; not worth the storage gain. localStorage falls back to
+  // an in-memory shim added below.
+  const dataUrl =
+    app.generated_html
+      ? `data:text/html;charset=utf-8,${encodeURIComponent(app.generated_html)}`
+      : null;
 
   async function regenerate() {
     setRegenerating(true);
@@ -140,28 +119,30 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
                 )}
               </p>
             </div>
-          ) : blobUrl ? (
+          ) : app.generated_html ? (
             <div>
               <iframe
                 title={app.title}
-                src={blobUrl}
+                srcDoc={app.generated_html}
                 sandbox="allow-scripts allow-forms"
                 className="h-[640px] w-full bg-[#0A1210]"
               />
               <div className="flex items-center justify-between border-t border-border bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
                 <span>
-                  Sandboxed iframe (unique origin) - localStorage works,
-                  but isolated from your dashboard.
+                  Sandboxed iframe. Buttons + state work; localStorage is
+                  isolated.
                 </span>
-                <a
-                  href={blobUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
-                >
-                  Open full screen
-                  <ExternalLink className="size-3" />
-                </a>
+                {dataUrl && (
+                  <a
+                    href={dataUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
+                  >
+                    Open full screen
+                    <ExternalLink className="size-3" />
+                  </a>
+                )}
               </div>
             </div>
           ) : (
