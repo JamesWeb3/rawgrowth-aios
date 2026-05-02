@@ -159,43 +159,67 @@ export const CHAT_HANDOFF_SENTINEL_PREFIX =
 function buildPersonaPreamble(
   orgName: string | null,
   persona: RawgrowthAgent | null,
+  noHandoff = false,
 ): string {
   const lines: string[] = [];
 
   // ─── Absolute rule first  -  overrides everything below ────────────
-  lines.push(
-    "═══════════════════════════════════════════════════════════════════",
-    "ABSOLUTE RULE  -  read this before doing anything else",
-    "═══════════════════════════════════════════════════════════════════",
-    "",
-    "You have NO TOOLS in this conversation. Zero. None. You cannot:",
-    "  • read/send/draft email, scrape inboxes, check folders",
-    "  • read/write to Drive, Notion, GitHub, Linear, databases, files",
-    "  • create/update/delete/list anything in the workspace (agents, routines, skills, departments, runs, approvals, knowledge, the inbox, etc.)",
-    "  • check whether a connection is live, look up settings, or query the system",
-    "  • do ANY action against ANY external service",
-    "",
-    "If the user asks for ANY of the above  -  even just 'do you have X connected?'  -  you MUST hand off. Do NOT improvise. Do NOT refuse. Do NOT explain limitations. Do NOT say 'I can't' or 'I don't have access'. The system itself decides what's possible  -  you just hand off and it figures out the rest.",
-    "",
-    "Hand-off format  -  reply with ONLY this line and nothing else:",
-    "",
-    `  ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  <one short sentence describing what you'll do>`,
-    "",
-    "Examples that ALL require handoff:",
-    `  user: "scrape my last 5 emails" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  fetching your latest 5 emails now.`,
-    `  user: "what's in my inbox" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking your inbox.`,
-    `  user: "do you have gmail connected?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking the Gmail connection status.`,
-    `  user: "send james an email saying hi" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  sending that email to James now.`,
-    `  user: "list my agents" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  pulling the agent list.`,
-    `  user: "create a marketing department" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  building out your marketing department.`,
-    `  user: "what's in my notion?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking Notion now.`,
-    `  user: "look up X" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  looking that up for you.`,
-    "",
-    "ONLY answer directly (no handoff) if the request is pure conversation requiring no system or external data: greetings, opinions, advice, explanations of concepts, brainstorming, jokes. If in doubt → HANDOFF.",
-    "",
-    "Your persona below is HOW you communicate (voice, name, style), NOT what you're allowed to do. Every persona has full handoff rights regardless of their job title.",
-    "",
-  );
+  if (noHandoff) {
+    // Dashboard chat surface - the [handoff] sentinel has no listener,
+    // and would just appear as raw "[handoff]..." text in the bubble.
+    // Force the model to answer from the injected preamble context
+    // (brand profile, RAG hits, persona) instead of deferring.
+    lines.push(
+      "═══════════════════════════════════════════════════════════════════",
+      "ABSOLUTE RULE  -  read this before doing anything else",
+      "═══════════════════════════════════════════════════════════════════",
+      "",
+      "You are talking inside the operator dashboard. There is NO HANDOFF target on this surface. You also have NO MCP tools - you cannot run actions, read external systems, or query the workspace at runtime.",
+      "",
+      "Everything you need is already in this preamble: persona, your place in the org, past memories, the brand profile, per-agent files, and company corpus retrievals. ANSWER DIRECTLY using that context.",
+      "",
+      "Do NOT reply with '[handoff]'  -  it will appear as raw broken text. Do NOT pretend you are about to do something. Do NOT say 'let me look that up' or 'give me a moment'.",
+      "",
+      "If a question genuinely cannot be answered from the context, say so honestly in ONE sentence (e.g. 'I don't have that in my notes - want me to draft a routine to pull it?'), then stop.",
+      "",
+      "Cite the brand profile when the question is about the company (offer, pricing, ICP, voice). Cite per-agent files when the question is about a framework you've been trained on.",
+      "",
+    );
+  } else {
+    lines.push(
+      "═══════════════════════════════════════════════════════════════════",
+      "ABSOLUTE RULE  -  read this before doing anything else",
+      "═══════════════════════════════════════════════════════════════════",
+      "",
+      "You have NO TOOLS in this conversation. Zero. None. You cannot:",
+      "  • read/send/draft email, scrape inboxes, check folders",
+      "  • read/write to Drive, Notion, GitHub, Linear, databases, files",
+      "  • create/update/delete/list anything in the workspace (agents, routines, skills, departments, runs, approvals, knowledge, the inbox, etc.)",
+      "  • check whether a connection is live, look up settings, or query the system",
+      "  • do ANY action against ANY external service",
+      "",
+      "If the user asks for ANY of the above  -  even just 'do you have X connected?'  -  you MUST hand off. Do NOT improvise. Do NOT refuse. Do NOT explain limitations. Do NOT say 'I can't' or 'I don't have access'. The system itself decides what's possible  -  you just hand off and it figures out the rest.",
+      "",
+      "Hand-off format  -  reply with ONLY this line and nothing else:",
+      "",
+      `  ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  <one short sentence describing what you'll do>`,
+      "",
+      "Examples that ALL require handoff:",
+      `  user: "scrape my last 5 emails" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  fetching your latest 5 emails now.`,
+      `  user: "what's in my inbox" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking your inbox.`,
+      `  user: "do you have gmail connected?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking the Gmail connection status.`,
+      `  user: "send james an email saying hi" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  sending that email to James now.`,
+      `  user: "list my agents" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  pulling the agent list.`,
+      `  user: "create a marketing department" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  building out your marketing department.`,
+      `  user: "what's in my notion?" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  checking Notion now.`,
+      `  user: "look up X" → ${CHAT_HANDOFF_SENTINEL_PREFIX}  -  looking that up for you.`,
+      "",
+      "ONLY answer directly (no handoff) if the request is pure conversation requiring no system or external data: greetings, opinions, advice, explanations of concepts, brainstorming, jokes. If in doubt → HANDOFF.",
+      "",
+      "Your persona below is HOW you communicate (voice, name, style), NOT what you're allowed to do. Every persona has full handoff rights regardless of their job title.",
+      "",
+    );
+  }
 
   // ─── Persona ────────────────────────────────────────────────────
   if (persona) {
@@ -251,6 +275,14 @@ export async function chatReply(input: {
    * the reply on uploaded files without polluting `system`.
    */
   extraPreamble?: string;
+  /**
+   * Optional: when true, swaps the "ABSOLUTE RULE - always handoff" block
+   * for a "no tools available - answer from injected context" block.
+   * Used by the dashboard agent chat surface, which has no MCP tool
+   * wiring on the receiving end - the [handoff] sentinel would just
+   * appear as raw text and look broken.
+   */
+  noHandoff?: boolean;
 }): Promise<AgentChatResult> {
   const {
     organizationId,
@@ -260,6 +292,7 @@ export async function chatReply(input: {
     agentId,
     historyOverride,
     extraPreamble,
+    noHandoff,
   } = input;
 
   const claudeToken = await loadClaudeMaxToken(organizationId);
@@ -291,7 +324,7 @@ export async function chatReply(input: {
   // Persona + instructions live in the FIRST user turn, NOT in `system`.
   // The OAuth gate rejects any system content beyond CLAUDE_CODE_PREFIX.
   // We tag the preamble so the model can ignore the framing tokens.
-  const basePreamble = buildPersonaPreamble(organizationName, persona);
+  const basePreamble = buildPersonaPreamble(organizationName, persona, !!noHandoff);
   const preamble = extraPreamble?.trim()
     ? `${basePreamble}\n\n${extraPreamble.trim()}`
     : basePreamble;

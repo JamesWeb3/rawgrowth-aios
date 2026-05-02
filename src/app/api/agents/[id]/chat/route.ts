@@ -404,6 +404,9 @@ export async function POST(
           agentId,
           historyOverride: history,
           extraPreamble,
+          // Dashboard chat has no MCP tool drain - swap "always handoff"
+          // for "answer from injected context" in the persona preamble.
+          noHandoff: true,
         });
 
         if (!result.ok) {
