@@ -40,9 +40,9 @@ export default async function SettingsPage() {
         <SettingTile
           icon={ShieldAlert}
           title="Security"
-          description="Password, sessions, 2FA"
-          value="Coming soon"
-          muted
+          description="Reset your password via email"
+          value="Forgot password flow"
+          link={{ href: "/auth/forgot-password", label: "Reset password" }}
         />
       </div>
     </PageShell>
