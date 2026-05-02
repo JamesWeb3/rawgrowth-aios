@@ -90,18 +90,55 @@ export function LiveActivityFeed({
           <time className="w-24 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
             {new Date(r.ts).toLocaleTimeString()}
           </time>
-          <span className="font-mono text-[11px] uppercase tracking-widest text-primary">
+          <span
+            className={
+              "font-mono text-[11px] uppercase tracking-widest " +
+              kindTone(r.kind)
+            }
+          >
             {r.kind}
           </span>
           <span className="text-[var(--text-body)]">
-            {typeof r.detail?.summary === "string"
-              ? r.detail.summary
-              : r.actor_type === "agent"
-                ? `agent ${r.actor_id ?? ""}`
-                : r.actor_type ?? ""}
+            {summarize(r)}
           </span>
         </li>
       ))}
     </ul>
   );
+}
+
+function kindTone(kind: string): string {
+  if (kind === "task_executed") return "text-[#aad08f]";
+  if (kind === "task_created") return "text-primary";
+  if (kind === "chat_reply_failed") return "text-[#f4b27a]";
+  if (kind === "chat_memory") return "text-muted-foreground";
+  if (kind.startsWith("run_")) return "text-amber-300";
+  return "text-primary";
+}
+
+function summarize(r: AuditRow): string {
+  const d = r.detail ?? {};
+  if (typeof d.summary === "string") return d.summary;
+  if (r.kind === "task_created" || r.kind === "task_executed") {
+    const title = typeof d.title === "string" ? d.title : "";
+    const delegated =
+      typeof d.delegated_from === "string" || typeof d.delegated_by === "string";
+    return delegated
+      ? `${r.kind === "task_executed" ? "completed" : "got"} task: "${title}"`
+      : `task: "${title}"`;
+  }
+  if (r.kind === "chat_memory") {
+    const fact = typeof d.fact === "string" ? d.fact : "";
+    return fact.slice(0, 120);
+  }
+  if (r.kind === "chat_reply_failed") {
+    return typeof d.error === "string" ? d.error.slice(0, 120) : "chat failed";
+  }
+  if (r.kind.startsWith("run_") || r.kind === "connection_connected" || r.kind === "connection_disconnected") {
+    const provider = typeof d.provider === "string" ? d.provider : "";
+    const runId =
+      typeof d.run_id === "string" ? d.run_id.slice(0, 8) : "";
+    return [provider, runId].filter(Boolean).join(" ");
+  }
+  return r.actor_type === "agent" ? `agent ${r.actor_id ?? ""}` : r.actor_type ?? "";
 }

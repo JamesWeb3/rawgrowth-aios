@@ -16,6 +16,7 @@ import {
   Palette,
   CalendarDays,
   Sprout,
+  ListChecks,
 } from "lucide-react";
 
 import {
@@ -63,6 +64,7 @@ const navSections: NavSection[] = [
     label: "Agent Organization",
     items: [
       { label: "Agents", href: "/agents", icon: Bot },
+      { label: "Tasks", href: "/tasks", icon: ListChecks },
       { label: "Routines", href: "/routines", icon: Repeat },
       { label: "Booking", href: "/booking", icon: CalendarDays },
       { label: "Activity", href: "/activity", icon: Activity },
