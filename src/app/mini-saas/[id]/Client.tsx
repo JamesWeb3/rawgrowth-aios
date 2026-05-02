@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -27,17 +27,30 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
   // srcDoc + sandbox="allow-scripts" gives an opaque origin where
   // storage APIs throw SecurityError, silently breaking any generated
   // app that persists state.
-  const blobUrl = useMemo(() => {
-    if (!app.generated_html) return null;
-    if (typeof window === "undefined") return null;
-    const blob = new Blob([app.generated_html], { type: "text/html" });
-    return URL.createObjectURL(blob);
-  }, [app.generated_html]);
+  //
+  // Create the blob URL inside an effect (not useMemo) so React 19
+  // strict-mode double-invoke doesn't create + revoke + re-create on
+  // every render; first version had useMemo + cleanup race that left
+  // the iframe with a revoked URL = blank screen.
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   useEffect(() => {
+    if (!app.generated_html) {
+      setBlobUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(
+      new Blob([app.generated_html], { type: "text/html" }),
+    );
+    setBlobUrl(url);
     return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      // Defer revoke so the iframe / opened window has time to load
+      // it. URL.revokeObjectURL is sticky for already-loaded resources
+      // but blocks NEW navigations to the same URL - revoking too
+      // early in strict-mode double-mount blanked the preview.
+      const u = url;
+      setTimeout(() => URL.revokeObjectURL(u), 30_000);
     };
-  }, [blobUrl]);
+  }, [app.generated_html]);
 
   async function regenerate() {
     setRegenerating(true);
