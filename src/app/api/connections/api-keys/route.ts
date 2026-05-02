@@ -40,6 +40,41 @@ const KNOWN_PROVIDERS = [
     docsUrl: "https://www.voyageai.com/",
     placeholder: "pa-...",
   },
+  {
+    key: "stripe",
+    label: "Stripe",
+    description: "Restricted-access secret for revenue/MRR analytics (read-only on charges + customers + subscriptions).",
+    docsUrl: "https://dashboard.stripe.com/apikeys",
+    placeholder: "rk_live_...",
+  },
+  {
+    key: "shopify",
+    label: "Shopify",
+    description: "Admin API access token for orders/customers analytics (Shopify Admin → Apps → Develop apps).",
+    docsUrl: "https://shopify.dev/docs/apps/auth/admin-app-access-tokens",
+    placeholder: "shpat_...",
+  },
+  {
+    key: "ga4",
+    label: "Google Analytics 4",
+    description: "Service-account JSON for GA4 Data API (sessions, conversions, traffic sources).",
+    docsUrl: "https://developers.google.com/analytics/devguides/reporting/data/v1",
+    placeholder: '{"type":"service_account",...}',
+  },
+  {
+    key: "hubspot",
+    label: "HubSpot",
+    description: "Private app token (deals/contacts/company read scopes for pipeline analytics).",
+    docsUrl: "https://developers.hubspot.com/docs/api/private-apps",
+    placeholder: "pat-na1-...",
+  },
+  {
+    key: "mailchimp",
+    label: "Mailchimp",
+    description: "API key (audiences, campaigns, revenue per email).",
+    docsUrl: "https://mailchimp.com/help/about-api-keys/",
+    placeholder: "abc123-us21",
+  },
 ] as const;
 
 export async function GET() {
