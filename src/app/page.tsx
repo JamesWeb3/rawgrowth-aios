@@ -207,12 +207,12 @@ function StackedMonthlyBars({ data }: { data: typeof financeMonthly }) {
 // ────────────────────────── Page ──────────────────────────────────────
 
 export default async function DashboardPage() {
-  // First-run gate: if this org's owner hasn't completed onboarding yet,
-  // bounce them to /onboarding. Admins impersonating an org skip this
-  // (they can pre-walk a not-yet-onboarded client). Skip also if the
-  // owner already approved a brand profile manually (seeded via API).
+  // First-run gate: only bounce CLIENT owners (not admins) to /onboarding.
+  // Admin orgs (rawgrowth-mvp) and admin impersonation never trigger
+  // the gate. Client owners get redirected unless onboarding_completed
+  // OR a brand profile is already approved (e.g. demo seed).
   const ctx = await getOrgContext();
-  if (ctx?.activeOrgId && !ctx.isImpersonating) {
+  if (ctx?.activeOrgId && !ctx.isAdmin) {
     const { data: org } = await supabaseAdmin()
       .from("rgaios_organizations")
       .select("onboarding_completed")
