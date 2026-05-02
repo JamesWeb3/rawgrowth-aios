@@ -307,26 +307,10 @@ export async function POST(
         `Relevant context retrieved from this agent's uploaded files (cite when you use them):\n\n${block}`;
     }
 
-    // Org-level knowledge files (markdown SOPs, playbooks). Uploaded
-    // on /knowledge and shared across every agent in the org.
-    const { data: knowledgeRows } = await db
-      .from("rgaios_knowledge_files")
-      .select("filename, content")
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false })
-      .limit(10);
-    if (knowledgeRows && knowledgeRows.length > 0) {
-      const block = (knowledgeRows as Array<{ filename: string; content: string | null }>)
-        .filter((k) => k.content && k.content.trim().length > 0)
-        .map((k) => `# ${k.filename}\n${(k.content ?? "").slice(0, 2000)}`)
-        .slice(0, 5)
-        .join("\n\n---\n\n");
-      if (block.length > 0) {
-        extraPreamble +=
-          (extraPreamble ? "\n\n" : "") +
-          `Org knowledge files (markdown SOPs + playbooks the whole org shares):\n\n${block}`;
-      }
-    }
+    // Note: knowledge files (markdown SOPs uploaded on /knowledge)
+    // already flow into rgaios_company_chunks via the embedding pipeline,
+    // so they're picked up by the company corpus RPC below. No separate
+    // query needed.
 
     // Company corpus (rgaios_company_chunks - intake + brand + scrape +
     // sales calls + onboarding docs unioned). Topical chunks across the
