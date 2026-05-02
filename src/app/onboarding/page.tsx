@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 import { getOrgContext } from "@/lib/auth/admin";
 import { computeOnboardingProgress } from "@/lib/onboarding";
@@ -32,6 +33,13 @@ export default async function OnboardingPage() {
               Let&apos;s get to know your business.
             </p>
           </div>
+          <Link
+            href="/api/onboarding/skip"
+            className="shrink-0 rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-3 py-1.5 text-[12px] text-[var(--text-muted)] hover:border-primary/40 hover:text-primary"
+            title="Skip onboarding for now (you can come back from the sidebar)"
+          >
+            Skip for now
+          </Link>
         </div>
       </header>
 

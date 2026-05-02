@@ -15,6 +15,7 @@ import {
   BookOpen,
   Palette,
   CalendarDays,
+  Sprout,
 } from "lucide-react";
 
 import {
@@ -55,6 +56,7 @@ const navSections: NavSection[] = [
       { label: "Brand", href: "/brand", icon: Palette },
       { label: "Departments", href: "/departments", icon: Building2 },
       { label: "Knowledge", href: "/knowledge", icon: BookOpen },
+      { label: "Onboarding", href: "/onboarding", icon: Sprout },
     ],
   },
   {

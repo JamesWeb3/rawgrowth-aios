@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 
 import { PageShell } from "@/components/page-shell";
@@ -6,6 +7,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DashboardStats } from "@/components/dashboard/stats";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
 
 async function getPillarFlags() {
   const ctx = await getOrgContext();
@@ -204,6 +207,29 @@ function StackedMonthlyBars({ data }: { data: typeof financeMonthly }) {
 // ────────────────────────── Page ──────────────────────────────────────
 
 export default async function DashboardPage() {
+  // First-run gate: if this org's owner hasn't completed onboarding yet,
+  // bounce them to /onboarding. Admins impersonating an org skip this
+  // (they can pre-walk a not-yet-onboarded client). Skip also if the
+  // owner already approved a brand profile manually (seeded via API).
+  const ctx = await getOrgContext();
+  if (ctx?.activeOrgId && !ctx.isImpersonating) {
+    const { data: org } = await supabaseAdmin()
+      .from("rgaios_organizations")
+      .select("onboarding_completed")
+      .eq("id", ctx.activeOrgId)
+      .maybeSingle();
+    if (!(org as { onboarding_completed?: boolean } | null)?.onboarding_completed) {
+      const { data: brand } = await supabaseAdmin()
+        .from("rgaios_brand_profiles")
+        .select("id")
+        .eq("organization_id", ctx.activeOrgId)
+        .eq("status", "approved")
+        .limit(1)
+        .maybeSingle();
+      if (!brand) redirect("/onboarding");
+    }
+  }
+
   const pillars = await getPillarFlags();
   const anyPillarOn =
     pillars.marketing || pillars.sales || pillars.fulfilment || pillars.finance;

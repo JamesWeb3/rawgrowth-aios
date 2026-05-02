@@ -47,3 +47,4 @@ next-env.d.ts
 .env*.local
 
 clientslocal_cache/
+local_cache/
