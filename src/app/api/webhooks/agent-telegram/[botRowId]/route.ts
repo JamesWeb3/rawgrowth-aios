@@ -11,6 +11,7 @@ import {
 } from "@/lib/telegram/client";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { chatReply, CHAT_HANDOFF_SENTINEL_PREFIX } from "@/lib/agent/chat";
+import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { transcribeVoice } from "@/lib/agent/voice-transcribe";
 import { describeImage } from "@/lib/agent/image-describe";
 
@@ -223,6 +224,17 @@ export async function POST(
       .eq("id", organizationId)
       .maybeSingle();
 
+    // Build the same brand+org+RAG preamble the dashboard chat uses
+    // so the Telegram bot replies are grounded in the client's actual
+    // offer/voice/SOPs instead of generic SaaS phrasing. Best-effort -
+    // a missing embedder just skips RAG.
+    const extraPreamble = await buildAgentChatPreamble({
+      orgId: organizationId,
+      agentId,
+      orgName: orgRow?.name ?? null,
+      queryText: text,
+    }).catch(() => "");
+
     // The key difference vs the legacy webhook: agentId is passed so the
     // persona is THIS bot's owner, not the org default.
     const result = await chatReply({
@@ -232,6 +244,7 @@ export async function POST(
       userMessage: text,
       publicAppUrl,
       agentId,
+      extraPreamble,
     });
 
     if (!result.ok) {

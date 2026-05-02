@@ -4,25 +4,17 @@ import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
 import { applyBrandFilter } from "@/lib/brand/apply-filter";
-import { embedOne, toPgVector } from "@/lib/knowledge/embedder";
+import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 
 export const runtime = "nodejs";
 
 const HISTORY_LIMIT = 50;
-const RAG_TOP_K = 3;
 const SURFACE = "agent_chat";
 
 const HARD_FAIL_MESSAGE =
   "[brand voice guard] Reply withheld - copy still contained banned words after one regeneration. An operator needs to review.";
 
 type IncomingMessage = { role: string; content: string };
-
-type ChunkRow = {
-  filename: string;
-  chunk_index: number;
-  content: string;
-  similarity: number;
-};
 
 /**
  * GET /api/agents/[id]/chat
@@ -166,28 +158,16 @@ export async function POST(
   const { id: agentId } = await params;
   const db = supabaseAdmin();
 
-  // Cross-tenant guard + persona load in one round trip.
+  // Cross-tenant guard. Persona + RAG happen inside buildAgentChatPreamble.
   const { data: agent } = await db
     .from("rgaios_agents")
-    .select(
-      "id, name, title, role, description, organization_id",
-    )
+    .select("id")
     .eq("id", agentId)
     .eq("organization_id", orgId)
     .maybeSingle();
   if (!agent) {
     return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   }
-
-  // The system_prompt column lands in migration 0036 (P0 #3 in the plan).
-  // Until that ships, fall back to description so this route still works
-  // on the v3 cloud db before #3 is applied. The cast keeps the types
-  // honest without forcing a full Database<...> regeneration.
-  const agentRow = agent as typeof agent & { system_prompt?: string | null };
-  const personaPrompt =
-    (agentRow.system_prompt && agentRow.system_prompt.trim()) ||
-    (agentRow.description && agentRow.description.trim()) ||
-    "";
 
   let body: { messages?: IncomingMessage[] };
   try {
@@ -227,159 +207,15 @@ export async function POST(
     content: m.content,
   }));
 
-  // 2. Optional RAG retrieval. Failures here are non-fatal - we still
-  // reply, just without grounded context.
-  let extraPreamble = "";
-  const personaLines: string[] = [];
-  if (agentRow.role) personaLines.push(`Role: ${agentRow.role}`);
-  if (agentRow.title) personaLines.push(`Title: ${agentRow.title}`);
-  if (personaPrompt) personaLines.push(`Persona: ${personaPrompt}`);
-  if (personaLines.length > 0) {
-    extraPreamble += personaLines.join("\n");
-  }
-
-  // Org place - tell the agent who they report to and who reports to
-  // them. Lets dept heads coordinate cross-team work without inventing
-  // org structure.
-  try {
-    const { data: agentRow2 } = await db
-      .from("rgaios_agents")
-      .select("reports_to, department")
-      .eq("id", agentId)
-      .maybeSingle();
-    const reportsToId = (agentRow2 as { reports_to: string | null } | null)?.reports_to;
-    let parentLabel: string | null = null;
-    if (reportsToId) {
-      const { data: parent } = await db
-        .from("rgaios_agents")
-        .select("name, role")
-        .eq("id", reportsToId)
-        .maybeSingle();
-      const p = parent as { name: string; role: string } | null;
-      if (p) parentLabel = `${p.name} (${p.role})`;
-    }
-    const { data: directs } = await db
-      .from("rgaios_agents")
-      .select("name, role")
-      .eq("organization_id", orgId)
-      .eq("reports_to", agentId);
-    const directList = (directs ?? []) as Array<{ name: string; role: string }>;
-    const lines: string[] = [];
-    if (parentLabel) lines.push(`You report to: ${parentLabel}.`);
-    if (directList.length > 0) {
-      lines.push(
-        `You have ${directList.length} direct report${directList.length === 1 ? "" : "s"}: ${directList.map((d) => `${d.name} (${d.role})`).join(", ")}.`,
-      );
-    }
-    if (lines.length > 0) {
-      extraPreamble +=
-        (extraPreamble ? "\n\n" : "") +
-        `Your place in the org (use this when coordinating cross-team work):\n${lines.join("\n")}`;
-    }
-  } catch {}
-
-  // Persistent agent memories - load the last 15 chat_memory entries
-  // from the audit log so this agent "remembers" decisions, facts, and
-  // user preferences across new chats. The extraction step at the end
-  // of this route writes new ones.
-  try {
-    const { data: memories } = await db
-      .from("rgaios_audit_log")
-      .select("ts, detail")
-      .eq("organization_id", orgId)
-      .eq("kind", "chat_memory")
-      .filter("detail->>agent_id", "eq", agentId)
-      .order("ts", { ascending: false })
-      .limit(15);
-    const memoryRows = (memories ?? []) as Array<{
-      ts: string;
-      detail: { fact?: string; agent_id?: string };
-    }>;
-    if (memoryRows.length > 0) {
-      const block = memoryRows
-        .filter((m) => m.detail?.fact)
-        .reverse()
-        .map((m, i) => `${i + 1}. ${m.detail.fact}`)
-        .join("\n");
-      if (block) {
-        extraPreamble +=
-          (extraPreamble ? "\n\n" : "") +
-          `Things you remember from past conversations with this user (treat as facts about their business + preferences):\n${block}`;
-      }
-    }
-  } catch {}
-
-  // Brand profile - inject the latest approved markdown so every reply
-  // is grounded in the org's voice/positioning/offer details.
-  try {
-    const { data: brand } = await db
-      .from("rgaios_brand_profiles")
-      .select("content")
-      .eq("organization_id", orgId)
-      .eq("status", "approved")
-      .order("version", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const content = (brand as { content?: string } | null)?.content?.trim();
-    if (content) {
-      extraPreamble +=
-        (extraPreamble ? "\n\n" : "") +
-        `Brand profile for ${ctx.activeOrgName ?? "this organisation"} (THIS IS THE CLIENT YOU WORK FOR - reference their offer, voice, ICP, frameworks, and banned-words list explicitly when relevant. Generic advice is a failure mode):\n\n${content}`;
-    }
-  } catch {}
-
-  try {
-    const queryVector = await embedOne(last.content);
-
-    // Per-agent files (RAG over rgaios_agent_files chunks).
-    const { data: rows } = await db.rpc("rgaios_match_agent_chunks", {
-      p_agent_id: agentId,
-      p_organization_id: orgId,
-      p_query: toPgVector(queryVector),
-      p_top_k: RAG_TOP_K,
-    });
-    const chunks = (rows ?? []) as ChunkRow[];
-    if (chunks.length > 0) {
-      const block = chunks
-        .map(
-          (c, i) =>
-            `[${i + 1}] ${c.filename} (chunk ${c.chunk_index}):\n${c.content}`,
-        )
-        .join("\n\n");
-      extraPreamble +=
-        (extraPreamble ? "\n\n" : "") +
-        `Relevant context retrieved from this agent's uploaded files (cite when you use them):\n\n${block}`;
-    }
-
-    // Note: knowledge files (markdown SOPs uploaded on /knowledge)
-    // already flow into rgaios_company_chunks via the embedding pipeline,
-    // so they're picked up by the company corpus RPC below. No separate
-    // query needed.
-
-    // Company corpus (rgaios_company_chunks - intake + brand + scrape +
-    // sales calls + onboarding docs unioned). Topical chunks across the
-    // whole organisation.
-    const { data: companyRows } = await db.rpc("rgaios_match_company_chunks", {
-      p_org_id: orgId,
-      p_query_embedding: toPgVector(queryVector),
-      p_match_count: 5,
-      p_min_similarity: 0.0,
-    });
-    const companyChunks = (companyRows ?? []) as Array<{
-      source: string;
-      chunk_text: string;
-    }>;
-    if (companyChunks.length > 0) {
-      const block = companyChunks
-        .map((c, i) => `[${i + 1}] (${c.source}):\n${c.chunk_text}`)
-        .join("\n\n");
-      extraPreamble +=
-        (extraPreamble ? "\n\n" : "") +
-        `Company-wide context (intake / brand / scraped content / sales calls):\n\n${block}`;
-    }
-  } catch {
-    // No embedder, no key, or RPC missing on this deploy. Continue.
-  }
+  // 2. Build the full preamble (persona + org place + memories + brand
+  // + RAG over agent files + company corpus). Helper is shared with the
+  // per-agent Telegram webhook so both surfaces see the same grounding.
+  const extraPreamble = await buildAgentChatPreamble({
+    orgId,
+    agentId,
+    orgName: ctx.activeOrgName,
+    queryText: last.content,
+  });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
