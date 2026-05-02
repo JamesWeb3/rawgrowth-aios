@@ -375,6 +375,18 @@ export async function chatReply(input: {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // 401 from Anthropic almost always means the Claude Max OAuth token
+    // expired - access tokens are short-lived (~hours) and we don't yet
+    // refresh them server-side. Surface a friendly reconnect prompt
+    // instead of the raw "Anthropic 401: {...}" so the operator knows
+    // exactly what to do without having to read JSON.
+    if (res.status === 401) {
+      return {
+        ok: false,
+        error:
+          "Claude Max token expired or invalid. Reconnect at Dashboard → Connections to keep this agent replying.",
+      };
+    }
     return {
       ok: false,
       error: `Anthropic ${res.status}: ${text.slice(0, 300)}`,
