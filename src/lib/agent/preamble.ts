@@ -94,6 +94,61 @@ export async function buildAgentChatPreamble(input: {
     }
   } catch {}
 
+  // 1c. Pending tasks - tell the agent which routines they own that
+  // haven't completed yet. Lets them say "I have 2 things in flight,
+  // both LinkedIn-related" instead of pretending to start fresh.
+  try {
+    const { data: routines } = await db
+      .from("rgaios_routines")
+      .select("id, title, description, created_at")
+      .eq("organization_id", orgId)
+      .eq("assignee_agent_id", agentId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const routineIds = ((routines ?? []) as Array<{ id: string }>).map(
+      (r) => r.id,
+    );
+    if (routineIds.length > 0) {
+      const { data: latestRuns } = await db
+        .from("rgaios_routine_runs")
+        .select("routine_id, status, completed_at")
+        .eq("organization_id", orgId)
+        .in("routine_id", routineIds)
+        .order("created_at", { ascending: false });
+      const latestByRoutine = new Map<string, string>();
+      for (const r of (latestRuns ?? []) as Array<{
+        routine_id: string;
+        status: string;
+      }>) {
+        if (!latestByRoutine.has(r.routine_id)) {
+          latestByRoutine.set(r.routine_id, r.status);
+        }
+      }
+      const taskRows = (routines ?? []) as Array<{
+        id: string;
+        title: string | null;
+        description: string | null;
+      }>;
+      const open = taskRows.filter((r) => {
+        const s = latestByRoutine.get(r.id);
+        return !s || s === "pending" || s === "running" || s === "failed";
+      });
+      if (open.length > 0) {
+        const block = open
+          .slice(0, 10)
+          .map((r, i) => {
+            const s = latestByRoutine.get(r.id) ?? "queued";
+            return `${i + 1}. [${s}] ${r.title ?? "(untitled)"}`;
+          })
+          .join("\n");
+        preamble +=
+          (preamble ? "\n\n" : "") +
+          `Your pending tasks (you own these - mention them when relevant, finish them when the user asks for the next thing):\n${block}`;
+      }
+    }
+  } catch {}
+
   // 2. Past memories (last 15 chat_memory audit entries for this agent)
   try {
     const { data: memories } = await db
