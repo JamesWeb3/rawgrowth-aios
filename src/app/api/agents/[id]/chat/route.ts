@@ -215,6 +215,37 @@ export async function POST(
     extraPreamble += personaLines.join("\n");
   }
 
+  // Persistent agent memories - load the last 15 chat_memory entries
+  // from the audit log so this agent "remembers" decisions, facts, and
+  // user preferences across new chats. The extraction step at the end
+  // of this route writes new ones.
+  try {
+    const { data: memories } = await db
+      .from("rgaios_audit_log")
+      .select("ts, detail")
+      .eq("organization_id", orgId)
+      .eq("kind", "chat_memory")
+      .filter("detail->>agent_id", "eq", agentId)
+      .order("ts", { ascending: false })
+      .limit(15);
+    const memoryRows = (memories ?? []) as Array<{
+      ts: string;
+      detail: { fact?: string; agent_id?: string };
+    }>;
+    if (memoryRows.length > 0) {
+      const block = memoryRows
+        .filter((m) => m.detail?.fact)
+        .reverse()
+        .map((m, i) => `${i + 1}. ${m.detail.fact}`)
+        .join("\n");
+      if (block) {
+        extraPreamble +=
+          (extraPreamble ? "\n\n" : "") +
+          `Things you remember from past conversations with this user (treat as facts about their business + preferences):\n${block}`;
+      }
+    }
+  } catch {}
+
   // Brand profile - inject the latest approved markdown so every reply
   // is grounded in the org's voice/positioning/offer details.
   try {
@@ -374,6 +405,30 @@ export async function POST(
           content: visibleText,
           metadata: persistMetadata,
         });
+
+        // 5b. Extract a single short memory from this exchange so future
+        // chats remember decisions / facts / preferences. Heuristic v0:
+        // pull the user's question + first 200 chars of the reply, write
+        // a one-line "user asked X; agent decided Y" memory. Future:
+        // call a small LLM to do this properly. Best-effort, non-fatal.
+        try {
+          const userBit = last.content.trim().slice(0, 140);
+          const replyBit = visibleText.trim().split(/[.!?\n]/)[0]?.slice(0, 200) ?? "";
+          const fact = `User asked: "${userBit}". I responded with: "${replyBit}".`;
+          await db.from("rgaios_audit_log").insert({
+            organization_id: orgId,
+            kind: "chat_memory",
+            actor_type: "agent",
+            actor_id: agentId,
+            detail: {
+              agent_id: agentId,
+              fact,
+              user_id: userId,
+            },
+          });
+        } catch (err) {
+          console.warn("[chat] memory extract failed:", (err as Error).message);
+        }
 
         emit({ type: "done" });
         controller.close();
