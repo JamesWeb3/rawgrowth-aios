@@ -192,7 +192,7 @@ export async function POST(
     if (content) {
       extraPreamble +=
         (extraPreamble ? "\n\n" : "") +
-        `Brand profile for this organisation (treat as authoritative on voice + positioning + offer):\n\n${content}`;
+        `Brand profile for ${ctx.activeOrgName ?? "this organisation"} (THIS IS THE CLIENT YOU WORK FOR - reference their offer, voice, ICP, frameworks, and banned-words list explicitly when relevant. Generic advice is a failure mode):\n\n${content}`;
     }
   } catch {}
 
