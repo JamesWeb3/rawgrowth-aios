@@ -48,34 +48,49 @@ export default async function OnboardingPage() {
               Let&apos;s get to know your business.
             </p>
           </div>
-          <Link
-            href="/api/onboarding/skip"
-            className="shrink-0 rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-3 py-1.5 text-[12px] text-[var(--text-muted)] hover:border-primary/40 hover:text-primary"
-            title="Skip onboarding for now (you can come back from the sidebar)"
-          >
-            Skip for now
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href="/connections"
+              className={
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium " +
+                (claudeMaxConnected
+                  ? "border border-[var(--line)] bg-primary/10 text-primary hover:bg-primary/15"
+                  : "bg-amber-400/15 text-amber-200 hover:bg-amber-400/25")
+              }
+              title={
+                claudeMaxConnected
+                  ? "Claude Max is connected - manage at /connections"
+                  : "Connect Claude Max to enable agent chat after onboarding"
+              }
+            >
+              {claudeMaxConnected ? (
+                <>
+                  <span className="size-1.5 rounded-full bg-primary" aria-hidden />
+                  Claude Max connected
+                </>
+              ) : (
+                <>+ Connect Claude Max</>
+              )}
+            </Link>
+            <Link
+              href="/api/onboarding/skip"
+              className="inline-flex items-center rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-3 py-1.5 text-[12px] text-[var(--text-muted)] hover:border-primary/40 hover:text-primary"
+              title="Skip onboarding for now - you can come back from the sidebar"
+            >
+              Skip onboarding
+            </Link>
+          </div>
         </div>
       </header>
 
       {!claudeMaxConnected && (
         <div className="rg-fade-in shrink-0 border-b border-amber-400/20 bg-amber-400/5">
-          <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-3 px-6 py-3 md:px-8">
-            <div className="min-w-0">
-              <p className="text-[12px] font-medium text-amber-200">
-                Connect Claude Max to enable agent chat
-              </p>
-              <p className="mt-0.5 text-[11px] text-amber-200/70">
-                You can do this now or after onboarding. Without it, agents
-                won&apos;t be able to reply once your AI org is wired.
-              </p>
-            </div>
-            <Link
-              href="/connections"
-              className="shrink-0 rounded-md bg-amber-400/15 px-3 py-1.5 text-[12px] font-medium text-amber-200 hover:bg-amber-400/25"
-            >
-              Connect now →
-            </Link>
+          <div className="mx-auto max-w-2xl px-6 py-2.5 text-[11px] text-amber-200/80 md:px-8">
+            Heads up: agent chat needs Claude Max wired - click{" "}
+            <Link href="/connections" className="font-medium text-amber-200 underline hover:no-underline">
+              + Connect Claude Max
+            </Link>{" "}
+            up top now or after onboarding.
           </div>
         </div>
       )}
