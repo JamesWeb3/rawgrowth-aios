@@ -108,79 +108,188 @@ function PillarCard({
   );
 }
 
-// Pure-SVG sparkline. Renders a smooth path + area fill.
-function Sparkline({ values, height = 60, color = COLOR_PRIMARY }: { values: number[]; height?: number; color?: string }) {
+// Pure-SVG sparkline. Smooth area + grid baseline + endpoint dot +
+// optional last-value annotation pinned to the right edge.
+function Sparkline({
+  values,
+  height = 80,
+  color = COLOR_PRIMARY,
+}: {
+  values: number[];
+  height?: number;
+  color?: string;
+}) {
   if (values.length < 2) return null;
   const w = 320;
+  const padX = 6;
+  const padY = 8;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const step = w / (values.length - 1);
-  const points = values.map((v, i) => [i * step, height - ((v - min) / range) * (height - 8) - 4]);
-  const path = points.reduce(
-    (acc, [x, y], i) => acc + (i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`),
-    "",
-  );
-  const area = `${path} L ${w} ${height} L 0 ${height} Z`;
+  const step = (w - padX * 2) / (values.length - 1);
+  const yFor = (v: number) =>
+    height - padY - ((v - min) / range) * (height - padY * 2);
+  const points = values.map((v, i) => [padX + i * step, yFor(v)]);
+
+  // Catmull-Rom-ish smoothing → bezier path. Keeps line gentle without
+  // wandering away from datapoints.
+  let path = `M ${points[0][0]} ${points[0][1]}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x0, y0] = points[i];
+    const [x1, y1] = points[i + 1];
+    const cx = x0 + (x1 - x0) / 2;
+    path += ` C ${cx} ${y0}, ${cx} ${y1}, ${x1} ${y1}`;
+  }
+  const area = `${path} L ${points[points.length - 1][0]} ${height} L ${points[0][0]} ${height} Z`;
+  const lastX = points[points.length - 1][0];
+  const lastY = points[points.length - 1][1];
+  const id = `spark-${color.replace(/[^a-z0-9]/gi, "")}`;
+
   return (
-    <svg viewBox={`0 0 ${w} ${height}`} className="w-full" preserveAspectRatio="none">
+    <svg
+      viewBox={`0 0 ${w} ${height}`}
+      className="w-full"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
       <defs>
-        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.42" />
+          <stop offset="55%" stopColor={color} stopOpacity="0.12" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={area} fill="url(#sparkFill)" />
-      <path d={path} stroke={color} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {/* baseline grid */}
+      <line
+        x1={padX}
+        x2={w - padX}
+        y1={height - padY}
+        y2={height - padY}
+        stroke="currentColor"
+        strokeOpacity="0.06"
+      />
+      <line
+        x1={padX}
+        x2={w - padX}
+        y1={padY + (height - padY * 2) / 2}
+        y2={padY + (height - padY * 2) / 2}
+        stroke="currentColor"
+        strokeOpacity="0.04"
+        strokeDasharray="2 4"
+      />
+      <path d={area} fill={`url(#${id})`} />
+      <path
+        d={path}
+        stroke={color}
+        strokeWidth={1.75}
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* endpoint glow + dot */}
+      <circle cx={lastX} cy={lastY} r={6} fill={color} fillOpacity="0.18" />
+      <circle cx={lastX} cy={lastY} r={3} fill={color} />
     </svg>
   );
 }
 
-// Horizontal bar with explicit label + value. Each bar is sized
-// proportional to the max value in the dataset.
-function HBar({ label, value, max, suffix = "" }: { label: string; value: number; max: number; suffix?: string }) {
-  const pct = Math.max(2, (value / max) * 100);
+// Horizontal bar with value baked inside the fill (or alongside if
+// the bar is too short). Smooth gradient fill, subtle bg, monospace
+// value + label spacing tightened.
+function HBar({
+  label,
+  value,
+  max,
+  suffix = "",
+}: {
+  label: string;
+  value: number;
+  max: number;
+  suffix?: string;
+}) {
+  const pct = Math.max(2, Math.min(100, (value / max) * 100));
+  const inside = pct > 18;
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between text-[12px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-mono text-foreground">
+        <span className="truncate text-muted-foreground">{label}</span>
+      </div>
+      <div className="relative h-6 w-full overflow-hidden rounded-md bg-muted/25">
+        <div
+          className="h-full rounded-md bg-gradient-to-r from-primary/85 to-primary"
+          style={{ width: `${pct}%` }}
+        />
+        <span
+          className={
+            "pointer-events-none absolute top-1/2 -translate-y-1/2 font-mono text-[11px] " +
+            (inside
+              ? "right-2 text-primary-foreground"
+              : "left-[calc(var(--pct)+0.5rem)] text-muted-foreground")
+          }
+          style={{ "--pct": `${pct}%` } as React.CSSProperties}
+        >
           {value.toLocaleString()}
           {suffix}
         </span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30">
-        <div
-          className="h-full rounded-full bg-primary"
-          style={{ width: `${pct}%` }}
-        />
       </div>
     </div>
   );
 }
 
-// Two-series bar (revenue vs expenses per period). Tiny + readable.
-function StackedMonthlyBars({ data }: { data: Array<{ month: string; revenue: number; expenses: number }> }) {
-  const max = Math.max(...data.map((d) => d.revenue));
+// Two-series bar (revenue vs expenses per period). Reasonable height,
+// rounded tops, hover ring, total annotation on the bar that just
+// finished.
+function StackedMonthlyBars({
+  data,
+}: {
+  data: Array<{ month: string; revenue: number; expenses: number }>;
+}) {
+  const max = Math.max(1, ...data.map((d) => Math.max(d.revenue, d.expenses)));
+  const lastIdx = data.length - 1;
   return (
-    <div className="grid grid-cols-12 gap-1.5">
-      {data.map((d) => (
-        <div key={d.month} className="flex flex-col items-center gap-1">
-          <div className="flex h-24 w-full items-end gap-0.5">
-            <div
-              className="flex-1 rounded-t-sm bg-primary"
-              style={{ height: `${(d.revenue / max) * 100}%` }}
-              title={`${d.month}: $${d.revenue}K revenue`}
-            />
-            <div
-              className="flex-1 rounded-t-sm bg-muted"
-              style={{ height: `${(d.expenses / max) * 100}%` }}
-              title={`${d.month}: $${d.expenses}K expenses`}
-            />
+    <div className="grid grid-cols-12 gap-2">
+      {data.map((d, i) => {
+        const isLast = i === lastIdx;
+        const total = d.revenue - d.expenses;
+        return (
+          <div
+            key={`${d.month}-${i}`}
+            className="group flex flex-col items-center gap-1.5"
+          >
+            <div className="relative flex h-32 w-full items-end gap-1">
+              <div
+                className="flex-1 rounded-t-md bg-gradient-to-t from-primary/55 to-primary transition-opacity duration-150 group-hover:opacity-100"
+                style={{ height: `${(d.revenue / max) * 100}%` }}
+                title={`${d.month}: ${d.revenue} succeeded`}
+              />
+              <div
+                className="flex-1 rounded-t-md bg-gradient-to-t from-muted/40 to-muted/70 transition-opacity duration-150 group-hover:opacity-100"
+                style={{ height: `${(d.expenses / max) * 100}%` }}
+                title={`${d.month}: ${d.expenses} failed`}
+              />
+              {isLast && (d.revenue > 0 || d.expenses > 0) && (
+                <span
+                  className={
+                    "pointer-events-none absolute -top-4 left-1/2 -translate-x-1/2 font-mono text-[10px] " +
+                    (total >= 0 ? "text-primary" : "text-amber-300")
+                  }
+                >
+                  {total >= 0 ? "+" : ""}
+                  {total}
+                </span>
+              )}
+            </div>
+            <span
+              className={
+                "text-[10px] " +
+                (isLast ? "font-medium text-foreground" : "text-muted-foreground")
+              }
+            >
+              {d.month}
+            </span>
           </div>
-          <span className="text-[10px] text-muted-foreground">{d.month}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
