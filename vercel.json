@@ -1,0 +1,36 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/schedule-tick",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/provision-tick",
+      "schedule": "*/3 * * * *"
+    },
+    {
+      "path": "/api/cron/claude-token",
+      "schedule": "0 * * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/agents/[id]/chat/route.ts": { "maxDuration": 60 },
+    "src/app/api/mini-saas/route.ts": { "maxDuration": 120 },
+    "src/app/api/mini-saas/[id]/route.ts": { "maxDuration": 120 },
+    "src/app/api/onboarding/sales-calls/upload/route.ts": { "maxDuration": 300 },
+    "src/app/api/onboarding/chat/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/schedule-tick/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/provision-tick/route.ts": { "maxDuration": 300 }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "x-frame-options", "value": "DENY" }]
+    }
+  ]
+}
