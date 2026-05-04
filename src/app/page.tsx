@@ -111,6 +111,7 @@ function PillarCard({
 
 // Pure-SVG sparkline. Smooth area + grid baseline + endpoint dot +
 // optional last-value annotation pinned to the right edge.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Sparkline({
   values,
   height = 80,
@@ -373,50 +374,50 @@ export default async function DashboardPage() {
         {pillars.marketing && (
           <PillarCard
             title="Marketing"
-            subtitle="Agent activity, last 12 weeks"
+            subtitle="Reach → Leads → MQLs → Won (last 12 weeks)"
             kpi={
               pillarData.marketing
                 ? {
-                    value: String(
-                      pillarData.marketing.weekly.reduce(
-                        (s, v) => s + v,
-                        0,
-                      ),
-                    ),
-                    delta: `${pillarData.marketing.pctChange >= 0 ? "+" : ""}${pillarData.marketing.pctChange.toFixed(1)}% vs prev wk`,
-                    positive: pillarData.marketing.pctChange >= 0,
+                    value: `${pillarData.marketing.conversionRate}%`,
+                    delta: "end-to-end conversion",
+                    positive: pillarData.marketing.conversionRate >= 1,
                   }
                 : undefined
             }
           >
             {pillarData.marketing ? (
               <>
-                <Sparkline values={pillarData.marketing.weekly} />
-                <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-                  <div className="rounded-md bg-muted/30 p-2.5">
-                    <div className="font-serif text-lg text-foreground">
-                      {pillarData.marketing.totalThisWeek}
+                <div className="space-y-3">
+                  {pillarData.marketing.funnel.map((stage) => (
+                    <div key={stage.label}>
+                      <div className="flex items-baseline justify-between text-[12px]">
+                        <span className="text-muted-foreground">{stage.label}</span>
+                        <span className="font-mono text-foreground">
+                          {stage.value.toLocaleString()}
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            ({stage.pct}%)
+                          </span>
+                        </span>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/30">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${Math.max(2, stage.pct)}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      This wk
-                    </div>
-                  </div>
-                  <div className="rounded-md bg-muted/30 p-2.5">
-                    <div className="font-serif text-lg text-foreground">
-                      {pillarData.marketing.prevWeek}
-                    </div>
-                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Prev wk
-                    </div>
-                  </div>
-                  <div className="rounded-md bg-muted/30 p-2.5">
-                    <div className="font-serif text-lg text-primary">
-                      {pillarData.marketing.taskCompletionRate}%
-                    </div>
-                    <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Conversion
-                    </div>
-                  </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-md bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                  <span>
+                    Leads this wk: <span className="font-mono text-foreground">{pillarData.marketing.totalThisWeek}</span>
+                    {" · "}prev: <span className="font-mono text-foreground">{pillarData.marketing.prevWeek}</span>
+                  </span>
+                  {pillarData.marketing.cplProxy !== null && (
+                    <span title="Activity events per lead. Real CPL needs ad-spend wiring.">
+                      Effort/lead: <span className="font-mono text-foreground">{pillarData.marketing.cplProxy}</span>
+                    </span>
+                  )}
                 </div>
               </>
             ) : (

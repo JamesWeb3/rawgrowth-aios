@@ -19,6 +19,7 @@ import {
   ListChecks,
   PhoneCall,
   Code2,
+  MessageSquare,
 } from "lucide-react";
 
 import {
@@ -67,6 +68,7 @@ const navSections: NavSection[] = [
     label: "Agent Organization",
     items: [
       { label: "Agents", href: "/agents", icon: Bot },
+      { label: "Chat", href: "/chat", icon: MessageSquare },
       { label: "Tasks", href: "/tasks", icon: ListChecks },
       { label: "Mini SaaS", href: "/mini-saas", icon: Code2 },
       { label: "Routines", href: "/routines", icon: Repeat },

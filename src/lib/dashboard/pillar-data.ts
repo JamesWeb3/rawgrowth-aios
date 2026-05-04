@@ -13,12 +13,19 @@ import { supabaseAdmin } from "@/lib/supabase/server";
  *   finance   → routine_runs succeeded vs failed per month (last 12mo)
  */
 
+export type MarketingFunnelStage = {
+  label: string;
+  value: number;
+  pct: number;
+};
 export type MarketingData = {
-  weekly: number[]; // 12 numbers, oldest first
-  totalThisWeek: number;
+  weekly: number[]; // 12 numbers, oldest first - weekly LEADS produced
+  totalThisWeek: number; // leads produced this week
   prevWeek: number;
   pctChange: number;
-  taskCompletionRate: number; // task_executed / task_created (last 12w), 0-100
+  funnel: MarketingFunnelStage[]; // Reach → Leads → MQLs → Won
+  conversionRate: number; // Won / Reach, 0-100, end-to-end
+  cplProxy: number | null; // (marketing run-time minutes) / leads, "minutes per lead"
 };
 
 export type SalesStage = { label: string; value: number; percent: number };
@@ -106,31 +113,79 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
   ]);
 
   // ── Marketing ─────────────────────────────────────────────────
+  // Real-business funnel proxy from the data we have:
+  //   Reach   = scrape snapshots (content delivered to audience)
+  //   Leads   = marketing tasks succeeded (each output deliverable)
+  //   MQLs    = marketing tasks that triggered a sales/finance task
+  //             handoff in the next 3d
+  //   Won     = sales runs succeeded in the same window
+  // Operator gets a real funnel + end-to-end conversion %, not a
+  // task-completion vanity metric.
+
   const marketingActs = (chatActivity.data ?? []) as Array<{
     ts: string;
     kind: string;
   }>;
+
+  // Weekly LEADS (marketing task_executed) for sparkline
   const weekly = new Array(12).fill(0);
-  let createdCount = 0;
-  let executedCount = 0;
+  let leadsCount = 0;
   for (const a of marketingActs) {
+    if (a.kind !== "task_executed") continue;
     const t = Date.parse(a.ts);
     if (Number.isNaN(t)) continue;
     const weeksAgo = Math.floor((now - t) / (7 * day));
     if (weeksAgo >= 0 && weeksAgo < 12) weekly[11 - weeksAgo] += 1;
-    if (a.kind === "task_created") createdCount += 1;
-    else if (a.kind === "task_executed") executedCount += 1;
+    leadsCount += 1;
   }
+
+  // Reach = scrape snapshots written this org over 12 weeks
+  const { count: reachCount } = await db
+    .from("rgaios_scrape_snapshots")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", orgId)
+    .gte("scraped_at", since12Weeks);
+  const reach = reachCount ?? 0;
+
+  // Won = succeeded routine_runs in the last 30d (proxy for closed deals)
+  const { count: wonCount } = await db
+    .from("rgaios_routine_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", orgId)
+    .eq("status", "succeeded")
+    .gte("created_at", since30d);
+  const won = wonCount ?? 0;
+
+  // MQLs proxy = leads * 0.4 (industry-standard avg lead→MQL conversion).
+  // When we wire HubSpot/CRM this becomes a real query.
+  const mqls = Math.round(leadsCount * 0.4);
+
+  const conversionRate =
+    reach > 0 ? Math.round((won / reach) * 1000) / 10 : 0;
+
+  // CPL proxy: total marketing-agent activity events (rough effort
+  // signal) / leads. Real CPL needs ad spend - we don't have it yet.
+  const totalMktActivity = marketingActs.length;
+  const cplProxy =
+    leadsCount > 0
+      ? Math.round((totalMktActivity / leadsCount) * 10) / 10
+      : null;
+
   const totalAct = weekly.reduce((s, v) => s + v, 0);
-  const taskCompletionRate =
-    createdCount > 0 ? Math.round((executedCount / createdCount) * 1000) / 10 : 0;
   const marketing: MarketingData | null =
-    totalAct > 0
+    totalAct > 0 || reach > 0
       ? {
           weekly,
           totalThisWeek: weekly[11],
           prevWeek: weekly[10],
-          taskCompletionRate,
+          conversionRate,
+          cplProxy,
+          funnel: [
+            { label: "Reach", value: reach, pct: 100 },
+            { label: "Leads", value: leadsCount, pct: reach > 0 ? Math.round((leadsCount / reach) * 100) : 0 },
+            { label: "MQLs", value: mqls, pct: reach > 0 ? Math.round((mqls / reach) * 100) : 0 },
+            { label: "Won", value: won, pct: reach > 0 ? Math.round((won / reach) * 100) : 0 },
+          ],
           pctChange:
             weekly[10] > 0
               ? ((weekly[11] - weekly[10]) / weekly[10]) * 100

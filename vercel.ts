@@ -20,6 +20,10 @@ export const config: VercelConfig = {
       path: "/api/cron/schedule-tick",
       schedule: "0 6 * * *",
     },
+    {
+      path: "/api/cron/insights-tick",
+      schedule: "0 7 * * *",
+    },
   ],
   functions: {
     "src/app/api/agents/[id]/chat/route.ts": { maxDuration: 60 },
@@ -29,6 +33,8 @@ export const config: VercelConfig = {
     "src/app/api/onboarding/chat/route.ts": { maxDuration: 60 },
     "src/app/api/cron/schedule-tick/route.ts": { maxDuration: 60 },
     "src/app/api/cron/provision-tick/route.ts": { maxDuration: 300 },
+    "src/app/api/cron/insights-tick/route.ts": { maxDuration: 300 },
+    "src/app/api/insights/route.ts": { maxDuration: 120 },
   },
 };
 

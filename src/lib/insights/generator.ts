@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
+import { extractAndCreateTasks } from "@/lib/agent/tasks";
+import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 
 /**
  * Per-department metric anomaly detector + agent drill-down.
@@ -223,14 +225,49 @@ export async function generateInsightsForDept(input: {
     const direction = s.deltaPct > 0 ? "up" : "down";
     const pctRound = Math.round(Math.abs(s.deltaPct) * 100);
     const label = METRIC_LABELS[s.metric] ?? s.metric;
-    const userMessage = `Quick analysis. Last 7 days, ${label} for ${input.department ?? "the org"} are ${direction} ${pctRound}% versus the prior 7 days (${s.prior} → ${s.current}). Two paragraphs only:
+    const userMessage = `URGENT METRIC ALERT. ${label} for ${input.department ?? "the org"} moved ${direction} ${pctRound}% in the last 7 days vs the prior 7 (${s.prior} → ${s.current}).
 
-1. **Reason** — best guess at the root cause based on what's happening in this org's recent activity, brand profile, and your own track record. Be concrete, no SaaS clichés.
-2. **Suggested action** — one specific next step the operator should take this week. Concrete deliverable, not "explore" or "investigate".`;
+Your job, as ${input.department ? "department head" : "CEO coordinator"}:
+
+1. **Root cause** (1 short paragraph) - what specifically caused this shift? Look at the company corpus, your past memories, recent task outputs, and brand context above. Don't guess generically; cite something concrete.
+
+2. **Coordinated action plan** - propose a SHORT plan that uses your sub-agents and peers. Use <task> blocks to assign concrete deliverables. Each sub-task must:
+   - go to a real agent (use assignee="<role>" - check your Org Place above for who reports to you and who else exists in the org)
+   - have a deliverable the operator can SEE (a doc, a number, a draft, a checklist), not "explore X"
+   - have enough context that the assignee can start without asking back
+
+3. **Confirmation question to the human** (1 line) - the human is in the loop for accountability. Ask them ONE specific yes/no or short-answer question that gates the plan (e.g. "Spending up to $5k on creative this week - approve?"). Phrase it so a busy founder can answer in 5 seconds.
+
+Format your answer like:
+
+ROOT CAUSE: ...
+
+PLAN:
+<task assignee="role-or-self">
+Title: ...
+Description: ...
+</task>
+<task assignee="...">
+Title: ...
+Description: ...
+</task>
+
+CONFIRM: ...?
+
+No SaaS clichés. Concrete numbers. Brand voice on.`;
 
     let reason = "";
     let suggested = "";
     try {
+      // Build full preamble so agent has brand + memory + RAG + org place
+      // when reasoning about the anomaly. That's what makes the answer
+      // grounded instead of generic.
+      const preamble = await buildAgentChatPreamble({
+        orgId: input.orgId,
+        agentId: agent.id,
+        orgName: agent.orgName,
+        queryText: userMessage,
+      });
       const r = await chatReply({
         organizationId: input.orgId,
         organizationName: agent.orgName,
@@ -239,26 +276,48 @@ export async function generateInsightsForDept(input: {
         publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
         agentId: agent.id,
         historyOverride: [],
-        extraPreamble: "",
+        extraPreamble: preamble,
         noHandoff: true,
-        maxTokens: 1500,
+        maxTokens: 3000,
       });
       if (!r.ok) {
         errors.push(`agent ${agent.name}: ${r.error.slice(0, 120)}`);
         continue;
       }
-      // Best-effort split: look for "Suggested action" header, otherwise
-      // first paragraph = reason, rest = suggested.
-      const text = r.reply.trim();
-      const splitMatch = text.match(/(.+?)\n\n.*?suggested action[\s\S]+?\n\n?([\s\S]+)/i);
-      if (splitMatch) {
-        reason = splitMatch[1].trim();
-        suggested = splitMatch[2].trim();
-      } else {
-        const paragraphs = text.split(/\n\n+/);
-        reason = paragraphs[0] ?? text.slice(0, 600);
-        suggested = paragraphs.slice(1).join("\n\n").trim() || "(see reason)";
+
+      // Extract <task> blocks → real routines + runs → executor fires.
+      // Multi-agent coordination happens here: each <task> in the agent's
+      // reply spawns a routine assigned to whichever sub-agent the agent
+      // named. The executeChatTask path will run them async via after().
+      try {
+        await extractAndCreateTasks({
+          orgId: input.orgId,
+          speakerAgentId: agent.id,
+          reply: r.reply,
+        });
+      } catch (err) {
+        console.warn(
+          `[insights] task extraction failed: ${(err as Error).message}`,
+        );
       }
+
+      // Strip <task> blocks from the visible reason/action so the UI
+      // card doesn't render raw XML.
+      const stripped = r.reply.replace(/<task[\s\S]*?<\/task>/gi, "").trim();
+      const root = stripped.match(/ROOT CAUSE:\s*([\s\S]+?)(?=\n\n?(?:PLAN|CONFIRM):|\n\n?$|$)/i);
+      const confirm = stripped.match(/CONFIRM:\s*([\s\S]+?)$/i);
+      const planText = stripped
+        .replace(/ROOT CAUSE:[\s\S]+?(?=PLAN:|CONFIRM:|$)/i, "")
+        .replace(/CONFIRM:[\s\S]+$/i, "")
+        .replace(/^PLAN:\s*/i, "")
+        .trim();
+
+      reason = root ? root[1].trim() : stripped.split(/\n\n/)[0] ?? "";
+      suggested = [planText, confirm ? `\n\n**Question for you:** ${confirm[1].trim()}` : ""]
+        .filter(Boolean)
+        .join("")
+        .trim();
+      if (!suggested) suggested = stripped.slice(0, 600);
     } catch (err) {
       errors.push((err as Error).message.slice(0, 120));
       continue;
