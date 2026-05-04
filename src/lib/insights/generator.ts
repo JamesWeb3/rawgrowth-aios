@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
+import { searchWeb, formatSearchBlock } from "@/lib/web-search/duckduckgo";
 
 /**
  * Per-department metric anomaly detector + agent drill-down.
@@ -262,12 +263,22 @@ No SaaS clichés. Concrete numbers. Brand voice on.`;
       // Build full preamble so agent has brand + memory + RAG + org place
       // when reasoning about the anomaly. That's what makes the answer
       // grounded instead of generic.
-      const preamble = await buildAgentChatPreamble({
+      let preamble = await buildAgentChatPreamble({
         orgId: input.orgId,
         agentId: agent.id,
         orgName: agent.orgName,
         queryText: userMessage,
       });
+
+      // Web context: pull DDG top results for the metric + dept so
+      // the agent reasons against current market signal, not just
+      // internal data. Best-effort - skipped on network failure.
+      const searchQuery = `${input.department ?? "service business"} ${label} drop ${pctRound}% root cause 2026`;
+      try {
+        const webResults = await searchWeb(searchQuery, 4);
+        const block = formatSearchBlock(searchQuery, webResults);
+        if (block) preamble += `\n\n${block}`;
+      } catch {}
       const r = await chatReply({
         organizationId: input.orgId,
         organizationName: agent.orgName,
@@ -353,10 +364,19 @@ No SaaS clichés. Concrete numbers. Brand voice on.`;
 /**
  * Sweep every department + atlas-level (cross-dept). Used by the cron
  * route + by the admin "Generate insights now" button.
+ *
+ * Also walks every still-open critical/warning insight: auto-resolves
+ * if the metric recovered, retries the agent action otherwise. That's
+ * the "keep working until fixed" loop.
  */
+const RETRY_INTERVAL_H =
+  Number(process.env.INSIGHTS_RETRY_INTERVAL_HOURS) || 24;
+
 export async function sweepAllDepts(orgId: string): Promise<{
   created: number;
   skipped: number;
+  resolved: number;
+  retried: number;
   errors: string[];
 }> {
   const depts = ["marketing", "sales", "fulfilment", "finance", "development"];
@@ -369,10 +389,144 @@ export async function sweepAllDepts(orgId: string): Promise<{
     skipped += r.skipped;
     errors.push(...r.errors);
   }
-  // Atlas (cross-dept)
-  const r = await generateInsightsForDept({ orgId, department: null });
-  created += r.created;
-  skipped += r.skipped;
-  errors.push(...r.errors);
-  return { created, skipped, errors };
+  const atl = await generateInsightsForDept({ orgId, department: null });
+  created += atl.created;
+  skipped += atl.skipped;
+  errors.push(...atl.errors);
+
+  const loop = await checkAndRetryOpen(orgId);
+  return {
+    created,
+    skipped,
+    resolved: loop.resolved,
+    retried: loop.retried,
+    errors: [...errors, ...loop.errors],
+  };
+}
+
+async function checkAndRetryOpen(orgId: string): Promise<{
+  resolved: number;
+  retried: number;
+  errors: string[];
+}> {
+  const db = supabaseAdmin();
+  const { data: openRows } = await db
+    .from("rgaios_insights")
+    .select(
+      "id, department, metric, severity, loop_count, last_attempt_at, generated_by_agent_id",
+    )
+    .eq("organization_id", orgId)
+    .eq("status", "open")
+    .in("severity", ["critical", "warning"]);
+
+  type R = {
+    id: string;
+    department: string | null;
+    metric: string;
+    severity: string;
+    loop_count: number;
+    last_attempt_at: string | null;
+    generated_by_agent_id: string | null;
+  };
+  const open = (openRows ?? []) as R[];
+  let resolved = 0;
+  let retried = 0;
+  const errors: string[] = [];
+
+  for (const ins of open) {
+    const snaps = await snapshotForDept(orgId, ins.department);
+    const same = snaps.find((s) => s.metric === ins.metric);
+
+    if (!same) {
+      // Metric recovered - close the alarm
+      await db
+        .from("rgaios_insights")
+        .update({
+          status: "resolved",
+          resolved_at: new Date().toISOString(),
+        } as never)
+        .eq("id", ins.id);
+      await db.from("rgaios_audit_log").insert({
+        organization_id: orgId,
+        kind: "insight_resolved",
+        actor_type: "system",
+        actor_id: "insights-loop",
+        detail: {
+          insight_id: ins.id,
+          metric: ins.metric,
+          loop_count: ins.loop_count,
+        },
+      } as never);
+      resolved += 1;
+      continue;
+    }
+
+    const lastTry = ins.last_attempt_at ? Date.parse(ins.last_attempt_at) : 0;
+    if (Date.now() - lastTry < RETRY_INTERVAL_H * 60 * 60 * 1000) continue;
+
+    try {
+      await retryInsight(orgId, ins.id, ins.department, ins.metric, ins.loop_count);
+      retried += 1;
+    } catch (err) {
+      errors.push((err as Error).message.slice(0, 120));
+    }
+  }
+  return { resolved, retried, errors };
+}
+
+async function retryInsight(
+  orgId: string,
+  insightId: string,
+  dept: string | null,
+  metric: string,
+  loopCount: number,
+): Promise<void> {
+  const db = supabaseAdmin();
+  const agent = await findAgentForDept(orgId, dept);
+  if (!agent) return;
+
+  const label = METRIC_LABELS[metric] ?? metric;
+  const userMessage = `RETRY ${loopCount + 1}. The metric "${label}" for ${dept ?? "the org"} is STILL outside the safe range after your previous attempt didn't fix it.
+
+Look at what tasks you spawned last time (in your pending tasks list above). What didn't work? Why? Propose a NEW coordinated plan with <task> blocks - different deliverables, different sub-agents if needed. Don't repeat what already failed.
+
+Format same as before: ROOT CAUSE / PLAN with <task> blocks / CONFIRM. Concrete, brand voice on.`;
+
+  const preamble = await buildAgentChatPreamble({
+    orgId,
+    agentId: agent.id,
+    orgName: agent.orgName,
+    queryText: userMessage,
+  });
+  const r = await chatReply({
+    organizationId: orgId,
+    organizationName: agent.orgName,
+    chatId: 0,
+    userMessage,
+    publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    agentId: agent.id,
+    historyOverride: [],
+    extraPreamble: preamble,
+    noHandoff: true,
+    maxTokens: 3000,
+  });
+  if (!r.ok) throw new Error(r.error);
+
+  try {
+    await extractAndCreateTasks({
+      orgId,
+      speakerAgentId: agent.id,
+      reply: r.reply,
+    });
+  } catch {}
+
+  const stripped = r.reply.replace(/<task[\s\S]*?<\/task>/gi, "").trim();
+  await db
+    .from("rgaios_insights")
+    .update({
+      loop_count: loopCount + 1,
+      last_attempt_at: new Date().toISOString(),
+      reason: stripped.slice(0, 800),
+    } as never)
+    .eq("id", insightId);
 }

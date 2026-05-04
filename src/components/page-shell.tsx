@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AlarmBanner } from "@/components/insights/alarm-banner";
 
 type PageShellProps = {
   title: string;
@@ -11,7 +12,8 @@ export function PageShell({ title, description, actions, children }: PageShellPr
   return (
     <div className="flex min-h-svh flex-col">
       <main className="flex-1 p-6">
-        <div className="mb-8 flex items-start justify-between gap-4">
+        <AlarmBanner />
+        <div className="mt-4 mb-8 flex items-start justify-between gap-4">
           <div>
             <h2 className="font-serif text-3xl font-normal tracking-tight text-foreground">
               {title}

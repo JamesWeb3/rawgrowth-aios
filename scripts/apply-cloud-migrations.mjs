@@ -34,6 +34,7 @@ const files = [
   "0044_kalendly.sql",
   "0046_mini_saas.sql",
   "0048_insights.sql",
+  "0049_insights_loop.sql",
 ];
 
 const client = new pg.Client({ connectionString: url });

@@ -29,6 +29,7 @@ type Insight = {
   suggested_action: string | null;
   status: string;
   agent_name: string | null;
+  loop_count?: number;
   created_at: string;
 };
 
@@ -109,7 +110,7 @@ export function InsightsPanel({
   const insights = data?.insights ?? [];
 
   return (
-    <section className="rounded-md border border-border bg-card/40 p-5">
+    <section id="insights" className="rounded-md border border-border bg-card/40 p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
@@ -184,6 +185,9 @@ export function InsightsPanel({
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     {ins.department ?? "cross-dept"}
                     {ins.agent_name ? ` · drilled by ${ins.agent_name}` : ""}
+                    {ins.loop_count && ins.loop_count > 0
+                      ? ` · attempt ${ins.loop_count + 1}`
+                      : ""}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

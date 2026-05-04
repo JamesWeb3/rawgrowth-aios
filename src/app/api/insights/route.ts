@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   let q = supabaseAdmin()
     .from("rgaios_insights")
     .select(
-      "id, department, kind, severity, metric, current_value, prior_value, delta_pct, title, reason, suggested_action, status, generated_by_agent_id, created_at",
+      "id, department, kind, severity, metric, current_value, prior_value, delta_pct, title, reason, suggested_action, status, generated_by_agent_id, loop_count, created_at",
     )
     .eq("organization_id", orgId)
     .neq("status", "dismissed")
