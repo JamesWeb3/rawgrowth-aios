@@ -410,16 +410,11 @@ export default async function DashboardPage() {
                     </div>
                   </div>
                   <div className="rounded-md bg-muted/30 p-2.5">
-                    <div className="font-serif text-lg text-foreground">
-                      {Math.round(
-                        pillarData.marketing.weekly.reduce(
-                          (s, v) => s + v,
-                          0,
-                        ) / 12,
-                      )}
+                    <div className="font-serif text-lg text-primary">
+                      {pillarData.marketing.taskCompletionRate}%
                     </div>
                     <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Avg/wk
+                      Conversion
                     </div>
                   </div>
                 </div>
@@ -493,19 +488,29 @@ export default async function DashboardPage() {
             }
           >
             {pillarData.fulfilment ? (
-              <div className="space-y-3">
-                {pillarData.fulfilment.byAgent.map((r) => (
-                  <HBar
-                    key={r.region}
-                    label={r.region}
-                    value={r.orders}
-                    max={Math.max(
-                      ...pillarData.fulfilment!.byAgent.map((x) => x.orders),
-                    )}
-                    suffix=" runs"
-                  />
-                ))}
-              </div>
+              <>
+                <div className="space-y-3">
+                  {pillarData.fulfilment.byAgent.map((r) => (
+                    <HBar
+                      key={r.region}
+                      label={r.region}
+                      value={r.orders}
+                      max={Math.max(
+                        ...pillarData.fulfilment!.byAgent.map((x) => x.orders),
+                      )}
+                      suffix=" runs"
+                    />
+                  ))}
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-md bg-muted/30 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Completion rate
+                  </span>
+                  <span className="font-mono text-[14px] text-primary">
+                    {pillarData.fulfilment.completionRate}%
+                  </span>
+                </div>
+              </>
             ) : (
               <EmptyPillar
                 line1="No fulfilment runs yet"

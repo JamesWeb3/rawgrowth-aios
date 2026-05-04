@@ -33,6 +33,8 @@ const METRIC_LABELS: Record<string, string> = {
   runs_failed: "failed agent runs",
   agent_activity: "agent activity events",
   approvals_pending: "pending approvals",
+  conversion_rate: "task conversion rate (succeeded / total)",
+  completion_rate: "task completion rate (executed / created)",
 };
 
 async function snapshotForDept(
@@ -113,10 +115,39 @@ async function snapshotForDept(
     return { metric, current, prior, deltaPct, worse };
   }
 
+  // Conversion rate = succeeded / (succeeded + failed). Skip when
+  // total is < 3 (small-sample noise drowns the signal).
+  function ratePct(suc: number, fail: number): number | null {
+    const total = suc + fail;
+    if (total < 3) return null;
+    return suc / total;
+  }
+  const convCurrent = ratePct(succCurrent, failCurrent);
+  const convPrior = ratePct(succPrior, failPrior);
+
+  function packRate(
+    metric: string,
+    current: number | null,
+    prior: number | null,
+  ): MetricSnapshot | null {
+    if (current === null || prior === null) return null;
+    if (prior === 0 && current === 0) return null;
+    const deltaPct = current - prior; // absolute pp change
+    if (Math.abs(deltaPct) < 0.1) return null; // require ≥10pp move
+    return {
+      metric,
+      current: Math.round(current * 1000) / 10,
+      prior: Math.round(prior * 1000) / 10,
+      deltaPct,
+      worse: deltaPct < 0,
+    };
+  }
+
   return [
     pack("runs_succeeded", succCurrent, succPrior, true),
     pack("runs_failed", failCurrent, failPrior, false),
     pack("agent_activity", actCurrent, actPrior, true),
+    packRate("conversion_rate", convCurrent, convPrior),
   ].filter((s): s is MetricSnapshot => s !== null);
 }
 

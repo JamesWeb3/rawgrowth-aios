@@ -18,6 +18,7 @@ export type MarketingData = {
   totalThisWeek: number;
   prevWeek: number;
   pctChange: number;
+  taskCompletionRate: number; // task_executed / task_created (last 12w), 0-100
 };
 
 export type SalesStage = { label: string; value: number; percent: number };
@@ -30,6 +31,7 @@ export type FulfilmentSlice = { region: string; orders: number };
 export type FulfilmentData = {
   byAgent: FulfilmentSlice[];
   totalThisWeek: number;
+  completionRate: number; // succeeded / (succeeded+failed) over 7d, 0-100
 };
 
 export type FinanceMonth = { month: string; revenue: number; expenses: number };
@@ -37,6 +39,10 @@ export type FinanceData = {
   monthly: FinanceMonth[];
   netThisMonth: number;
   marginPct: number;
+};
+
+export type MarketingExtra = {
+  taskExecutionRate: number; // task_executed / task_created over 12w, 0-100
 };
 
 export type PillarData = {
@@ -105,19 +111,26 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
     kind: string;
   }>;
   const weekly = new Array(12).fill(0);
+  let createdCount = 0;
+  let executedCount = 0;
   for (const a of marketingActs) {
     const t = Date.parse(a.ts);
     if (Number.isNaN(t)) continue;
     const weeksAgo = Math.floor((now - t) / (7 * day));
     if (weeksAgo >= 0 && weeksAgo < 12) weekly[11 - weeksAgo] += 1;
+    if (a.kind === "task_created") createdCount += 1;
+    else if (a.kind === "task_executed") executedCount += 1;
   }
   const totalAct = weekly.reduce((s, v) => s + v, 0);
+  const taskCompletionRate =
+    createdCount > 0 ? Math.round((executedCount / createdCount) * 1000) / 10 : 0;
   const marketing: MarketingData | null =
     totalAct > 0
       ? {
           weekly,
           totalThisWeek: weekly[11],
           prevWeek: weekly[10],
+          taskCompletionRate,
           pctChange:
             weekly[10] > 0
               ? ((weekly[11] - weekly[10]) / weekly[10]) * 100
@@ -234,10 +247,17 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
       }
       slices.sort((a, b) => b.orders - a.orders);
       const top4 = slices.slice(0, 4);
+      // Completion rate = succeeded / (succeeded + failed) over the
+      // 7d window for this dept's runs.
+      const succ = rows.filter((r) => r.status === "succeeded").length;
+      const fail = rows.filter((r) => r.status === "failed").length;
+      const completionRate =
+        succ + fail > 0 ? Math.round((succ / (succ + fail)) * 1000) / 10 : 0;
       if (top4.length > 0) {
         fulfilment = {
           byAgent: top4,
           totalThisWeek: top4.reduce((s, x) => s + x.orders, 0),
+          completionRate,
         };
       }
     }
