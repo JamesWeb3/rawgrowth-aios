@@ -149,6 +149,107 @@ export async function buildAgentChatPreamble(input: {
     }
   } catch {}
 
+  // 1c-bis. Cross-dept activity snapshot for Atlas (CEO role only).
+  // Atlas needs to ANSWER questions like "what's marketing working on"
+  // or "audit 12 completed runs" - so we inject the last 20 runs +
+  // last 30 task spawns across the WHOLE org. Without this, Atlas
+  // truthfully says "I don't have access to the run log" - which
+  // looks like a broken bot to the user.
+  try {
+    const { data: agentRow3 } = await db
+      .from("rgaios_agents")
+      .select("role")
+      .eq("id", agentId)
+      .maybeSingle();
+    const isCeo =
+      (agentRow3 as { role?: string } | null)?.role === "ceo";
+    if (isCeo) {
+      // Last 20 routine runs (succeeded or running) across org
+      const { data: runs } = await db
+        .from("rgaios_routine_runs")
+        .select(
+          "id, status, completed_at, created_at, output, routines:routine_id(title, assignee_agent_id)",
+        )
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      const runRows = (runs ?? []) as Array<{
+        id: string;
+        status: string;
+        completed_at: string | null;
+        created_at: string;
+        output: { reply?: string } | null;
+        routines: { title: string | null; assignee_agent_id: string | null } | null;
+      }>;
+      // Resolve assignee names
+      const aIds = Array.from(
+        new Set(
+          runRows
+            .map((r) => r.routines?.assignee_agent_id)
+            .filter((x): x is string => typeof x === "string"),
+        ),
+      );
+      const nameById = new Map<string, string>();
+      if (aIds.length > 0) {
+        const { data: as } = await db
+          .from("rgaios_agents")
+          .select("id, name")
+          .in("id", aIds);
+        for (const a of (as ?? []) as Array<{ id: string; name: string }>) {
+          nameById.set(a.id, a.name);
+        }
+      }
+      if (runRows.length > 0) {
+        const block = runRows
+          .map((r, i) => {
+            const who = r.routines?.assignee_agent_id
+              ? nameById.get(r.routines.assignee_agent_id) ?? "agent"
+              : "unassigned";
+            const title = r.routines?.title ?? "(untitled)";
+            const out = (r.output?.reply ?? "")
+              .replace(/\n+/g, " ")
+              .slice(0, 100);
+            return `${i + 1}. [${r.status}] ${title} - ${who}${out ? ` :: ${out}` : ""}`;
+          })
+          .join("\n");
+        preamble +=
+          (preamble ? "\n\n" : "") +
+          `Recent agent activity across the WHOLE org (last 20 runs - you have full read access here, do NOT say "I don't have access"):\n${block}`;
+      }
+
+      // Atlas command directive - commanding the dept heads
+      preamble +=
+        (preamble ? "\n\n" : "") +
+        [
+          "═══ YOU ARE ATLAS - THE COMMANDER ═══",
+          "",
+          "You are the operator's ONE point of contact. The dept heads (Marketing Manager, Sales Manager, Operations Manager, Finance Manager, Engineering Manager) report to you. Your job:",
+          "",
+          "1. ROUTE - When the operator asks for cross-team work, identify which head OWNS the outcome and dispatch via <task assignee=\"<role>\">. Don't try to do their job yourself.",
+          "2. SYNTHESIZE - When pulling status, summarize across heads in 3 bullets max. The operator wants the whole picture, not five raw reports.",
+          "3. ESCALATE - If a head has been retrying without recovery, surface it. Tell the operator: 'Marketing has tried 3 angles on conversion - we need a human call on creative spend.'",
+          "4. KEEP HEADS ALIGNED - When a decision affects multiple depts, tell each head what to expect. Use <shared_memory scope=\"all\"> for facts everyone needs.",
+          "",
+          "Example dispatch (operator: 'we need to fix the conversion drop'):",
+          "  Reply: 'Marketing Manager owns this. I'm dispatching the audit + 3 hooks now.'",
+          "  <task assignee=\"marketer\">",
+          "  Title: Audit conversion drop, ship 3 founder-story hooks",
+          "  Description: Conversion fell 53% w/w. Pause underperforming creatives, ship 3 new hooks built around founder story (beat testimonial 2.4x last A/B). Approve $1.2k creative budget with the operator first.",
+          "  </task>",
+          "",
+          "Do NOT dispatch tasks for things YOU can answer (questions, summaries, opinions). Do NOT delegate cross-team coordination back to a single head when it spans depts - that's YOUR job.",
+          "",
+          "═══ DATA-ASK PROTOCOL ═══",
+          "",
+          "If you genuinely cannot answer or plan without specific data the corpus doesn't have (e.g. real CTR numbers, AOV, customer count), end your reply with one or more <need> blocks:",
+          "",
+          "<need scope=\"crm|metric|file|other\">EXACT data you need. Be specific - 'last 30 days of FB ads CTR' beats 'recent ad data'.</need>",
+          "",
+          "The system picks these up + posts a chat message to the operator + creates a Data Entry stub. DO NOT fabricate numbers.",
+        ].join("\n");
+    }
+  } catch {}
+
   // 2. Past memories (last 15 chat_memory audit entries for this agent)
   try {
     const { data: memories } = await db
@@ -269,6 +370,34 @@ export async function buildAgentChatPreamble(input: {
       "DO NOT emit a <task> block for purely conversational replies (questions, brainstorming, opinions). Only when there's a concrete piece of work to track.",
       "",
       "You may emit MULTIPLE <task> blocks in one reply (one per discrete task). Keep the visible part of your reply short - the user reads it as a confirmation, not as a re-statement of what's in the task.",
+      "",
+      "═══ AGENT MANAGEMENT (Atlas + dept heads only) ═══",
+      "",
+      "If you are Atlas (CEO) or a dept head, you can re-org SUB-AGENTS in conversation. CANNOT touch other dept heads (Pedro's rule - heads protected).",
+      "",
+      `<agent action="create" name="Senior SDR" reports_to="Sales Manager" role="sdr" description="Owns inbound lead qualification."></agent>`,
+      `<agent action="archive" name="Junior Copywriter"></agent>`,
+      `<agent action="update" name="Senior SDR" description="Now also handles LinkedIn DMs."></agent>`,
+      "",
+      "Use when conversation makes clear a missing role would unblock work. Don't use for trivial title tweaks.",
+      "",
+      "═══ SHARED MEMORY ═══",
+      "",
+      "When you learn a fact ALL peer agents need (client uses Shopify, owner prefers PT-BR slack, decided to drop X feature), emit a <shared_memory> block:",
+      "",
+      `<shared_memory importance="4" scope="all">FACT IN ONE LINE</shared_memory>`,
+      "",
+      "scope: \"all\" = every agent sees it. Or list dept slugs: \"marketing,sales\".",
+      "importance: 1-5 (4-5 = pinned in everyone's preamble forever).",
+      "Skip for one-conversation context bits - those auto-save as individual memory.",
+      "",
+      "═══ DATA-ASK PROTOCOL ═══",
+      "",
+      "If you genuinely cannot plan without specific data the corpus doesn't have (real CTR numbers, AOV, customer count), end your reply with one or more <need> blocks:",
+      "",
+      `<need scope="crm|metric|file|other">EXACT data needed. Be specific - 'last 30 days FB ads CTR' beats 'recent ad data'.</need>`,
+      "",
+      "Server intercepts these + posts chat message asking operator. DO NOT fabricate numbers.",
     ].join("\n");
 
   return preamble;

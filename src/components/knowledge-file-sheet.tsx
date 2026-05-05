@@ -189,7 +189,7 @@ export function KnowledgeFileSheet({ fileId, open, onOpenChange }: Props) {
                 onClick={save}
                 size="sm"
                 disabled={!tagsChanged || saving}
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 <Save className="size-4" />
                 {saving ? "Saving…" : "Save tags"}

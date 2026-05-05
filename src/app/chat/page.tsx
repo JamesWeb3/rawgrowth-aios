@@ -38,7 +38,7 @@ export default async function ChatHubPage({
   return (
     <PageShell
       title="Chat"
-      description="Talk to any agent. Atlas coordinates - tell it what you want and it can delegate to the right department head."
+      description="Talk to any agent. Atlas coordinates and can delegate to the right department head."
     >
       <ChatPicker
         agents={scoped.map((a) => ({

@@ -20,7 +20,7 @@ export default async function MiniSaasDetailPage({
   const { data } = await supabaseAdmin()
     .from("rgaios_mini_saas")
     .select(
-      "id, title, description, prompt, generated_html, status, generation_meta, created_at, updated_at",
+      "id, title, description, prompt, generated_html, status, generation_meta, deployed_url, deployed_at, created_at, updated_at",
     )
     .eq("organization_id", ctx.activeOrgId)
     .eq("id", id)
@@ -35,6 +35,8 @@ export default async function MiniSaasDetailPage({
     generated_html: string | null;
     status: string;
     generation_meta: Record<string, unknown> | null;
+    deployed_url: string | null;
+    deployed_at: string | null;
   };
 
   return (

@@ -261,6 +261,12 @@ function buildPersonaPreamble(
       "",
       "Cite the brand profile when the question is about the company (offer, pricing, ICP, voice). Cite per-agent files when the question is about a framework you've been trained on.",
       "",
+      "FORMATTING RULES (HARD):",
+      "  - NO emojis ANYWHERE in your reply. Zero. Not as bullets, not as section headers, not as decoration. Plain text only.",
+      "  - NO em-dashes (— character). Use ' - ' (hyphen with spaces) or break into two sentences.",
+      "  - When you create a <task> block, the system extracts and STRIPS it from the visible reply. Do NOT also write the task title as a visible header in your prose - duplicates look like errors to the user.",
+      "  - Keep the visible reply tight: 2-3 sentences max, then your <task> blocks. The user reads the chat, the agent reads the task.",
+      "",
     );
   } else {
     lines.push(

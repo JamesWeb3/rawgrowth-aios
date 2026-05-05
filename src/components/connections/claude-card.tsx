@@ -319,7 +319,7 @@ export function ClaudeConnectionCard() {
                 <Button
                   onClick={completeOauth}
                   disabled={completing || !code.trim()}
-                  className="btn-shine bg-primary text-white hover:bg-primary/90"
+                  className="bg-primary text-white hover:bg-primary/90"
                 >
                   {completing ? "Connecting…" : (
                     <>
@@ -355,7 +355,7 @@ export function ClaudeConnectionCard() {
             <Button
               onClick={startOauth}
               disabled={starting}
-              className="btn-shine bg-primary text-white hover:bg-primary/90"
+              className="bg-primary text-white hover:bg-primary/90"
             >
               <ClaudeLogo className="size-4" />
               {starting ? "Starting…" : "Connect Claude Max"}

@@ -1133,6 +1133,7 @@ export async function POST(req: NextRequest) {
     }
     const oauthModel = "claude-sonnet-4-6";
     const openaiModel = "gpt-4o";
+    const gatewayModel = "anthropic/claude-sonnet-4.6";
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -1140,6 +1141,19 @@ export async function POST(req: NextRequest) {
         const emit = (event: Record<string, unknown>) => {
           controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
         };
+
+        console.log(
+          `[onboarding-chat] start org=${user.id} provider=${provider} hasClaudeMax=${!!claudeMaxOauthToken} hasOpenAI=${!!process.env.OPENAI_API_KEY} hasAnthropic=${!!process.env.ANTHROPIC_API_KEY}`,
+        );
+        emit({
+          type: "debug",
+          marker: "v3-heartbeat",
+          provider,
+          hasClaudeMax: !!claudeMaxOauthToken,
+          hasOpenAI: !!process.env.OPENAI_API_KEY,
+          hasAnthropic: !!process.env.ANTHROPIC_API_KEY,
+        });
+
 
         try {
           for (let iter = 0; iter < 6; iter++) {
@@ -1149,24 +1163,101 @@ export async function POST(req: NextRequest) {
             // would break with the model's reply visible only in step.text
             // and never reaching the client.
             let streamedAny = false;
-            const step = await chatComplete({
-              provider,
+            emit({
+              type: "debug",
+              phase: "calling-chatComplete",
+              iter,
+              tokenLen: claudeMaxOauthToken?.length ?? 0,
               model: provider === "claude-max-oauth" ? oauthModel : openaiModel,
-              system: systemBlock,
-              messages,
-              tools: TOOLS,
-              temperature: 0.3,
-              maxSteps: 1,
-              claudeMaxOauthToken,
-              organizationId: user.id,
-              onTextDelta: (delta) => {
-                streamedAny = true;
-                emit({ type: "text", delta });
-              },
+              systemLen: systemBlock.length,
+              msgsLen: messages.length,
+              toolsLen: TOOLS.length,
+            });
+
+            // Vercel egress + intermediary proxies are aggressive about
+            // closing idle streams. Anthropic OAuth /v1/messages is
+            // non-streaming (fire and collect) and routinely takes 5-30s
+            // on a tools-heavy prompt. Without a periodic heartbeat the
+            // upstream tears the connection between us and the client at
+            // ~3s of silence, the consumer sees a silent EOF, and the
+            // model reply is lost. Tick every second.
+            const heartbeat = setInterval(() => {
+              try {
+                emit({ type: "debug", phase: "wait-tick" });
+              } catch {}
+            }, 1000);
+
+            let step;
+            try {
+              step = await chatComplete({
+                provider,
+                model:
+                  provider === "claude-max-oauth"
+                    ? oauthModel
+                    : provider === "vercel-gateway"
+                      ? gatewayModel
+                      : openaiModel,
+                system: systemBlock,
+                messages,
+                tools: TOOLS,
+                temperature: 0.3,
+                maxSteps: 1,
+                claudeMaxOauthToken,
+                organizationId: user.id,
+                onTextDelta: (delta) => {
+                  streamedAny = true;
+                  emit({ type: "text", delta });
+                },
+              });
+            } catch (err) {
+              clearInterval(heartbeat);
+              const raw = err instanceof Error ? err.message : String(err);
+              console.error(`[onboarding-chat] chatComplete THREW: ${raw}`);
+              // Surface a friendly message for known failure modes so
+              // the operator knows what to do instead of staring at a
+              // dead chat. Re-throw so the outer try/catch closes the
+              // stream cleanly.
+              const friendly = raw.includes("429")
+                ? "Your Claude Max account is rate-limited right now. Wait a few minutes (or close other Claude sessions) and try again."
+                : raw.includes("401")
+                  ? "Claude Max session expired - reconnect at /connections."
+                  : raw.includes("model")
+                    ? `Model error: ${raw}`
+                    : null;
+              try {
+                emit({
+                  type: "error",
+                  message: friendly ?? raw,
+                  raw: friendly ? raw : undefined,
+                });
+              } catch {}
+              throw err;
+            }
+            clearInterval(heartbeat);
+            emit({
+              type: "debug",
+              phase: "chatComplete-returned",
+              iter,
+              textLenReturned: step.text.length,
+              toolCallsReturned: step.toolCalls.length,
+              streamedAny,
+              textPreview: step.text.slice(0, 300),
             });
 
             const textContent = step.text;
             const toolCalls = step.toolCalls;
+
+            console.log(
+              `[onboarding-chat] iter=${iter} textLen=${textContent.length} toolCalls=${toolCalls.length} streamed=${streamedAny}`,
+            );
+            emit({
+              type: "debug",
+              iter,
+              textLen: textContent.length,
+              toolCalls: toolCalls.length,
+              streamed: streamedAny,
+              textPreview: textContent.slice(0, 200),
+            });
 
             // Flush text from non-streaming providers (anthropic-cli) as a
             // single delta so the chat UI renders it like the streamed path.
@@ -1490,13 +1581,29 @@ export async function POST(req: NextRequest) {
               }
             }
           }
+          try {
+            emit({ type: "debug", phase: "loop-finished-cleanly" });
+          } catch {}
           controller.close();
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : "Stream error";
+          const stack = err instanceof Error ? err.stack : "";
+          console.error(`[onboarding-chat] OUTER catch: ${message}\n${stack}`);
           try {
-            emit({ type: "error", message });
+            emit({
+              type: "error",
+              message,
+              stack: stack?.slice(0, 800),
+              phase: "outer-catch",
+            });
           } catch {}
-          controller.error(err);
+          // Use close() instead of error() so any queued emits flush
+          // out to the client before the stream EOFs.
+          try {
+            controller.close();
+          } catch {
+            controller.error(err);
+          }
         }
       },
     });

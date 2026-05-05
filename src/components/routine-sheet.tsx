@@ -214,7 +214,7 @@ export function RoutineSheet(props: Props) {
       {!isEdit && (
         <SheetTrigger
           className={cn(
-            "btn-shine inline-flex shrink-0 items-center gap-1.5 rounded-[12px] bg-primary font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "inline-flex shrink-0 items-center gap-1.5 rounded-[12px] bg-primary font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             props.triggerSize === "lg"
               ? "h-9 gap-1.5 px-3 text-sm"
               : "h-7 px-2.5 text-[0.8rem]",
@@ -360,7 +360,7 @@ export function RoutineSheet(props: Props) {
               <Button
                 onClick={handleSubmit}
                 size="sm"
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 {isEdit ? (
                   <>

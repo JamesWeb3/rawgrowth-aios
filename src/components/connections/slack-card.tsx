@@ -253,7 +253,7 @@ export function SlackConnectionCard() {
               <Button
                 onClick={startInstall}
                 disabled={starting}
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 <SiSlack className="size-3.5" />
                 {starting ? "Starting…" : "Install to your Slack workspace"}
@@ -379,7 +379,7 @@ export function SlackConnectionCard() {
                 <Button
                   onClick={saveConfig}
                   disabled={savingConfig}
-                  className="btn-shine bg-primary text-white hover:bg-primary/90"
+                  className="bg-primary text-white hover:bg-primary/90"
                 >
                   {savingConfig ? "Saving…" : (
                     <>
@@ -839,7 +839,7 @@ function BindingForm({
         <Button
           onClick={save}
           disabled={saving}
-          className="btn-shine bg-primary text-white hover:bg-primary/90"
+          className="bg-primary text-white hover:bg-primary/90"
         >
           {saving ? "Saving…" : "Create binding"}
         </Button>

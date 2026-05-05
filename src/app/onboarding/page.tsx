@@ -5,6 +5,7 @@ import { getOrgContext } from "@/lib/auth/admin";
 import { computeOnboardingProgress } from "@/lib/onboarding";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import OnboardingChat from "./OnboardingChat";
+import { OnboardingClaudeGate } from "./OnboardingClaudeGate";
 
 export default async function OnboardingPage() {
   const ctx = await getOrgContext();
@@ -14,8 +15,10 @@ export default async function OnboardingPage() {
     : { current: 0, total: 14, completed: [] };
 
   // Pre-onboarding gate: agent chat post-onboarding only works if Claude
-  // Max OAuth is wired. Surface a banner up top so the operator can
-  // connect first instead of finding out their first chat fails.
+  // Max OAuth is wired. If no env-level ANTHROPIC_API_KEY fallback is
+  // set either, BLOCK onboarding entirely - the operator MUST connect
+  // before proceeding (Pedro's rule: API key absent => Claude Code login
+  // required upfront).
   let claudeMaxConnected = false;
   if (ctx?.activeOrgId) {
     const { data } = await supabaseAdmin()
@@ -26,6 +29,8 @@ export default async function OnboardingPage() {
       .maybeSingle();
     claudeMaxConnected = !!data;
   }
+  const hasApiKeyFallback = !!process.env.ANTHROPIC_API_KEY;
+  const requireConnect = !claudeMaxConnected && !hasApiKeyFallback;
 
   return (
     <div className="flex h-full flex-col">
@@ -72,18 +77,23 @@ export default async function OnboardingPage() {
                 <>+ Connect Claude Max</>
               )}
             </Link>
-            <Link
-              href="/api/onboarding/skip"
-              className="inline-flex items-center rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-3 py-1.5 text-[12px] text-[var(--text-muted)] hover:border-primary/40 hover:text-primary"
-              title="Skip onboarding for now - you can come back from the sidebar"
-            >
-              Skip onboarding
-            </Link>
+            {/* Skip is hidden when the gate is forcing connect. Otherwise
+                the operator already has a working key fallback so they
+                can revisit later. */}
+            {!requireConnect && (
+              <Link
+                href="/api/onboarding/skip"
+                className="inline-flex items-center rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-3 py-1.5 text-[12px] text-[var(--text-muted)] hover:border-primary/40 hover:text-primary"
+                title="Skip onboarding for now - you can come back from the sidebar"
+              >
+                Skip onboarding
+              </Link>
+            )}
           </div>
         </div>
       </header>
 
-      {!claudeMaxConnected && (
+      {!claudeMaxConnected && !requireConnect && (
         <div className="rg-fade-in shrink-0 border-b border-amber-400/20 bg-amber-400/5">
           <div className="mx-auto max-w-2xl px-6 py-2.5 text-[11px] text-amber-200/80 md:px-8">
             Heads up: agent chat needs Claude Max wired - click{" "}
@@ -95,10 +105,13 @@ export default async function OnboardingPage() {
         </div>
       )}
 
-      {/* Chat */}
-      <div className="min-h-0 flex-1">
-        <OnboardingChat firstName={firstName} initialProgress={initialProgress} />
-      </div>
+      {requireConnect ? (
+        <OnboardingClaudeGate />
+      ) : (
+        <div className="min-h-0 flex-1">
+          <OnboardingChat firstName={firstName} initialProgress={initialProgress} />
+        </div>
+      )}
     </div>
   );
 }

@@ -46,8 +46,15 @@ export async function extractAndCreateTasks(input: {
   orgId: string;
   speakerAgentId: string;
   reply: string;
+  /**
+   * Optional: when these tasks are spawned in response to an insight
+   * (anomaly drilldown / approval / retry), tag every task_created
+   * audit row with the insight id so the review loop can later pull
+   * "all routines created for this anomaly" via detail->>insight_id.
+   */
+  insightId?: string;
 }): Promise<ExtractTasksResult> {
-  const { orgId, speakerAgentId, reply } = input;
+  const { orgId, speakerAgentId, reply, insightId } = input;
   const matches = [...reply.matchAll(TASK_BLOCK_RE)];
   if (matches.length === 0) {
     return { visibleReply: reply, tasks: [] };
@@ -202,6 +209,7 @@ export async function extractAndCreateTasks(input: {
           run_id: runId,
           title,
           delegated_from: speakerAgentId,
+          ...(insightId ? { insight_id: insightId } : {}),
         },
       } as never);
     } catch {}

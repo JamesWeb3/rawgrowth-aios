@@ -121,7 +121,7 @@ export function WorkspaceToolsSection() {
                   className={
                     connected
                       ? "bg-white/5 text-foreground hover:bg-white/10"
-                      : "btn-shine bg-primary text-white hover:bg-primary/90"
+                      : "bg-primary text-white hover:bg-primary/90"
                   }
                   onClick={() => setOpenId(tool.id)}
                 >

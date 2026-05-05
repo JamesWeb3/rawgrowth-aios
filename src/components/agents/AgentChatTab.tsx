@@ -766,7 +766,25 @@ function Bubble({
       </div>
       <div className="min-w-0 flex-1 rounded-xl rounded-bl-sm border border-[var(--line)] bg-[var(--brand-surface-2)] px-4 py-2.5 text-sm leading-relaxed text-[var(--text-body)]">
         {message.content ? (
-          <Response>{message.content}</Response>
+          <>
+            <Response>{message.content}</Response>
+            {/* Inline action panel for proactive anomaly messages */}
+            {/Heads up.*flagged.*anomaly|Drafted plan.*approval needed in Updates/i.test(
+              message.content,
+            ) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-2.5">
+                <a
+                  href="/updates"
+                  className="inline-flex items-center gap-1 rounded-md bg-[var(--brand-primary)] px-3 py-1.5 text-[11px] font-medium text-[var(--brand-primary-foreground,#000)] hover:opacity-90"
+                >
+                  Open Updates →
+                </a>
+                <span className="text-[10px] text-[var(--text-muted)]">
+                  Approve / reject the plan from Updates, or reply here to debate the angle.
+                </span>
+              </div>
+            )}
+          </>
         ) : streaming ? (
           <span
             className="inline-flex h-3 items-center gap-1 text-[var(--brand-primary)]"

@@ -163,7 +163,7 @@ export function CreateClientSheet({
                 onClick={submit}
                 disabled={busy}
                 size="sm"
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 <Plus className="size-4" />
                 {busy ? "Provisioning…" : "Create client"}

@@ -41,17 +41,17 @@ export function AgentsByDeptView({ agents }: { agents: Agent[] }) {
   return (
     <div className="space-y-8">
       {ceo && (
-        <section className="rounded-lg border border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5 p-5">
+        <section className="rounded-md border border-border bg-card/40 p-5">
           <div className="mb-3 flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg border border-[var(--brand-primary)]/40 bg-[var(--brand-primary)]/12 text-[var(--brand-primary)]">
+            <div className="flex size-10 items-center justify-center rounded-md border border-border bg-primary/10 text-primary">
               <Crown className="size-5" />
             </div>
             <div>
-              <h3 className="font-serif text-lg tracking-tight text-foreground">
+              <div className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
                 Coordinator
-              </h3>
-              <p className="text-[11.5px] text-muted-foreground">
-                Sits above every department - routes work to the right head.
+              </div>
+              <p className="mt-0.5 text-[12px] text-muted-foreground">
+                Sits above every department, routes work to the right head.
               </p>
             </div>
           </div>
@@ -76,12 +76,14 @@ export function AgentsByDeptView({ agents }: { agents: Agent[] }) {
         return (
           <section key={dept}>
             <header className="mb-3 flex items-center justify-between">
-              <h3 className="font-serif text-lg tracking-tight text-foreground">
-                {label}
-                <span className="ml-2 text-xs text-muted-foreground">
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
+                  {label}
+                </h3>
+                <span className="text-[11px] text-muted-foreground/70">
                   {list.length} agent{list.length === 1 ? "" : "s"}
                 </span>
-              </h3>
+              </div>
             </header>
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
               {list.map((a) => (
@@ -107,9 +109,9 @@ function AgentLink({ agent, accent = false }: { agent: Agent; accent?: boolean }
     <Link
       href={`/agents/${agent.id}`}
       className={
-        "block rounded-md border bg-card p-4 transition hover:border-primary/40 hover:shadow-[0_8px_24px_rgba(12,191,106,.08)] " +
+        "block rounded-md border bg-card/40 p-5 transition-colors hover:border-primary/40 " +
         (accent
-          ? "border-[var(--brand-primary)]/30 hover:border-[var(--brand-primary)]/60"
+          ? "border-primary/30"
           : isHead
             ? "border-amber-400/30 hover:border-amber-300/60"
             : "border-border")

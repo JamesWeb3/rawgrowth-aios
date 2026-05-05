@@ -13,7 +13,7 @@ export default async function TasksPage() {
   return (
     <PageShell
       title="Tasks"
-      description="Every routine + run across your AI org. Tasks created via chat (the &lt;task&gt; blocks) land here too."
+      description="Every routine and run across your AI org. Tasks created via chat land here too."
     >
       <TasksClient />
     </PageShell>

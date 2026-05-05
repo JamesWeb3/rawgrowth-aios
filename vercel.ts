@@ -15,7 +15,14 @@ export const config: VercelConfig = {
   framework: "nextjs",
   // Hobby plan only allows daily cron. Schedule routine-tick once a
   // day; finer cadences need a Pro upgrade or external cron poller.
+  // Hobby = daily cron only. For urgent buyers use the "Provision now"
+  // button at /admin/provisioning which calls /api/admin/provision-now.
+  // Once on Pro, change provision-tick to "*/5 * * * *".
   crons: [
+    {
+      path: "/api/cron/provision-tick",
+      schedule: "0 11 * * *",
+    },
     {
       path: "/api/cron/schedule-tick",
       schedule: "0 6 * * *",
@@ -23,6 +30,26 @@ export const config: VercelConfig = {
     {
       path: "/api/cron/insights-tick",
       schedule: "0 7 * * *",
+    },
+    {
+      path: "/api/cron/fireflies-poll",
+      schedule: "0 8 * * *",
+    },
+    {
+      path: "/api/cron/crm-sync",
+      schedule: "0 9 * * *",
+    },
+    {
+      path: "/api/cron/atlas-route-failures",
+      schedule: "0 10 * * *",
+    },
+    {
+      // Hobby-plan native cron is daily-only - the lazy 15-min trigger
+      // in /api/notifications/agents drives the real cadence while a
+      // user is in-app. This entry is the floor: even with no traffic
+      // Atlas still runs once a day.
+      path: "/api/cron/atlas-coordinate",
+      schedule: "23 13 * * *",
     },
   ],
   functions: {

@@ -144,7 +144,7 @@ export function SkillsMarketplaceView() {
       ) : isLoading && !data ? (
         <div className="text-[12px] text-muted-foreground">Loading skills…</div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center text-[13px] text-muted-foreground">
+        <div className="rounded-md border border-dashed border-border bg-card/40 p-5 text-center text-[13px] text-muted-foreground">
           No skills match that search. Try clearing the filters.
         </div>
       ) : (
@@ -162,7 +162,7 @@ export function SkillsMarketplaceView() {
                 onClick={() => setOpenSkillId(s.id)}
                 className="group text-left"
               >
-                <Card className="h-full border-border bg-card/50 transition-colors hover:border-primary/40">
+                <Card className="h-full border border-border bg-card/40 transition-colors hover:border-primary/40">
                   <CardContent className="flex h-full flex-col gap-4 p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex size-10 items-center justify-center rounded-lg border border-border bg-primary/10 text-primary">
@@ -431,7 +431,6 @@ function SkillSheet({
                 onClick={save}
                 disabled={saving}
                 size="sm"
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
               >
                 {saving ? "Saving…" : "Save assignments"}
               </Button>

@@ -30,7 +30,7 @@ export default async function AgentsPage() {
   return (
     <PageShell
       title="Agents"
-      description="Your AI employees, grouped by department. Atlas runs the show; press Hire to add anyone underneath."
+      description="Your AI employees, grouped by department. Atlas runs the show. Press Hire to add anyone underneath."
       actions={<AgentSheet triggerLabel="+ Hire agent" triggerSize="sm" />}
     >
       <AgentsByDeptView agents={scoped} />

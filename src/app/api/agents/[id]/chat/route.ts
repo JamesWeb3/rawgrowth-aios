@@ -19,6 +19,73 @@ const HARD_FAIL_MESSAGE =
 type IncomingMessage = { role: string; content: string };
 
 /**
+ * Insight chat queue (paired with /api/insights/[id]/open-chat).
+ *
+ * Called immediately after a user message lands in Atlas chat. If the
+ * agent receiving the message is Atlas (CEO) and an insight is in
+ * chat_state='sent', mark it answered and promote the oldest queued
+ * insight - seed its question as a fresh assistant turn so the
+ * conversation continues without operator action.
+ */
+async function maybePromoteInsightQueue(orgId: string, agentId: string) {
+  const db = supabaseAdmin();
+  const { data: agent } = await db
+    .from("rgaios_agents")
+    .select("role")
+    .eq("id", agentId)
+    .maybeSingle();
+  if ((agent as unknown as { role?: string } | null)?.role !== "ceo") return;
+
+  const now = new Date().toISOString();
+
+  // Mark all currently-sent insights as answered. There should only be
+  // one but be tolerant of pre-existing dupes.
+  await db
+    .from("rgaios_insights")
+    .update({ chat_state: "answered", chat_state_updated_at: now } as never)
+    .eq("organization_id", orgId)
+    .eq("chat_state", "sent");
+
+  // Pick the oldest queued insight to promote.
+  const { data: nextRow } = await db
+    .from("rgaios_insights")
+    .select("id, title, suggested_action, reason")
+    .eq("organization_id", orgId)
+    .eq("chat_state", "queued")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!nextRow) return;
+  type Row = {
+    id: string;
+    title: string;
+    suggested_action: string | null;
+    reason: string | null;
+  };
+  const next = nextRow as unknown as Row;
+
+  const parts = [`**${next.title}**`];
+  if (next.reason) parts.push(next.reason);
+  if (next.suggested_action) parts.push(next.suggested_action);
+  const content = parts.join("\n\n");
+
+  await db.from("rgaios_agent_chat_messages").insert({
+    organization_id: orgId,
+    agent_id: agentId,
+    user_id: null,
+    role: "assistant",
+    content,
+    metadata: { source: "insight", insight_id: next.id, promoted: true },
+  } as never);
+
+  await db
+    .from("rgaios_insights")
+    .update({ chat_state: "sent", chat_state_updated_at: now } as never)
+    .eq("id", next.id);
+}
+
+/**
  * GET /api/agents/[id]/chat
  *
  * Returns the last HISTORY_LIMIT messages for this agent (oldest first
@@ -214,6 +281,13 @@ export async function POST(
     content: last.content,
   });
 
+  // 1a. Insight chat queue: when the user replies in Atlas chat AND
+  // there's a "sent" insight question awaiting a reply, mark it
+  // answered, then promote the next queued insight (if any) to "sent"
+  // and seed its question as the assistant's next turn. Keeps
+  // insight-driven questions sequenced one-at-a-time per Pedro's rule.
+  await maybePromoteInsightQueue(orgId, agentId);
+
   // History for chatReply = everything BEFORE the latest user turn.
   // chatReply re-appends the latest user turn itself wrapped with the
   // persona preamble, so we must not include it twice.
@@ -314,6 +388,43 @@ export async function POST(
         } catch (err) {
           console.warn(
             "[chat] task extraction failed:",
+            (err as Error).message,
+          );
+        }
+
+        // 4a-bis. Data-ask extraction. Atlas (or any agent following the
+        // DATA-ASK PROTOCOL in preamble.ts) can emit <need scope="..."> blocks
+        // when it genuinely lacks data. We strip those blocks from the
+        // visible reply, post a follow-up assistant message asking the
+        // operator to supply the data, and surface the scope so the UI
+        // can later upgrade these into Data Entry stubs.
+        try {
+          const needRegex = /<need(?:\s+scope=["']([^"']+)["'])?\s*>([\s\S]*?)<\/need>/gi;
+          const needs: Array<{ scope: string; text: string }> = [];
+          let m: RegExpExecArray | null;
+          while ((m = needRegex.exec(preFilterText)) !== null) {
+            const scope = (m[1] ?? "other").trim();
+            const text = m[2].trim();
+            if (text) needs.push({ scope, text });
+          }
+          if (needs.length > 0) {
+            preFilterText = preFilterText.replace(needRegex, "").trim();
+            await Promise.all(
+              needs.map((n) =>
+                db.from("rgaios_agent_chat_messages").insert({
+                  organization_id: orgId,
+                  agent_id: agentId,
+                  user_id: null,
+                  role: "assistant",
+                  content: `I need: ${n.text}. Paste it in this chat or use Data Entry.`,
+                  metadata: { kind: "data_ask", scope: n.scope } as never,
+                } as never),
+              ),
+            );
+          }
+        } catch (err) {
+          console.warn(
+            "[chat] data-ask extraction failed:",
             (err as Error).message,
           );
         }

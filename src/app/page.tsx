@@ -6,6 +6,8 @@ import { PageShell } from "@/components/page-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { DashboardStats } from "@/components/dashboard/stats";
 import { InsightsPanel } from "@/components/insights/insights-panel";
+import { InsightsBanner } from "@/components/insights/insights-banner";
+import { BoardColumn } from "@/components/dashboard/board-column";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPillarData } from "@/lib/dashboard/pillar-data";
@@ -41,10 +43,9 @@ const COLOR_PRIMARY = "#0cbf6a";
 
 function EmptyPillar({ line1, line2 }: { line1: string; line2: string }) {
   return (
-    <div className="rounded-md border border-dashed border-border bg-muted/10 p-6 text-center">
-      <p className="text-[12px] font-medium text-foreground">{line1}</p>
-      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-        {line2}
+    <div className="rounded-md border border-dashed border-border bg-card/40 p-5 text-center">
+      <p className="text-[13px] text-muted-foreground">
+        {line1}. {line2}
       </p>
     </div>
   );
@@ -69,8 +70,8 @@ function PillarCard({
         className="pointer-events-none absolute inset-x-0 top-0 h-px"
         style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }}
       />
-      <CardContent className="p-6">
-        <div className="mb-5 flex items-start justify-between gap-4">
+      <CardContent className="p-5">
+        <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <span
@@ -78,7 +79,7 @@ function PillarCard({
                 style={{ background: accent }}
                 aria-hidden
               />
-              <h3 className="text-[12px] font-semibold uppercase tracking-[1.8px] text-foreground">
+              <h3 className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
                 {title}
               </h3>
             </div>
@@ -331,46 +332,195 @@ export default async function DashboardPage() {
   return (
     <PageShell
       title="Dashboard"
-      description="Your AI company at a glance  -  goals, agents, tickets, spend."
+      description="Your AI company at a glance. Goals, agents, tickets, spend."
     >
       <DashboardStats />
 
-      <div className="mt-6">
-        <InsightsPanel />
-      </div>
-
       {!anyPillarOn && (
-        <Card className="border-border border-dashed bg-card/30">
-          <CardContent className="flex flex-col items-center gap-3 p-10 text-center">
-            <div className="flex size-11 items-center justify-center rounded-xl border border-border bg-card/60 text-muted-foreground">
-              <svg
-                className="size-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 3v18h18" />
-                <path d="M7 16l4-4 4 2 4-6" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-[14px] font-semibold text-foreground">
-                No pillars wired yet
-              </h3>
-              <p className="mt-1 max-w-md text-[12.5px] leading-relaxed text-muted-foreground">
-                Each department chart lights up once its data source is
-                connected. Enable Marketing, Sales, Fulfilment or Finance
-                in Company settings to start tracking pillars.
-              </p>
-            </div>
+        <Card className="border border-dashed border-border bg-card/40">
+          <CardContent className="p-5 text-center">
+            <p className="text-[13px] text-muted-foreground">
+              No pillars wired yet. Enable Marketing, Sales, Fulfilment or Finance in Company settings.
+            </p>
           </CardContent>
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* 5-col board (Chris's whiteboard sketch). Hero chart per dept
+          + stacked metric cards. Big visual. */}
+      <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <BoardColumn
+          title="Marketing"
+          accent="#33ca7f"
+          href="/departments/marketing"
+          hero={
+            pillarData.marketing && pillarData.marketing.weekly.length > 1
+              ? {
+                  values: pillarData.marketing.weekly,
+                  current: pillarData.marketing.totalThisWeek,
+                  caption: "Leads, last 12 wks",
+                }
+              : undefined
+          }
+          cards={
+            pillarData.marketing
+              ? [
+                  {
+                    label: "Conversion",
+                    value: `${pillarData.marketing.conversionRate}%`,
+                    hint: "end-to-end",
+                    tone: pillarData.marketing.conversionRate >= 1 ? "good" : "warn",
+                  },
+                  {
+                    label: "Reach → Won",
+                    value: pillarData.marketing.funnel
+                      .map((s) => s.value.toLocaleString())
+                      .join(" → "),
+                    hint: "R → L → M → W",
+                  },
+                  ...(pillarData.marketing.cplProxy !== null
+                    ? [{
+                        label: "Effort / lead",
+                        value: pillarData.marketing.cplProxy,
+                        hint: "events per lead",
+                      } as const]
+                    : []),
+                ]
+              : []
+          }
+          empty="No marketing activity"
+        />
+
+        <BoardColumn
+          title="Sales"
+          accent="#06b6d4"
+          href="/departments/sales"
+          hero={
+            pillarData.sales && pillarData.sales.funnel.length > 1
+              ? {
+                  values: pillarData.sales.funnel.map((s) => s.value),
+                  current: pillarData.sales.funnel[pillarData.sales.funnel.length - 1]?.value ?? 0,
+                  caption: "Won, 30 days",
+                }
+              : undefined
+          }
+          cards={
+            pillarData.sales
+              ? [
+                  {
+                    label: "Lead → Won",
+                    value: `${pillarData.sales.conversion}%`,
+                    hint: "30-day rate",
+                    tone: pillarData.sales.conversion >= 25 ? "good" : "warn",
+                  },
+                  ...pillarData.sales.funnel.map((s) => ({
+                    label: s.label,
+                    value: s.value.toLocaleString(),
+                    hint: `${s.percent}% of pipeline`,
+                  })),
+                ]
+              : []
+          }
+          empty="No pipeline yet"
+        />
+
+        <BoardColumn
+          title="Fulfilment"
+          accent="#a855f7"
+          href="/departments/fulfilment"
+          hero={
+            pillarData.fulfilment && pillarData.fulfilment.byAgent.length > 1
+              ? {
+                  values: pillarData.fulfilment.byAgent.map((a) => a.orders),
+                  current: pillarData.fulfilment.totalThisWeek,
+                  caption: "Tasks this wk",
+                }
+              : undefined
+          }
+          cards={
+            pillarData.fulfilment
+              ? [
+                  {
+                    label: "Completion",
+                    value: `${pillarData.fulfilment.completionRate}%`,
+                    hint: "succeeded / total (7d)",
+                    tone:
+                      pillarData.fulfilment.completionRate >= 80
+                        ? "good"
+                        : pillarData.fulfilment.completionRate >= 50
+                          ? "warn"
+                          : "bad",
+                  },
+                  ...pillarData.fulfilment.byAgent.slice(0, 3).map((a) => ({
+                    label: a.region,
+                    value: `${a.orders} runs`,
+                  })),
+                ]
+              : []
+          }
+          empty="No fulfilment runs"
+        />
+
+        <BoardColumn
+          title="Customer"
+          accent="#f59e0b"
+          href="/departments/sales"
+          cards={[
+            {
+              label: "Wired",
+              value: "Soon",
+              hint: "CRM sync (HubSpot/Pipedrive)",
+            },
+            {
+              label: "Health",
+              value: "-",
+              hint: "Plug a CRM to populate",
+            },
+          ]}
+          empty="Connect CRM"
+        />
+
+        <BoardColumn
+          title="Finance"
+          accent="#10b981"
+          href="/departments/finance"
+          hero={
+            pillarData.finance
+              ? {
+                  values: pillarData.finance.monthly.map((m) => m.revenue),
+                  current: pillarData.finance.netThisMonth,
+                  caption: "Net runs / month",
+                }
+              : undefined
+          }
+          cards={
+            pillarData.finance
+              ? [
+                  {
+                    label: "Success rate",
+                    value: `${pillarData.finance.marginPct}%`,
+                    hint: "succ / total (12mo)",
+                    tone: pillarData.finance.marginPct >= 80 ? "good" : "warn",
+                  },
+                  {
+                    label: "Net this month",
+                    value: pillarData.finance.netThisMonth,
+                    hint: "succ - failed",
+                    tone: pillarData.finance.netThisMonth >= 0 ? "good" : "bad",
+                  },
+                ]
+              : []
+          }
+          empty="No routine runs"
+        />
+      </div>
+
+      {/* Legacy detailed pillar cards (collapsed by default) */}
+      <details className="mt-6 group">
+        <summary className="cursor-pointer rounded-md border border-dashed border-border bg-card/20 px-4 py-2 text-[11px] font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground">
+          Detailed pillar funnels
+        </summary>
+        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {pillars.marketing && (
           <PillarCard
             title="Marketing"
@@ -423,7 +573,7 @@ export default async function DashboardPage() {
             ) : (
               <EmptyPillar
                 line1="No marketing activity yet"
-                line2="Chat with the Marketing Manager or fire a marketing routine to start populating this chart."
+                line2="Fire a marketing routine to populate this chart."
               />
             )}
           </PillarCard>
@@ -468,7 +618,7 @@ export default async function DashboardPage() {
             ) : (
               <EmptyPillar
                 line1="No sales runs yet"
-                line2="Hire an SDR / Sales Manager and assign a routine to start tracking the funnel."
+                line2="Assign a routine to track the funnel."
               />
             )}
           </PillarCard>
@@ -504,7 +654,7 @@ export default async function DashboardPage() {
                   ))}
                 </div>
                 <div className="mt-4 flex items-center justify-between rounded-md bg-muted/30 px-3 py-2">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
                     Completion rate
                   </span>
                   <span className="font-mono text-[14px] text-primary">
@@ -515,7 +665,7 @@ export default async function DashboardPage() {
             ) : (
               <EmptyPillar
                 line1="No fulfilment runs yet"
-                line2="Assign routines to your Operations Manager or Project Coordinator. Each run lands here."
+                line2="Assign routines to your Operations Manager."
               />
             )}
           </PillarCard>
@@ -556,11 +706,18 @@ export default async function DashboardPage() {
             ) : (
               <EmptyPillar
                 line1="No routine runs yet"
-                line2="Once routines start firing, monthly success/fail counts populate this chart."
+                line2="Monthly success counts populate as routines fire."
               />
             )}
           </PillarCard>
         )}
+        </div>
+      </details>
+
+      {/* Slim Atlas banner - sits BELOW the charts. Click to expand
+          full InsightsPanel with approve / reject / discuss / trace. */}
+      <div className="mt-6">
+        <InsightsBanner />
       </div>
     </PageShell>
   );

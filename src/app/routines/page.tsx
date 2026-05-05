@@ -5,7 +5,7 @@ export default function RoutinesPage() {
   return (
     <PageShell
       title="Routines"
-      description="Automated workflows  -  a trigger fires, an agent runs the playbook. Schedules, webhooks, and integration events all supported."
+      description="Automated workflows. A trigger fires, an agent runs the playbook. Schedules, webhooks, and integration events all supported."
     >
       <RoutinesView />
     </PageShell>

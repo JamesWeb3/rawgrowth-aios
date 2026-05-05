@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AlarmBanner } from "@/components/insights/alarm-banner";
+import { NotificationBell } from "@/components/notification-bell";
 
 type PageShellProps = {
   title: string;
@@ -24,7 +25,10 @@ export function PageShell({ title, description, actions, children }: PageShellPr
               </p>
             )}
           </div>
-          {actions && <div className="flex items-center gap-2">{actions}</div>}
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            {actions}
+          </div>
         </div>
         {children}
       </main>

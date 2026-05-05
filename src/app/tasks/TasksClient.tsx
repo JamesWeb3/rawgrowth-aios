@@ -93,13 +93,10 @@ export function TasksClient() {
 
       <div className="mt-6 space-y-3">
         {counts.total === 0 && (
-          <div className="rounded-md border border-dashed border-border bg-card/30 p-10 text-center">
-            <ListChecks className="mx-auto size-8 text-primary/60" strokeWidth={1.4} />
-            <p className="mt-3 text-sm font-medium text-foreground">No tasks yet</p>
-            <p className="mx-auto mt-1 max-w-md text-[12px] text-muted-foreground">
-              Open any agent → Chat tab → ask them to create a task. The agent
-              emits a &lt;task&gt; block, the system creates a routine + run,
-              and it lands here.
+          <div className="rounded-md border border-dashed border-border bg-card/40 p-5 text-center">
+            <ListChecks className="mx-auto size-6 text-muted-foreground" strokeWidth={1.4} />
+            <p className="mx-auto mt-3 max-w-md text-[13px] text-muted-foreground">
+              No tasks yet. Open any agent and ask in chat to create one.
             </p>
           </div>
         )}
@@ -114,27 +111,27 @@ export function TasksClient() {
               <button
                 type="button"
                 onClick={() => toggle(t.routineId)}
-                className="flex w-full items-start justify-between gap-3 p-4 text-left"
+                className="flex w-full items-start justify-between gap-3 p-5 text-left"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span
                       className={
-                        "inline-block rounded px-2 py-0.5 text-[10px] uppercase tracking-widest " +
+                        "inline-block rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-[1.5px] " +
                         (STATUS_STYLE[t.latestStatus] ??
                           "bg-muted text-muted-foreground")
                       }
                     >
                       {t.latestStatus}
                     </span>
-                    <h3 className="truncate text-[14px] font-medium text-foreground">
+                    <h3 className="truncate text-[13px] font-medium text-foreground">
                       {t.title}
                     </h3>
                     {t.assignee && (
                       <Link
                         href={`/agents/${t.assignee.id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground hover:text-foreground"
                       >
                         {t.assignee.name}
                         <ArrowRight className="size-2.5" strokeWidth={2} />
@@ -157,9 +154,9 @@ export function TasksClient() {
                   <Link
                     href={`/tasks/${t.routineId}`}
                     onClick={(e) => e.stopPropagation()}
-                    className="rounded-[min(var(--radius-md),12px)] border border-border bg-card/40 px-2 py-1 text-[10px] uppercase tracking-widest text-primary hover:border-primary/50"
+                    className="rounded-md border border-border bg-card/40 px-2 py-1 text-[10px] font-medium uppercase tracking-[1.5px] text-primary hover:border-primary/50"
                   >
-                    Open →
+                    Open
                   </Link>
                   {open ? (
                     <ChevronDown className="size-4 text-muted-foreground" />
@@ -169,10 +166,10 @@ export function TasksClient() {
                 </div>
               </button>
               {open && (
-                <div className="border-t border-border px-4 py-3">
+                <div className="border-t border-border px-5 py-4">
                   {t.description && (
                     <div className="mb-3">
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
                         Brief
                       </p>
                       <p className="mt-1 text-[12px] leading-relaxed text-foreground whitespace-pre-wrap">
@@ -182,7 +179,7 @@ export function TasksClient() {
                   )}
                   {t.latestOutput ? (
                     <div>
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-primary">
+                      <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-primary">
                         Latest output
                       </p>
                       <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-[12px] leading-relaxed text-foreground">
@@ -228,7 +225,7 @@ function StatCard({
             ? "text-[#f4b27a]"
             : "text-foreground";
   return (
-    <div className="rounded-md border border-border bg-card/40 p-4">
+    <div className="rounded-md border border-border bg-card/40 p-5">
       <div className="text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
         {label}
       </div>

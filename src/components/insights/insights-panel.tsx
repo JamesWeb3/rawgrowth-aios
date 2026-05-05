@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { jsonFetcher } from "@/lib/swr";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import {
   X,
   Sparkles,
   Loader2,
+  MessageSquare,
 } from "lucide-react";
 
 type Insight = {
@@ -28,6 +30,7 @@ type Insight = {
   reason: string | null;
   suggested_action: string | null;
   status: string;
+  chat_state?: "none" | "queued" | "sent" | "answered";
   agent_name: string | null;
   loop_count?: number;
   created_at: string;
@@ -64,6 +67,39 @@ export function InsightsPanel({
     { refreshInterval: 30_000 },
   );
   const [generating, setGenerating] = useState(false);
+  const [openingChat, setOpeningChat] = useState<string | null>(null);
+  const router = useRouter();
+
+  async function openChat(id: string) {
+    setOpeningChat(id);
+    try {
+      const res = await fetch(`/api/insights/${id}/open-chat`, {
+        method: "POST",
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        agentId?: string;
+        queued?: boolean;
+        position?: number;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "open-chat failed");
+      }
+      if (body.queued) {
+        toast.message(
+          `Queued (#${body.position}) - Atlas will ask after the current question is answered.`,
+        );
+      } else if (body.agentId) {
+        router.push(`/agents/${body.agentId}?tab=chat`);
+      }
+      await mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setOpeningChat(null);
+    }
+  }
 
   async function generate() {
     setGenerating(true);
@@ -191,6 +227,37 @@ export function InsightsPanel({
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {!muted && (
+                    <button
+                      type="button"
+                      onClick={() => openChat(ins.id)}
+                      disabled={openingChat === ins.id}
+                      title={
+                        ins.chat_state === "sent"
+                          ? "Continue in Atlas chat"
+                          : ins.chat_state === "queued"
+                            ? "Queued - waiting for current question"
+                            : "Send to Atlas chat"
+                      }
+                      className={
+                        "rounded-md p-1 hover:bg-card/50 disabled:opacity-50 " +
+                        (ins.chat_state === "queued"
+                          ? "text-amber-300"
+                          : ins.chat_state === "sent"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-primary")
+                      }
+                    >
+                      {openingChat === ins.id ? (
+                        <Loader2
+                          className="size-3.5 animate-spin"
+                          strokeWidth={1.6}
+                        />
+                      ) : (
+                        <MessageSquare className="size-3.5" strokeWidth={1.6} />
+                      )}
+                    </button>
+                  )}
                   {!muted && (
                     <button
                       type="button"

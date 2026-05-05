@@ -5,6 +5,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { anthropic } from "@ai-sdk/anthropic";
+import { gateway } from "@ai-sdk/gateway";
 import {
   generateText,
   jsonSchema,
@@ -47,7 +48,8 @@ export type ChatProviderId =
   | "openai"
   | "anthropic-api"
   | "anthropic-cli"
-  | "claude-max-oauth";
+  | "claude-max-oauth"
+  | "vercel-gateway";
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -137,7 +139,8 @@ export function resolveProvider(callSiteEnvVar?: string): ChatProviderId {
     raw === "openai" ||
     raw === "anthropic-api" ||
     raw === "anthropic-cli" ||
-    raw === "claude-max-oauth"
+    raw === "claude-max-oauth" ||
+    raw === "vercel-gateway"
   ) {
     return raw;
   }
@@ -173,6 +176,8 @@ export async function chatComplete(req: ChatRequest): Promise<ChatResponse> {
       return runAnthropicCli(req);
     case "claude-max-oauth":
       return runClaudeMaxOauth(req);
+    case "vercel-gateway":
+      return runVercelGateway(req);
   }
 }
 
@@ -239,20 +244,38 @@ async function runClaudeMaxOauth(req: ChatRequest): Promise<ChatResponse> {
     ...(tools && tools.length > 0 ? { tools } : {}),
   };
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "oauth-2025-04-20",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: req.abortSignal,
-  });
+  const t0 = Date.now();
+  // Hard 45s budget so a hung request surfaces a real error to the
+  // caller instead of silently chewing the function timeout.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 45_000);
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: req.abortSignal ?? ac.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    const elapsed = Date.now() - t0;
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[claude-max-oauth] FETCH THREW after ${elapsed}ms: ${msg}`);
+    throw new Error(`claude-max-oauth fetch failed after ${elapsed}ms: ${msg}`);
+  }
+  clearTimeout(timer);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    console.error(
+      `[claude-max-oauth] non-200 ${res.status} after ${Date.now() - t0}ms: ${text.slice(0, 500)}`,
+    );
     throw new Error(`claude-max-oauth ${res.status}: ${text.slice(0, 300)}`);
   }
 
@@ -411,6 +434,78 @@ async function runAnthropicApi(req: ChatRequest): Promise<ChatResponse> {
     }
   }
 
+  return { text: result.text, toolCalls: captured };
+}
+
+// ─── vercel-gateway ────────────────────────────────────────────────
+
+const DEFAULT_GATEWAY_MODEL = "anthropic/claude-sonnet-4.6";
+
+/**
+ * Vercel AI Gateway path. Routes through gateway.ai-sdk.dev with
+ * automatic OIDC auth when running on Vercel deployment - no API key
+ * needed. Billed via Vercel directly. Sidesteps the per-account rate
+ * limit on Claude Max OAuth tokens since Gateway uses Vercel's pooled
+ * Anthropic credentials (or whichever provider the model id resolves
+ * to).
+ *
+ * Mirrors runAnthropicApi: tools translated to AI SDK toolset, captured
+ * via no-op execute that records the call for the caller to dispatch.
+ */
+async function runVercelGateway(req: ChatRequest): Promise<ChatResponse> {
+  const model = req.model ?? DEFAULT_GATEWAY_MODEL;
+  const captured: ChatToolCall[] = [];
+
+  const toolset: ToolSet = {};
+  if (req.tools) {
+    for (const t of req.tools) {
+      const name = t.function.name;
+      toolset[name] = tool({
+        description: t.function.description ?? "",
+        inputSchema: jsonSchema(
+          (t.function.parameters as Record<string, unknown>) ?? {
+            type: "object",
+            properties: {},
+          },
+        ),
+        execute: async (args: unknown) => {
+          captured.push({
+            id: `${name}_${captured.length}`,
+            name,
+            input: (args ?? {}) as Record<string, unknown>,
+          });
+          return { ok: true, deferred: true };
+        },
+      });
+    }
+  }
+
+  const aiMessages = req.messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const result = await generateText({
+    model: gateway(model),
+    system: req.system,
+    messages: aiMessages,
+    ...(Object.keys(toolset).length > 0
+      ? { tools: toolset, stopWhen: stepCountIs(req.maxSteps ?? DEFAULT_MAX_STEPS) }
+      : {}),
+    abortSignal: req.abortSignal,
+  });
+
+  if (captured.length === 0 && result.toolCalls.length > 0) {
+    for (const tc of result.toolCalls) {
+      captured.push({
+        id: tc.toolCallId ?? `${tc.toolName}_${captured.length}`,
+        name: tc.toolName,
+        input: (tc.input ?? {}) as Record<string, unknown>,
+      });
+    }
+  }
+
+  if (result.text && req.onTextDelta) req.onTextDelta(result.text);
   return { text: result.text, toolCalls: captured };
 }
 

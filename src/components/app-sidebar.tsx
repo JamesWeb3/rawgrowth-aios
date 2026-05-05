@@ -10,16 +10,16 @@ import {
   Settings2,
   Plug,
   Building2,
-  Activity,
   Sparkles,
-  BookOpen,
-  Palette,
+  FolderOpen,
   CalendarDays,
   Sprout,
   ListChecks,
   PhoneCall,
   Code2,
   MessageSquare,
+  Database,
+  Inbox,
 } from "lucide-react";
 
 import {
@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/sidebar";
 import { UserMenu } from "@/components/user-menu";
 import { ChangeClientPopover } from "@/components/change-client-popover";
-import { ActivityNavBadge } from "@/components/activity-nav-badge";
 import { ApprovalsNavBadge } from "@/components/approvals-nav-badge";
 import { SidebarDepartmentsSection } from "@/components/sidebar-departments-section";
 
@@ -57,9 +56,10 @@ const navSections: NavSection[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
-      { label: "Brand", href: "/brand", icon: Palette },
+      { label: "Updates", href: "/updates", icon: Inbox },
+      { label: "Files", href: "/files", icon: FolderOpen },
+      { label: "Data entry", href: "/data", icon: Database },
       { label: "Departments", href: "/departments", icon: Building2 },
-      { label: "Knowledge", href: "/knowledge", icon: BookOpen },
       { label: "Sales calls", href: "/sales-calls", icon: PhoneCall },
       { label: "Onboarding", href: "/onboarding", icon: Sprout },
     ],
@@ -73,7 +73,6 @@ const navSections: NavSection[] = [
       { label: "Mini SaaS", href: "/mini-saas", icon: Code2 },
       { label: "Routines", href: "/routines", icon: Repeat },
       { label: "Booking", href: "/booking", icon: CalendarDays },
-      { label: "Activity", href: "/activity", icon: Activity },
       { label: "Approvals", href: "/approvals", icon: ShieldCheck },
     ],
   },
@@ -83,6 +82,13 @@ const navSections: NavSection[] = [
       { label: "Connections", href: "/connections", icon: Plug },
       { label: "Skills", href: "/skills", icon: Sparkles },
       { label: "Company", href: "/company", icon: Settings2 },
+    ],
+  },
+  {
+    label: "Admin",
+    adminOnly: true,
+    items: [
+      { label: "Provisioning", href: "/admin/provisioning", icon: ShieldCheck },
     ],
   },
 ];
@@ -172,7 +178,6 @@ export function AppSidebar({
                         <span className={item.comingSoon ? "italic" : undefined}>
                           {item.label}
                         </span>
-                        {item.href === "/activity" && <ActivityNavBadge />}
                         {item.href === "/approvals" && <ApprovalsNavBadge />}
                         {item.badge && (
                           <span className="ml-auto rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.5px] text-amber-400 group-data-[collapsible=icon]:hidden">

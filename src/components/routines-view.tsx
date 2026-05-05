@@ -89,7 +89,7 @@ export function RoutinesView() {
       <EmptyState
         icon={Repeat}
         title="No routines yet"
-        description="Build automated workflows  -  trigger on a schedule, webhook, or integration event; let an agent execute the playbook you write."
+        description="Trigger on a schedule, webhook, or integration event. An agent runs the playbook."
         action={
           <RoutineSheet triggerSize="lg" triggerLabel="Create first routine" />
         }
@@ -133,7 +133,7 @@ export function RoutinesView() {
               routine={r}
               assigneeLabel={
                 assignee
-                  ? `${assignee.name}${assignee.title ? `  -  ${assignee.title}` : ""}`
+                  ? `${assignee.name}${assignee.title ? ` - ${assignee.title}` : ""}`
                   : "Unassigned"
               }
               isActive={isActive}
@@ -181,7 +181,7 @@ function RoutineRow({
   onRun: () => void;
 }) {
   return (
-    <div className="group rounded-xl border border-border bg-card/50 transition-colors hover:border-primary/30 hover:bg-card">
+    <div className="group rounded-md border border-border bg-card/40 transition-colors hover:border-primary/40">
       <div className="flex items-stretch">
         {/* Main content  -  click to edit */}
         <button
@@ -189,11 +189,11 @@ function RoutineRow({
           onClick={onEdit}
           className="flex-1 text-left"
         >
-          <div className="flex flex-col gap-2 p-4">
+          <div className="flex flex-col gap-2 p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h3 className="truncate text-[14px] font-semibold text-foreground">
+                  <h3 className="truncate text-[13px] font-semibold text-foreground">
                     {routine.title || "Untitled routine"}
                   </h3>
                   <Badge
@@ -251,7 +251,7 @@ function RoutineRow({
         </button>
 
         {/* Right rail */}
-        <div className="flex flex-col items-end justify-between gap-2 border-l border-border px-4 py-3 text-right">
+        <div className="flex flex-col items-end justify-between gap-2 border-l border-border px-5 py-4 text-right">
           <div className="flex items-center gap-1">
             <button
               type="button"

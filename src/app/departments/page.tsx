@@ -5,7 +5,7 @@ import { DepartmentsView } from "@/components/departments/departments-view";
 import { buttonVariants } from "@/components/ui/button";
 
 export const metadata = {
-  title: "Departments  -  Rawgrowth",
+  title: "Departments - Rawgrowth",
 };
 
 export default function DepartmentsPage() {

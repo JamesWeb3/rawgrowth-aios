@@ -250,7 +250,7 @@ export function IntegrationConnectionSheet({
                 onClick={handleConnect}
                 size="sm"
                 disabled={connecting}
-                className="btn-shine mt-5 w-full bg-primary text-white hover:bg-primary/90"
+                className="mt-5 w-full bg-primary text-white hover:bg-primary/90"
               >
                 <Plug className="size-4" />
                 {connecting
@@ -804,7 +804,7 @@ function SupabasePatForm({
         onClick={submit}
         disabled={busy}
         size="sm"
-        className="btn-shine w-full bg-primary text-white hover:bg-primary/90"
+        className="w-full bg-primary text-white hover:bg-primary/90"
       >
         <Plug className="size-4" />
         {busy ? "Validating…" : "Connect Supabase"}
@@ -939,7 +939,7 @@ function TelegramBotForm({
         onClick={submit}
         disabled={busy}
         size="sm"
-        className="btn-shine w-full bg-primary text-white hover:bg-primary/90"
+        className="w-full bg-primary text-white hover:bg-primary/90"
       >
         <Plug className="size-4" />
         {busy ? "Validating…" : "Connect bot"}

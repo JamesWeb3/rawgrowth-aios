@@ -13,7 +13,7 @@ export default async function SalesCallsPage() {
   return (
     <PageShell
       title="Sales calls"
-      description="Drop call recordings (audio/video) or paste Loom/Fireflies/Gong transcripts. Each one gets transcribed (Whisper), chunked, embedded, and added to the company corpus so every agent can reference real objections + closes."
+      description="Drop call recordings or paste Loom, Fireflies, or Gong transcripts. Each gets transcribed, chunked, and added to the company corpus so every agent can reference real objections and closes."
     >
       <SalesCallsClient />
     </PageShell>

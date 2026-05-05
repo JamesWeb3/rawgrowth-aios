@@ -143,7 +143,7 @@ function ConnectForm({
         onClick={submit}
         disabled={busy}
         size="sm"
-        className="btn-shine mt-3 w-full bg-primary text-white hover:bg-primary/90"
+        className="mt-3 w-full bg-primary text-white hover:bg-primary/90"
       >
         {busy ? "Validating…" : "Connect bot"}
       </Button>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type DragEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Bot,
   Brain,
@@ -194,7 +195,15 @@ export function AgentPanelClient({
   reportsToAgent?: ParentAgent | null;
   connectors?: ConnectorLite[];
 }) {
-  const [tab, setTab] = useState<Tab>("chat");
+  // Honor `?tab=<name>` so the post-hire toast deep-link
+  // (`/agents/<id>?tab=files`) lands the operator on Files tab.
+  const searchParams = useSearchParams();
+  const initialTab: Tab = (() => {
+    const t = searchParams?.get("tab");
+    const valid: Tab[] = ["chat", "vision", "memory", "files", "tasks", "settings"];
+    return (valid as string[]).includes(t ?? "") ? (t as Tab) : "chat";
+  })();
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [draftSystemPrompt, setDraftSystemPrompt] = useState(agent.system_prompt ?? "");
   const [draftBudget, setDraftBudget] = useState(String(agent.budget_monthly_usd ?? 500));
   const [fileList, setFileList] = useState<AgentFile[]>(files);

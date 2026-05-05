@@ -35,6 +35,16 @@ const files = [
   "0046_mini_saas.sql",
   "0048_insights.sql",
   "0049_insights_loop.sql",
+  "0050_insights_approve.sql",
+  "0051_autonomous_mode.sql",
+  "0052_shared_memory.sql",
+  "0053_sales_call_insights.sql",
+  "0054_files_bucket.sql",
+  "0055_mini_saas_deploy.sql",
+  "0056_sales_calls_fireflies.sql",
+  "0057_insight_chat_queue.sql",
+  "0058_insights_escalated_at.sql",
+  "0059_custom_mcp_tools.sql",
 ];
 
 const client = new pg.Client({ connectionString: url });

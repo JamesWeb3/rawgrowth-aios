@@ -111,7 +111,7 @@ export function MembersView() {
         </div>
         <Button
           size="sm"
-          className="btn-shine bg-primary text-white hover:bg-primary/90"
+          className="bg-primary text-white hover:bg-primary/90"
           onClick={() => setInviteOpen(true)}
         >
           <Plus className="size-4" />
@@ -371,7 +371,7 @@ function InviteSheet({
               onClick={submit}
               disabled={submitting}
               size="sm"
-              className="btn-shine bg-primary text-white hover:bg-primary/90"
+              className="bg-primary text-white hover:bg-primary/90"
             >
               <Mail className="size-4" />
               {submitting ? "Sending…" : "Send invitation"}

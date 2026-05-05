@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { RefreshCw, Code2, Eye, Trash2, ExternalLink } from "lucide-react";
+import { RefreshCw, Code2, Eye, Trash2, ExternalLink, Rocket } from "lucide-react";
 
 type App = {
   id: string;
@@ -14,6 +14,8 @@ type App = {
   generated_html: string | null;
   status: string;
   generation_meta: Record<string, unknown> | null;
+  deployed_url: string | null;
+  deployed_at: string | null;
 };
 
 export function MiniSaasDetailClient({ app }: { app: App }) {
@@ -21,6 +23,8 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
   const [tab, setTab] = useState<"preview" | "prompt" | "code">("preview");
   const [prompt, setPrompt] = useState(app.prompt);
   const [regenerating, setRegenerating] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [deployedUrl, setDeployedUrl] = useState<string | null>(app.deployed_url);
 
   // Render via srcDoc - simplest + most reliable. Blob-URL approach
   // raced against React 19 strict-mode dev double-mount + Turbopack
@@ -47,6 +51,39 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
       toast.error((err as Error).message);
     } finally {
       setRegenerating(false);
+    }
+  }
+
+  async function deployToVercel() {
+    if (deploying) return;
+    setDeploying(true);
+    const toastId = toast.loading("Deploying to Vercel...");
+    try {
+      const res = await fetch(`/api/mini-saas/${app.id}/deploy`, {
+        method: "POST",
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        deployed_url?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.ok || !body.deployed_url) {
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setDeployedUrl(body.deployed_url);
+      toast.success("Deployed", {
+        id: toastId,
+        description: body.deployed_url,
+        action: {
+          label: "Open",
+          onClick: () => window.open(body.deployed_url, "_blank"),
+        },
+      });
+      router.refresh();
+    } catch (err) {
+      toast.error((err as Error).message, { id: toastId });
+    } finally {
+      setDeploying(false);
     }
   }
 
@@ -93,15 +130,51 @@ export function MiniSaasDetailClient({ app }: { app: App }) {
             </button>
           ))}
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={remove}
-          className="text-muted-foreground hover:text-destructive"
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="default"
+            onClick={deployToVercel}
+            disabled={
+              deploying ||
+              !app.generated_html ||
+              app.status !== "ready"
+            }
+          >
+            <Rocket
+              className={"mr-1.5 size-3.5 " + (deploying ? "animate-pulse" : "")}
+            />
+            {deploying
+              ? "Deploying..."
+              : deployedUrl
+                ? "Redeploy"
+                : "Deploy to Vercel"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={remove}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
       </div>
+
+      {deployedUrl && (
+        <div className="flex items-center justify-between rounded-md border border-border bg-card/30 px-3 py-2 text-[12px]">
+          <span className="text-muted-foreground">Live at</span>
+          <a
+            href={deployedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
+          >
+            {deployedUrl.replace(/^https?:\/\//, "")}
+            <ExternalLink className="size-3" />
+          </a>
+        </div>
+      )}
 
       {tab === "preview" && (
         <div className="overflow-hidden rounded-md border border-border bg-card/30">

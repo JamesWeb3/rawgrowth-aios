@@ -1,7 +1,17 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Pause, Play, Plus, Save, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Pause,
+  Play,
+  Plus,
+  Save,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -32,15 +42,70 @@ import {
   type AgentRuntime,
 } from "@/lib/agents/constants";
 import { useAgents } from "@/lib/agents/use-agents";
-import type { Agent } from "@/lib/agents/dto";
+import type { Agent, AgentCreateInput } from "@/lib/agents/dto";
 import { DEPARTMENTS } from "@/lib/agents/dto";
 import { metaFor as deptMeta } from "@/components/departments/departments-view";
 import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
 import { ConnectorsPicker } from "@/components/agents/connectors-picker";
 import { AgentTelegramBotPanel } from "@/components/agents/agent-telegram-bot-panel";
 import { useConfig } from "@/lib/use-config";
+import {
+  ROLE_TEMPLATE_LABELS,
+  getRoleTemplateLabel,
+} from "@/lib/agents/role-templates-client";
 
 const NONE = "__none__";
+
+// Quick-hire defaults per Chris's spec: drop-files-and-go flow. The full
+// form is still available behind the Advanced toggle, so power users can
+// still tune runtime / budget / tools when they need to.
+const QUICK_HIRE_RUNTIME: AgentRuntime = "anthropic-cli" as AgentRuntime;
+const QUICK_HIRE_BUDGET = 50;
+
+// Map a freeform role text or a role-templates label onto the
+// AGENT_ROLES enum used by the constraint on rgaios_agents.role. We only
+// have a small set ('marketer', 'sdr', etc.) so anything unknown falls
+// back to 'general'. This mirrors agent-blocks.ts L147 - the legacy hire
+// path also defaults to 'general' for freeform roles.
+function inferRoleEnum(text: string): AgentRole {
+  const norm = text.trim().toLowerCase();
+  if (!norm) return "general";
+  if (norm.includes("ceo")) return "ceo";
+  if (norm.includes("cto") || norm.includes("engineer")) return "engineer";
+  if (
+    norm.includes("market") ||
+    norm.includes("copywriter") ||
+    norm.includes("content") ||
+    norm.includes("social") ||
+    norm.includes("media buyer")
+  )
+    return "marketer";
+  if (norm.includes("sdr") || norm.includes("sales")) return "sdr";
+  if (
+    norm.includes("ops") ||
+    norm.includes("operations") ||
+    norm.includes("project")
+  )
+    return "ops";
+  if (norm.includes("designer") || norm.includes("design")) return "designer";
+  return "general";
+}
+
+function titleCase(s: string): string {
+  return s
+    .trim()
+    .split(/\s+/)
+    .map((w) =>
+      w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase(),
+    )
+    .join(" ");
+}
+
+// Short alphanumeric suffix so two "Copywriter" hires don't collide on
+// name. Stays under 6 chars to keep org-chart cards readable.
+function shortSuffix(): string {
+  return Math.random().toString(36).slice(2, 7);
+}
 
 type FormState = {
   name: string;
@@ -124,6 +189,14 @@ export function AgentSheet(props: Props) {
   );
   const [error, setError] = useState<string | null>(null);
 
+  // Quick-hire form (create mode only). The Advanced toggle reveals the
+  // full FormState below for operators who still want to tune runtime /
+  // budget / tools / reports-to.
+  const [quickRole, setQuickRole] = useState("");
+  const [quickDept, setQuickDept] = useState<string>(NONE);
+  const [quickSubmitting, setQuickSubmitting] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   // Reset form when the sheet opens for a new agent (edit mode) or when
   // closing. React 19 pattern: track the trigger key in state and reset
   // during render so we avoid a set-state-in-effect cascade. We intentionally
@@ -136,6 +209,9 @@ export function AgentSheet(props: Props) {
     if (open) {
       setForm(isEdit ? agentToForm(props.agent) : emptyForm());
       setError(null);
+      setQuickRole("");
+      setQuickDept(NONE);
+      setShowAdvanced(false);
     }
   }
 
@@ -168,6 +244,88 @@ export function AgentSheet(props: Props) {
     setOpen(false);
   };
 
+  // Resolve the dept-head id so freshly-hired agents auto-report to the
+  // right manager. Falls back to null (top-level) when the dept has no
+  // head yet - the operator can fix this later in Advanced.
+  const findDeptHeadId = (dept: string): string | null => {
+    if (dept === NONE) return null;
+    const head = agents.find(
+      (a) => a.department === dept && a.isDepartmentHead,
+    );
+    return head?.id ?? null;
+  };
+
+  const handleQuickSubmit = async () => {
+    setError(null);
+    const roleText = quickRole.trim();
+    if (!roleText) {
+      setError("Tell me what kind of agent.");
+      return;
+    }
+
+    // Match against the role-templates catalog first (case-insensitive).
+    // A hit gives us the canonical label (e.g. "Copywriter") which
+    // autoTrainAgent picks back up server-side to wire system_prompt +
+    // skills + starter files.
+    const canonicalLabel = getRoleTemplateLabel(roleText);
+
+    const dept = quickDept === NONE ? null : quickDept;
+    const titleText = canonicalLabel ?? titleCase(roleText);
+    const deptLabel = dept ? deptMeta(dept).label : "the team";
+    const description = canonicalLabel
+      ? "" // server-side auto-train fills system_prompt; description stays empty
+      : `${titleText} for ${deptLabel}.`;
+    // We send `role` to the API as the freeform catalog label (e.g.
+    // "Copywriter") so autoTrainAgent can resolve it. The DB enum value
+    // gets reconciled below via updateAgent so legacy queries that group
+    // by role keep working.
+    const roleForApi = (canonicalLabel ?? roleText.toLowerCase()) as AgentRole;
+    const roleEnum = inferRoleEnum(canonicalLabel ?? roleText);
+
+    const name = `${titleText} ${shortSuffix()}`;
+    const reportsTo = dept ? findDeptHeadId(dept) : null;
+
+    const payload: AgentCreateInput = {
+      name,
+      title: titleText,
+      role: roleForApi,
+      reportsTo,
+      description,
+      runtime: QUICK_HIRE_RUNTIME,
+      budgetMonthlyUsd: QUICK_HIRE_BUDGET,
+      writePolicy: {},
+      department: dept,
+      isDepartmentHead: false,
+    };
+
+    setQuickSubmitting(true);
+    try {
+      const created = await hireAgent(payload);
+      // Reconcile: if the freeform label we sent doesn't match the enum
+      // we want stored, patch it back. autoTrainAgent already ran with
+      // the catalog label, so system_prompt + skills + starter files
+      // are wired correctly regardless.
+      if (roleEnum !== roleForApi) {
+        void updateAgent(created.id, { role: roleEnum });
+      }
+      const deptText = dept ? deptMeta(dept).label : "the team";
+      toast.success(`Hired ${created.name} in ${deptText}`, {
+        description: "Drop files into their tab to start training.",
+        action: {
+          label: "Open files",
+          onClick: () => {
+            window.location.href = `/agents/${created.id}?tab=files`;
+          },
+        },
+      });
+      setOpen(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setQuickSubmitting(false);
+    }
+  };
+
   const handleFire = () => {
     if (!isEdit) return;
     void removeAgent(props.agent.id);
@@ -183,12 +341,21 @@ export function AgentSheet(props: Props) {
 
   const isPaused = isEdit && props.agent.status === "paused";
 
+  const deptOptions = Array.from(
+    new Set([
+      ...DEPARTMENTS,
+      ...agents
+        .map((a) => a.department)
+        .filter((d): d is string => Boolean(d)),
+    ]),
+  ).sort();
+
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       {!isEdit && (
         <SheetTrigger
           className={cn(
-            "btn-shine inline-flex shrink-0 items-center gap-1.5 rounded-[12px] bg-primary font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "inline-flex shrink-0 items-center gap-1.5 rounded-[12px] bg-primary font-medium text-white transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             props.triggerSize === "lg"
               ? "h-9 gap-1.5 px-3 text-sm"
               : "h-7 px-2.5 text-[0.8rem]",
@@ -211,12 +378,118 @@ export function AgentSheet(props: Props) {
           <SheetDescription className="text-[13px] text-muted-foreground">
             {isEdit
               ? "Update role, reporting line, runtime, or connectors."
-              : "Every agent gets a role, a manager, and a runtime."}
+              : "Tell us what kind of agent. Drop files in their tab to train them."}
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="flex flex-col gap-5">
+          {!isEdit && (
+            <div className="mb-5 flex flex-col gap-4">
+              <Field
+                label="What kind of agent?"
+                hint="Try copywriter, SDR, designer, marketing manager. We auto-train known roles."
+              >
+                <Input
+                  value={quickRole}
+                  onChange={(e) => setQuickRole(e.target.value)}
+                  placeholder="copywriter"
+                  className="bg-input/40"
+                  list="rawclaw-role-suggestions"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !quickSubmitting) {
+                      e.preventDefault();
+                      void handleQuickSubmit();
+                    }
+                  }}
+                />
+                <datalist id="rawclaw-role-suggestions">
+                  {ROLE_TEMPLATE_LABELS.map((label) => (
+                    <option key={label} value={label} />
+                  ))}
+                </datalist>
+              </Field>
+
+              <Field label="Department">
+                <Select
+                  value={quickDept === NONE ? undefined : quickDept}
+                  onValueChange={(v) => setQuickDept(v ?? NONE)}
+                >
+                  <SelectTrigger className="w-full bg-input/40">
+                    <SelectValue placeholder="Pick a department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Unassigned</SelectItem>
+                    {deptOptions.map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {deptMeta(d).label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+
+              <Button
+                onClick={() => void handleQuickSubmit()}
+                disabled={quickSubmitting || !quickRole.trim()}
+                className="h-11 w-full bg-primary text-[13px] font-medium text-white hover:bg-primary/90"
+              >
+                <Sparkles className="size-4" />
+                {quickSubmitting ? "Hiring..." : "Hire"}
+              </Button>
+
+              {error && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  // First time opening advanced: port the quick form
+                  // values into the full form so progress isn't lost.
+                  if (!showAdvanced) {
+                    const tmplLabel = getRoleTemplateLabel(quickRole);
+                    const titleText =
+                      tmplLabel ??
+                      (quickRole.trim() ? titleCase(quickRole) : "");
+                    const deptLabel =
+                      quickDept === NONE ? "the team" : deptMeta(quickDept).label;
+                    setForm((prev) => ({
+                      ...prev,
+                      title: prev.title || titleText,
+                      role: inferRoleEnum(quickRole),
+                      department: quickDept,
+                      description:
+                        prev.description ||
+                        (quickRole.trim()
+                          ? `${titleText} for ${deptLabel}.`
+                          : ""),
+                      name:
+                        prev.name ||
+                        (titleText ? `${titleText} ${shortSuffix()}` : ""),
+                    }));
+                  }
+                  setShowAdvanced((v) => !v);
+                }}
+                className="flex items-center gap-1.5 self-start text-[12px] text-muted-foreground hover:text-foreground"
+              >
+                {showAdvanced ? (
+                  <ChevronUp className="size-3.5" />
+                ) : (
+                  <ChevronDown className="size-3.5" />
+                )}
+                Advanced
+              </button>
+            </div>
+          )}
+
+          <div
+            className={cn(
+              "flex flex-col gap-5",
+              !isEdit && !showAdvanced && "hidden",
+            )}
+          >
             <Field label="Name">
               <Input
                 value={form.name}
@@ -239,7 +512,9 @@ export function AgentSheet(props: Props) {
               <Field label="Role">
                 <Select
                   value={form.role}
-                  onValueChange={(v) => setForm({ ...form, role: (v ?? "general") as AgentRole })}
+                  onValueChange={(v) =>
+                    setForm({ ...form, role: (v ?? "general") as AgentRole })
+                  }
                 >
                   <SelectTrigger className="w-full bg-input/40">
                     <SelectValue placeholder="Choose role" />
@@ -257,7 +532,9 @@ export function AgentSheet(props: Props) {
               <Field label="Reports to">
                 <Select
                   value={form.reportsTo === NONE ? undefined : form.reportsTo}
-                  onValueChange={(v) => setForm({ ...form, reportsTo: v ?? NONE })}
+                  onValueChange={(v) =>
+                    setForm({ ...form, reportsTo: v ?? NONE })
+                  }
                 >
                   <SelectTrigger className="w-full bg-input/40">
                     <SelectValue placeholder="No manager" />
@@ -290,20 +567,11 @@ export function AgentSheet(props: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>Unassigned</SelectItem>
-                  {Array.from(
-                    new Set([
-                      ...DEPARTMENTS,
-                      ...agents
-                        .map((a) => a.department)
-                        .filter((d): d is string => Boolean(d)),
-                    ]),
-                  )
-                    .sort()
-                    .map((d) => (
-                      <SelectItem key={d} value={d}>
-                        {deptMeta(d).label}
-                      </SelectItem>
-                    ))}
+                  {deptOptions.map((d) => (
+                    <SelectItem key={d} value={d}>
+                      {deptMeta(d).label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -399,7 +667,7 @@ export function AgentSheet(props: Props) {
               </Field>
             )}
 
-            {error && (
+            {isEdit && error && (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
                 {error}
               </div>
@@ -447,21 +715,23 @@ export function AgentSheet(props: Props) {
                   </Button>
                 }
               />
-              <Button
-                onClick={handleSubmit}
-                size="sm"
-                className="btn-shine bg-primary text-white hover:bg-primary/90"
-              >
-                {isEdit ? (
-                  <>
-                    <Save className="size-4" /> Save changes
-                  </>
-                ) : (
-                  <>
-                    <Plus className="size-4" /> Hire agent
-                  </>
-                )}
-              </Button>
+              {(isEdit || showAdvanced) && (
+                <Button
+                  onClick={handleSubmit}
+                  size="sm"
+                  className="bg-primary text-white hover:bg-primary/90"
+                >
+                  {isEdit ? (
+                    <>
+                      <Save className="size-4" /> Save changes
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="size-4" /> Hire agent
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </SheetFooter>

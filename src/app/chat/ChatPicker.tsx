@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AgentChatTab } from "@/components/agents/AgentChatTab";
+import AgentChatTab from "@/components/agents/AgentChatTab";
 import { Crown, Bot } from "lucide-react";
 
 type Agent = {
@@ -65,11 +65,10 @@ export function ChatPicker({
 
   if (agents.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border bg-card/30 p-10 text-center">
-        <Bot className="mx-auto size-8 text-primary/60" strokeWidth={1.4} />
-        <p className="mt-3 text-sm font-medium text-foreground">No agents yet</p>
-        <p className="mt-1 text-[12px] text-muted-foreground">
-          Hire your first agent on /agents to start chatting.
+      <div className="rounded-md border border-dashed border-border bg-card/40 p-5 text-center">
+        <Bot className="mx-auto size-6 text-muted-foreground" strokeWidth={1.4} />
+        <p className="mx-auto mt-3 text-[13px] text-muted-foreground">
+          No agents yet. Hire your first agent on /agents to start chatting.
         </p>
       </div>
     );
@@ -78,10 +77,10 @@ export function ChatPicker({
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
       {/* Picker rail */}
-      <aside className="space-y-4 rounded-md border border-border bg-card/30 p-3">
+      <aside className="space-y-4 rounded-md border border-border bg-card/40 p-3">
         {ceo && (
           <div>
-            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[1.5px] text-muted-foreground">
+            <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
               Coordinator
             </div>
             <AgentRow agent={ceo} active={activeId === ceo.id} onPick={pick} />
@@ -89,7 +88,7 @@ export function ChatPicker({
         )}
         {sortedDepts.map(([dept, list]) => (
           <div key={dept}>
-            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[1.5px] text-muted-foreground">
+            <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
               {DEPT_LABEL[dept] ?? dept}
             </div>
             <div className="space-y-0.5">
@@ -107,7 +106,7 @@ export function ChatPicker({
       </aside>
 
       {/* Chat surface */}
-      <div className="overflow-hidden rounded-md border border-border bg-card/30">
+      <div className="overflow-hidden rounded-md border border-border bg-card/40">
         {active ? (
           <AgentChatTab
             key={active.id}

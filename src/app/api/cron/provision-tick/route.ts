@@ -8,6 +8,11 @@ import {
   isDigitalOceanEnabled,
   buildCloudInit,
 } from "@/lib/provision/digitalocean";
+import {
+  createHetznerServer,
+  getHetznerServer,
+  isHetznerEnabled,
+} from "@/lib/provision/hetzner";
 import { upsertA, isCloudflareEnabled } from "@/lib/provision/cloudflare";
 import { sendWelcomeEmail } from "@/lib/auth/email";
 
@@ -40,8 +45,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (!isDigitalOceanEnabled()) {
-    return NextResponse.json({ ok: true, skipped: "DO_API_TOKEN unset" });
+  // Provider preference: Hetzner if its token is set, else DigitalOcean.
+  // Hetzner takes precedence so an operator flipping HETZNER_API_TOKEN on
+  // an instance that still has DO_API_TOKEN configured cuts straight over
+  // without needing to unset the old token.
+  const useHetzner = isHetznerEnabled();
+  if (!useHetzner && !isDigitalOceanEnabled()) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "no provider token (HETZNER_API_TOKEN or DO_API_TOKEN) set",
+    });
   }
   if (process.env.SHARED_VPS_HOST?.trim()) {
     return NextResponse.json({ ok: true, skipped: "shared_vps mode" });
@@ -80,6 +93,7 @@ export async function GET(req: NextRequest) {
         droplet_id?: number;
         domain?: string;
         temp_password?: string;
+        provider?: "hetzner" | "digitalocean";
       };
 
       // ── pending -> provisioning ──
@@ -139,25 +153,62 @@ export async function GET(req: NextRequest) {
             crypto.randomBytes(32).toString("base64url"),
         });
 
-        const sshKeyIds = (process.env.DO_SSH_KEY_IDS ?? "")
-          .split(",")
-          .map((s) => Number(s.trim()))
-          .filter((n) => Number.isFinite(n) && n > 0);
+        const serverName = `rawclaw-${subdomain}-${row.id.slice(0, 6)}`;
 
-        const droplet = await createDroplet({
-          name: `rawclaw-${subdomain}-${row.id.slice(0, 6)}`,
-          region: process.env.DO_REGION ?? "nyc3",
-          size: process.env.DO_SIZE ?? "s-2vcpu-4gb",
-          sshKeys: sshKeyIds,
-          userData,
-          tags: ["rawclaw", `org:${orgId.slice(0, 8)}`],
-        });
+        // The provider abstraction stops at this branch. Both clients
+        // return { id, name } and we stash the id under `droplet_id` for
+        // historical reasons (queue rows in flight still use that key).
+        // `provider` discriminates which client to call on the next tick.
+        let serverId: number;
+        let serverDisplay: string;
+        let provider: "hetzner" | "digitalocean";
+        if (useHetzner) {
+          const sshKeysRaw = (process.env.HETZNER_SSH_KEY_IDS ?? "").split(",");
+          const sshKeys: Array<number | string> = sshKeysRaw
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+            .map((s) => {
+              const n = Number(s);
+              return Number.isFinite(n) && n > 0 ? n : s;
+            });
+
+          const server = await createHetznerServer({
+            name: serverName,
+            location: process.env.HETZNER_LOCATION ?? "nbg1",
+            server_type: process.env.HETZNER_SERVER_TYPE ?? "cx22",
+            image: process.env.HETZNER_IMAGE ?? "ubuntu-22.04",
+            ssh_keys: sshKeys,
+            user_data: userData,
+            labels: { rawclaw: "true", org: orgId.slice(0, 8) },
+          });
+          serverId = server.id;
+          serverDisplay = server.name;
+          provider = "hetzner";
+        } else {
+          const sshKeyIds = (process.env.DO_SSH_KEY_IDS ?? "")
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => Number.isFinite(n) && n > 0);
+
+          const droplet = await createDroplet({
+            name: serverName,
+            region: process.env.DO_REGION ?? "nyc3",
+            size: process.env.DO_SIZE ?? "s-2vcpu-4gb",
+            sshKeys: sshKeyIds,
+            userData,
+            tags: ["rawclaw", `org:${orgId.slice(0, 8)}`],
+          });
+          serverId = droplet.id;
+          serverDisplay = droplet.name;
+          provider = "digitalocean";
+        }
 
         const newMeta = {
           ...meta,
-          droplet_id: droplet.id,
-          droplet_name: droplet.name,
+          droplet_id: serverId,
+          droplet_name: serverDisplay,
           domain: fullDomain,
+          provider,
         };
         await db
           .from("rgaios_provisioning_queue")
@@ -169,7 +220,7 @@ export async function GET(req: NextRequest) {
         results.push({
           id: row.id,
           transitioned: "pending->provisioning",
-          detail: `droplet ${droplet.id} ${fullDomain}`,
+          detail: `${provider} ${serverId} ${fullDomain}`,
         });
         continue;
       }
@@ -180,12 +231,43 @@ export async function GET(req: NextRequest) {
         typeof meta.droplet_id === "number" &&
         typeof meta.domain === "string"
       ) {
-        const info = await getDroplet(meta.droplet_id);
-        if (info.status !== "active" || !info.ipv4) {
+        // Rows queued before the Hetzner switch lack `provider` and were
+        // always created on DO, so default to that.
+        const rowProvider = meta.provider ?? "digitalocean";
+        let ipv4: string | null;
+        let liveStatus: string;
+        if (rowProvider === "hetzner") {
+          const info = await getHetznerServer(meta.droplet_id);
+          ipv4 = info.ipv4;
+          liveStatus = info.status;
+          if (info.status !== "running" || !info.ipv4) {
+            results.push({
+              id: row.id,
+              transitioned: "still_provisioning",
+              detail: `${info.status} ip=${info.ipv4 ?? "none"}`,
+            });
+            continue;
+          }
+        } else {
+          const info = await getDroplet(meta.droplet_id);
+          ipv4 = info.ipv4;
+          liveStatus = info.status;
+          if (info.status !== "active" || !info.ipv4) {
+            results.push({
+              id: row.id,
+              transitioned: "still_provisioning",
+              detail: `${info.status} ip=${info.ipv4 ?? "none"}`,
+            });
+            continue;
+          }
+        }
+        // After the early-continue above, both branches guarantee a
+        // non-null ipv4 - re-narrow for the rest of the block.
+        if (!ipv4) {
           results.push({
             id: row.id,
             transitioned: "still_provisioning",
-            detail: `${info.status} ip=${info.ipv4 ?? "none"}`,
+            detail: `${liveStatus} ip=none`,
           });
           continue;
         }
@@ -199,7 +281,7 @@ export async function GET(req: NextRequest) {
             process.env.PROVISION_BASE_DOMAIN ?? "rawgrowth.app";
           const dns = await upsertA({
             fullDomain: meta.domain,
-            ipv4: info.ipv4,
+            ipv4,
             zoneApex: baseDomain,
           });
           if (!dns.ok) {
@@ -248,7 +330,7 @@ export async function GET(req: NextRequest) {
         results.push({
           id: row.id,
           transitioned: "provisioning->ready",
-          detail: `${meta.domain} ${info.ipv4}`,
+          detail: `${meta.domain} ${ipv4}`,
         });
         continue;
       }

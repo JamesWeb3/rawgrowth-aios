@@ -284,6 +284,7 @@ export type Database = {
           size_bytes: number | null;
           uploaded_at: string;
           uploaded_by: string | null;
+          bucket: string;
         };
         Insert: {
           organization_id: string;
@@ -293,6 +294,7 @@ export type Database = {
           mime_type?: string;
           size_bytes?: number | null;
           uploaded_by?: string | null;
+          bucket?: string;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_knowledge_files"]["Row"]>;
         Relationships: [];

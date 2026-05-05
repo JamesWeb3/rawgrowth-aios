@@ -116,7 +116,7 @@ export function IntegrationsGrid() {
                   className={
                     isConnected
                       ? "w-full bg-white/5 text-foreground hover:bg-white/10"
-                      : "btn-shine w-full bg-primary text-white hover:bg-primary/90"
+                      : "w-full bg-primary text-white hover:bg-primary/90"
                   }
                 >
                   {isConnected ? "Manage" : "Connect"}

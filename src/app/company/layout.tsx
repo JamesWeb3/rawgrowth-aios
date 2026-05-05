@@ -14,7 +14,7 @@ export default async function CompanyLayout({
   return (
     <PageShell
       title="Company"
-      description="Configure the company  -  settings, people, and the capabilities your agents draw on."
+      description="Configure the company. Settings, people, and the capabilities your agents draw on."
     >
       <CompanyTabs />
       <div className="mt-6">{children}</div>
