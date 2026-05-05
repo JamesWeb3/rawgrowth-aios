@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
@@ -28,8 +28,11 @@ export async function GET() {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-  // Lazy-trigger atlas-coordinate. Best-effort fire-and-forget.
-  void (async () => {
+  // Lazy-trigger atlas-coordinate via after() so the work survives the
+  // serverless response cutoff. void fetch was getting killed mid-flight
+  // on Vercel because the function's execution context died once the
+  // bell payload was sent.
+  after(async () => {
     try {
       const { data: last } = await supabaseAdmin()
         .from("rgaios_agent_chat_messages")
@@ -43,15 +46,13 @@ export async function GET() {
       const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
       const secret = process.env.CRON_SECRET ?? "";
       if (!base || !secret) return;
-      // Fire async; don't await the response so the user's bell load
-      // returns instantly.
-      void fetch(`${base}/api/cron/atlas-coordinate`, {
+      await fetch(`${base}/api/cron/atlas-coordinate`, {
         headers: { authorization: `Bearer ${secret}` },
       }).catch(() => undefined);
     } catch {
       // best-effort - never let coord trigger break the bell
     }
-  })();
+  });
   const { data } = await supabaseAdmin()
     .from("rgaios_agent_chat_messages")
     .select("id, agent_id, content, created_at, metadata")

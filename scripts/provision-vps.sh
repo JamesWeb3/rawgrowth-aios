@@ -35,6 +35,7 @@ EMAIL=""
 ORG=""
 SSH_USER="root"
 REPO="${RAWGROWTH_REPO:-git@github.com:Rawgrowth-Consulting/rawclaw.git}"
+BRANCH="${RAWGROWTH_BRANCH:-v3}"
 # GitHub API path derived from REPO (used to register deploy keys).
 REPO_API_PATH="${RAWGROWTH_REPO_API_PATH:-Rawgrowth-Consulting/rawclaw}"
 TARGET="/opt/rawgrowth"
@@ -47,6 +48,7 @@ while [ $# -gt 0 ]; do
     --org)      ORG="$2"; shift 2 ;;
     --ssh-user) SSH_USER="$2"; shift 2 ;;
     --repo)     REPO="$2"; shift 2 ;;
+    --branch)   BRANCH="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -170,9 +172,9 @@ chmod 600 /root/.ssh/config /root/.ssh/rawclaw_deploy'
 echo
 
 # ─── 3. Clone (or pull) the repo ─────────────────────────────
-bold "▸ Cloning rawclaw into ${TARGET}"
-$SSH "if [ -d ${TARGET}/.git ]; then cd ${TARGET} && git pull --rebase --autostash; else git clone ${REPO} ${TARGET}; fi"
-green "✓ Repo in place"
+bold "▸ Cloning rawclaw (${BRANCH}) into ${TARGET}"
+$SSH "if [ -d ${TARGET}/.git ]; then cd ${TARGET} && git fetch origin ${BRANCH} && git checkout ${BRANCH} && git pull --rebase --autostash; else git clone --branch ${BRANCH} ${REPO} ${TARGET}; fi"
+green "✓ Repo in place (branch ${BRANCH})"
 echo
 
 # ─── 3. Write .env on the VPS ────────────────────────────────
@@ -208,6 +210,25 @@ SEED_ORG_SLUG=$(printf '%s' "$ORG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9
 SEED_ADMIN_EMAIL=${EMAIL}
 SEED_ADMIN_PASSWORD=
 SEED_ADMIN_NAME=Owner
+
+# ────── LLM (self-hosted defaults) ──────
+# Path A: Claude Code CLI on the host. SSH in once after bootstrap and
+# run \`claude /login\` so the OAuth Max session lands in ~/.claude.
+# All call-site overrides default to anthropic-cli when LLM_PROVIDER is.
+RUNTIME_PATH=cli
+CLAUDE_CLI_PATH=/usr/local/bin/claude
+LLM_PROVIDER=anthropic-cli
+ONBOARDING_LLM_PROVIDER=anthropic-cli
+EXECUTOR_LLM_PROVIDER=anthropic-cli
+BRAND_VOICE_LLM_PROVIDER=anthropic-cli
+
+# Embedding stays local via fastembed - no API key required.
+EMBEDDING_PROVIDER=fastembed
+
+# Path B fallback: paste an Anthropic API key here if Claude Max OAuth
+# isn't an option on this box (corporate IP block, etc).
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
 EOF
 green "✓ .env written"
 echo
