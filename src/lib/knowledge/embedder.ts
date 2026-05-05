@@ -1,7 +1,8 @@
 import OpenAI from "openai";
+import { createHash } from "node:crypto";
 
 /**
- * Embeddings provider abstraction. Three backends, selected at runtime
+ * Embeddings provider abstraction. Four backends, selected at runtime
  * via EMBEDDING_PROVIDER:
  *
  *   fastembed (default)  -  BAAI/bge-small-en-v1.5 via fastembed-js (ONNX,
@@ -20,7 +21,16 @@ import OpenAI from "openai";
  *   https://api.voyageai.com/v1/embeddings. Native 1024d, zero-padded
  *   to 1536d.
  *
- * Both fastembed and voyage zero-pad to the existing pgvector(1536)
+ *   stub              -  deterministic SHA-256 hash of the input text
+ *   spread across 384 floats in [-1, 1] then zero-padded to 1536d. NOT
+ *   semantically useful  -  used as the automatic fallback when fastembed
+ *   native modules fail to load (e.g. Vercel serverless workers, where
+ *   onnxruntime-node + @anush008/tokenizers .node binaries are not
+ *   resolvable at runtime). Keeps ingest alive so rows still land; real
+ *   retrieval falls back to keyword search at the small corpus sizes
+ *   v3 ships with. Set EMBEDDING_PROVIDER=stub to force it explicitly.
+ *
+ * fastembed, voyage and stub all zero-pad to the existing pgvector(1536)
  * column. Within a single-provider corpus this preserves cosine
  * similarity exactly (extra zero dims contribute 0 to both dot product
  * and L2 norm), so the column + ivfflat index keep working without a
@@ -33,7 +43,8 @@ import OpenAI from "openai";
  * Fails loud if the selected provider's API key is missing (openai /
  * voyage). The upload route catches and turns that into a per-file
  * warning so the file blob still lands in storage and can be
- * backfilled later. fastembed never throws for a missing key.
+ * backfilled later. fastembed never throws for a missing key  -  on
+ * native-load failure it warns once and routes through the stub.
  */
 
 const OPENAI_MODEL = "text-embedding-3-large";
@@ -44,11 +55,12 @@ const VOYAGE_NATIVE_DIMENSIONS = 1024;
 const VOYAGE_ENDPOINT = "https://api.voyageai.com/v1/embeddings";
 
 const FASTEMBED_NATIVE_DIMENSIONS = 384;
+const STUB_NATIVE_DIMENSIONS = 384;
 
 const TARGET_DIMENSIONS = 1536;
 const BATCH = 96;
 
-export type EmbeddingProvider = "fastembed" | "openai" | "voyage";
+export type EmbeddingProvider = "fastembed" | "openai" | "voyage" | "stub";
 
 function selectedProvider(): EmbeddingProvider {
   const raw = (process.env.EMBEDDING_PROVIDER ?? "fastembed")
@@ -56,9 +68,10 @@ function selectedProvider(): EmbeddingProvider {
     .trim();
   if (raw === "voyage") return "voyage";
   if (raw === "openai") return "openai";
+  if (raw === "stub") return "stub";
   if (raw === "" || raw === "fastembed") return "fastembed";
   throw new Error(
-    `Unknown EMBEDDING_PROVIDER='${raw}'. Use 'fastembed' (default), 'openai', or 'voyage'.`,
+    `Unknown EMBEDDING_PROVIDER='${raw}'. Use 'fastembed' (default), 'openai', 'voyage', or 'stub'.`,
   );
 }
 
@@ -141,20 +154,85 @@ async function fastembedModel(): Promise<FastembedModel> {
   return _fastembedModel;
 }
 
-async function embedBatchFastembed(inputs: string[]): Promise<number[][]> {
-  const model = await fastembedModel();
-  const out: number[][] = [];
-  for await (const group of model.embed(inputs, Math.min(inputs.length, BATCH))) {
-    for (const v of group) {
-      if (v.length !== FASTEMBED_NATIVE_DIMENSIONS) {
-        throw new Error(
-          `fastembed returned vector of unexpected dim ${v.length} (expected ${FASTEMBED_NATIVE_DIMENSIONS})`,
-        );
-      }
-      out.push(padToTarget(v));
+/**
+ * Deterministic stub embedder. SHA-256 of the input text is expanded
+ * with sequential counter rounds to fill 384 floats in [-1, 1], then
+ * zero-padded to 1536d via padToTarget. Same input always yields the
+ * same vector (idempotent re-ingest), but two distinct inputs produce
+ * uncorrelated vectors  -  there is no semantic signal here. This path
+ * exists so /api/data/ingest stays alive on Vercel serverless workers
+ * where the fastembed ONNX native binaries cannot be resolved. RAG
+ * retrieval falls back to keyword scan at the small corpus sizes v3
+ * ships with; semantic search re-enables when the operator sets
+ * EMBEDDING_PROVIDER=openai or voyage.
+ */
+function stubVector(text: string): number[] {
+  const out = new Array<number>(STUB_NATIVE_DIMENSIONS);
+  let counter = 0;
+  let cursor = 0;
+  while (cursor < STUB_NATIVE_DIMENSIONS) {
+    const digest = createHash("sha256")
+      .update(`${counter}:${text}`)
+      .digest();
+    // 32 bytes per round, two bytes per float -> 16 floats per round.
+    for (let i = 0; i + 1 < digest.length && cursor < STUB_NATIVE_DIMENSIONS; i += 2) {
+      const u16 = (digest[i] << 8) | digest[i + 1];
+      // map [0, 65535] -> [-1, 1]
+      out[cursor++] = (u16 / 65535) * 2 - 1;
     }
+    counter += 1;
   }
-  return out;
+  return padToTarget(out);
+}
+
+function embedBatchStub(inputs: string[]): number[][] {
+  return inputs.map(stubVector);
+}
+
+let _fastembedFallbackWarned = false;
+function warnFastembedFallbackOnce(err: unknown): void {
+  if (_fastembedFallbackWarned) return;
+  _fastembedFallbackWarned = true;
+  const reason = err instanceof Error ? err.message : String(err);
+  console.warn(
+    `[embedder] fastembed unavailable, falling back to stub embeddings - configure EMBEDDING_PROVIDER=openai or voyage for real semantic search (reason: ${reason})`,
+  );
+}
+
+async function embedBatchFastembed(inputs: string[]): Promise<number[][]> {
+  let model: FastembedModel;
+  try {
+    model = await fastembedModel();
+  } catch (err) {
+    // Native ONNX / tokenizer modules missing or unloadable (typical on
+    // Vercel serverless). Drop the cached promise so a later environment
+    // with the binaries available can retry, then route this batch
+    // through the stub path so ingest does not 500.
+    _fastembedModel = null;
+    warnFastembedFallbackOnce(err);
+    return embedBatchStub(inputs);
+  }
+  try {
+    const out: number[][] = [];
+    for await (const group of model.embed(inputs, Math.min(inputs.length, BATCH))) {
+      for (const v of group) {
+        if (v.length !== FASTEMBED_NATIVE_DIMENSIONS) {
+          throw new Error(
+            `fastembed returned vector of unexpected dim ${v.length} (expected ${FASTEMBED_NATIVE_DIMENSIONS})`,
+          );
+        }
+        out.push(padToTarget(v));
+      }
+    }
+    return out;
+  } catch (err) {
+    // First-call inference failures (e.g. native .node side-load throws
+    // lazily inside embed()) get the same treatment: warn once, fall
+    // back to the stub for this batch.
+    _fastembedModel = null;
+    warnFastembedFallbackOnce(err);
+    return embedBatchStub(inputs);
+  }
 }
 
 async function embedBatchVoyage(inputs: string[]): Promise<number[][]> {
@@ -220,6 +298,7 @@ export async function embedBatch(inputs: string[]): Promise<number[][]> {
   const provider = selectedProvider();
   if (provider === "voyage") return embedBatchVoyage(inputs);
   if (provider === "openai") return embedBatchOpenAI(inputs);
+  if (provider === "stub") return embedBatchStub(inputs);
   return embedBatchFastembed(inputs);
 }
 
@@ -269,4 +348,5 @@ export function warmEmbedder(): void {
 export function __resetClientsForTests(): void {
   _openaiClient = null;
   _fastembedModel = null;
+  _fastembedFallbackWarned = false;
 }

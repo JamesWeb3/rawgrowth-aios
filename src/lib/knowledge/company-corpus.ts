@@ -57,7 +57,15 @@ export async function ingestCompanyChunk(input: {
   // Chunk shape from chunker.ts is {index, content} - NOT {text, tokenCount}.
   // Earlier passes used the wrong field names and the insert silently
   // landed null content + threw NOT NULL violations the caller swallowed.
+  //
+  // The embedder may transparently route through the stub backend
+  // (fastembed native unavailable on Vercel serverless). Stub vectors
+  // are still 1536d so toPgVector slots them in unchanged; if the
+  // embedder ever returns a missing slot we substitute a zero-padded
+  // placeholder so the row still lands and the operator can backfill
+  // by re-running ingest under EMBEDDING_PROVIDER=openai or voyage.
   const embeddings = await embedBatch(chunks.map((c) => c.content));
+  const zeroVector = new Array<number>(1536).fill(0);
   const rows = chunks.map((c, idx) => ({
     organization_id: input.orgId,
     source: input.source,
@@ -65,7 +73,7 @@ export async function ingestCompanyChunk(input: {
     chunk_index: idx,
     content: c.content,
     token_count: Math.round(c.content.length / 4),
-    embedding: toPgVector(embeddings[idx]),
+    embedding: toPgVector(embeddings[idx] ?? zeroVector),
     metadata: input.metadata ?? {},
   }));
 
