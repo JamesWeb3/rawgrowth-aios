@@ -79,13 +79,17 @@ sed -i \
 green "✓ Supabase wired into $TARGET"
 
 # ── Create the storage buckets if they don't exist ──
-# Two private buckets land here. Without them the upload routes 500
-# silently. Free-tier cap is 50 MB per bucket; paid projects can edit
+# Three private buckets land here. Without them the upload routes 500
+# silently. Free-tier cap defaults below; paid projects can edit
 # limits later.
 #   - agent-files: per-agent RAG corpus (PDF/DOCX/MD/TXT/CSV/img),
 #     drives D10 cite path. 50 MB.
 #   - knowledge:   org-wide markdown playbooks/SOPs, drives /knowledge.
 #     10 MB (markdown only).
+#   - sales-calls: audio uploads (mp3/m4a/webm/ogg) for the onboarding
+#     sales-call ingest path. Whisper transcribes, transcript flows into
+#     rgaios_company_chunks. 200 MB. Without this bucket the upload
+#     route returns 500 "Bucket not found".
 provision_bucket() {
   local id="$1" limit="$2" purpose="$3"
   bold "▸ Provisioning storage bucket '$id' (${purpose})"
@@ -102,12 +106,13 @@ provision_bucket() {
   elif grep -q "already exists" /tmp/bucket-res.json 2>/dev/null; then
     green "✓ Bucket '$id' already present"
   else
-    red "⚠  Bucket '$id' create returned $res — check /tmp/bucket-res.json. Uploads will 500 until this exists."
+    red "⚠  Bucket '$id' create returned $res. Check /tmp/bucket-res.json. Uploads will 500 until this exists."
   fi
 }
 
-provision_bucket "agent-files" 52428800 "50MB cap, per-agent RAG"
-provision_bucket "knowledge"   10485760 "10MB cap, org-wide markdown"
+provision_bucket "agent-files" 52428800  "50MB cap, per-agent RAG"
+provision_bucket "knowledge"   10485760  "10MB cap, org-wide markdown"
+provision_bucket "sales-calls" 209715200 "200MB cap, sales-call audio for Whisper"
 
 echo
 bold "Next steps:"

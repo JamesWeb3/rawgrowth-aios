@@ -33,6 +33,35 @@ const BUCKET = "sales-calls";
 const MAX_BYTES = 200 * 1024 * 1024; // 200 MB
 const TRANSCRIBE_BUDGET_MS = 290_000; // ~5 min, fits the 300s route cap.
 
+/**
+ * First-call bucket auto-provision. wire-supabase.sh creates the bucket
+ * on self-hosted bootstrap, but Supabase Cloud projects (the hosted
+ * Vercel deploy at rawclaw-rose) were provisioned by hand and the
+ * sales-calls bucket was missed. Without this guard the route 500s
+ * with "Bucket not found" on every upload until ops adds the bucket
+ * manually. The guard is idempotent: createBucket no-ops if present.
+ */
+let _bucketEnsured = false;
+async function ensureBucket(
+  db: ReturnType<typeof supabaseAdmin>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (_bucketEnsured) return { ok: true };
+  const { data: existing } = await db.storage.getBucket(BUCKET);
+  if (existing) {
+    _bucketEnsured = true;
+    return { ok: true };
+  }
+  const { error } = await db.storage.createBucket(BUCKET, {
+    public: false,
+    fileSizeLimit: MAX_BYTES,
+  });
+  if (error && !/already exists/i.test(error.message)) {
+    return { ok: false, error: error.message };
+  }
+  _bucketEnsured = true;
+  return { ok: true };
+}
+
 const ALLOWED_AUDIO_MIMES = new Set([
   "audio/mpeg",
   "audio/mp3",
@@ -137,6 +166,15 @@ export async function POST(req: NextRequest) {
     const safeName = file.name.replace(/[^\w.\-]/g, "_");
     const storagePath = `${orgId}/${Date.now()}-${safeName}`;
     const bytes = Buffer.from(await file.arrayBuffer());
+
+    const ensure = await ensureBucket(db);
+    if (!ensure.ok) {
+      console.error("[sales-calls/upload] bucket ensure failed:", ensure.error);
+      return NextResponse.json(
+        { error: `Storage not ready: ${ensure.error}` },
+        { status: 503 },
+      );
+    }
 
     const { error: uploadErr } = await db.storage
       .from(BUCKET)
