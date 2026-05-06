@@ -240,9 +240,22 @@ export async function POST(req: NextRequest) {
         .from("rgaios_sales_calls")
         .update({ status: "error", error: message })
         .eq("id", salesCallId);
+      // Distinguish "engine missing" (env not configured: no whisper-cli
+      // binary AND no ANTHROPIC_API_KEY) from genuine transcription
+      // errors. ENOENT bubbles up from spawn() when the whisper-cli path
+      // is absent. Return 503 so the operator sees a "not configured"
+      // toast rather than a generic 500.
+      const engineMissing =
+        /ENOENT/.test(message) || /spawn .* ENOENT/.test(message);
       return NextResponse.json(
-        { ok: false, salesCallId, error: message },
-        { status: 500 },
+        {
+          ok: false,
+          salesCallId,
+          error: engineMissing
+            ? "Transcription engine not configured on this server (set ANTHROPIC_API_KEY or install whisper-cli)"
+            : message,
+        },
+        { status: engineMissing ? 503 : 500 },
       );
     }
 
