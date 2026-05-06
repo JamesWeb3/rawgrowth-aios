@@ -22,7 +22,15 @@ export const runtime = "nodejs";
 
 function verifySignature(rawBody: string, signatureHeader: string | null) {
   const secret = process.env.NANGO_WEBHOOK_SECRET;
-  if (!secret) return true; // in dev we skip verification if secret isn't set
+  if (!secret) {
+    // Same fail-closed-in-prod pattern as stripe webhook (011a590) +
+    // cron auth helper (af1c965). Without the secret a misconfigured
+    // prod lets anyone POST a fake nango auth event and trigger
+    // upsertConnection() for any org_id of their choosing - effectively
+    // forging a "your <provider> is connected" row.
+    if (process.env.NODE_ENV === "production") return false;
+    return true; // dev / staging without secret configured
+  }
   if (!signatureHeader) return false;
   const expected = crypto
     .createHmac("sha256", secret)
