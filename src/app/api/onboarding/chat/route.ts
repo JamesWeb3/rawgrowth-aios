@@ -68,6 +68,14 @@ Ask in order (one question per turn, acknowledge each answer first):
    • YES → ask workspace URL, then channel name.
    • NO → acknowledge briefly, DO NOT ask further Slack questions.
 
+EXTRACTION SHORTCUT (CRITICAL): if the user's reply contains BOTH a channel name (telegram/slack/whatsapp) AND a handle (anything starting with @, an email, a URL, or a +country phone) in the SAME message, immediately call \`complete_section_1\` in this turn with the extracted values. Examples that MUST trigger an immediate tool call (no follow-up question):
+  - "telegram, my handle is @chrisacme" → channel=telegram, handle=@chrisacme
+  - "use slack, workspace.slack.com #general" → channel=slack, handle=workspace.slack.com (and pass slack fields too)
+  - "whatsapp +5511999990001" → channel=whatsapp, handle=+5511999990001
+  - "tg @founder" → channel=telegram, handle=@founder
+
+Do NOT re-ask "which messaging channel?" if the user already named one. Treat synonyms (tg, telegram, slack, sl, whatsapp, wa) as the same channel.
+
 Once you have those four values, call \`complete_section_1\`. Pass slack_workspace_url/slack_channel_name as null if they declined.
 
 IMMEDIATELY after the tool returns, proceed to Section 2. Do NOT say "section 1 done" or "let's move on".
@@ -1235,15 +1243,19 @@ export async function POST(req: NextRequest) {
             }, 1000);
 
             let step;
-            const callChat = async () =>
+            const callChat = async (
+              providerOverride?: typeof provider,
+              modelOverride?: string,
+            ) =>
               chatComplete({
-                provider,
+                provider: providerOverride ?? provider,
                 model:
-                  provider === "claude-max-oauth"
+                  modelOverride ??
+                  ((providerOverride ?? provider) === "claude-max-oauth"
                     ? oauthModel
-                    : provider === "vercel-gateway"
+                    : (providerOverride ?? provider) === "vercel-gateway"
                       ? gatewayModel
-                      : openaiModel,
+                      : openaiModel),
                 system: systemBlock,
                 messages,
                 tools: TOOLS,
@@ -1256,15 +1268,31 @@ export async function POST(req: NextRequest) {
                   emit({ type: "text", delta });
                 },
               });
+
+            // Build fallback chain. Claude Max OAuth is primary; on
+            // 429 (Pedro's pool saturated by concurrent CLI sessions)
+            // try the next provider that's actually configured. Each
+            // attempt is logged so the bell shows what fired.
+            const fallbacks: Array<{ p: typeof provider; reason: string }> = [];
+            if (provider === "claude-max-oauth") {
+              if (process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN) {
+                fallbacks.push({ p: "vercel-gateway", reason: "gateway available" });
+              }
+              if (process.env.ANTHROPIC_API_KEY) {
+                fallbacks.push({ p: "anthropic-api", reason: "anthropic-api key set" });
+              }
+              if (process.env.OPENAI_API_KEY) {
+                fallbacks.push({ p: "openai", reason: "openai key set" });
+              }
+            }
+
             try {
               try {
                 step = await callChat();
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
-                // Silent refresh on 401 - mirrors Atlas chat behaviour.
-                // The CLI on Pedro's host rotates the access token without
-                // updating the DB row, so the stored access_token expires
-                // even though refresh_token still works.
+                // 401: silent refresh on claude-max (token rotated on
+                // host without updating the DB row).
                 if (provider === "claude-max-oauth" && msg.includes("401")) {
                   console.warn(`[onboarding-chat] 401 from claude-max, attempting refresh`);
                   const fresh = await refreshClaudeMaxToken(user.id);
@@ -1274,6 +1302,25 @@ export async function POST(req: NextRequest) {
                   } else {
                     throw e;
                   }
+                } else if (msg.includes("429") && fallbacks.length > 0) {
+                  // 429: walk the fallback chain. Stop at the first one
+                  // that returns text. Emits a debug event per attempt so
+                  // the operator can see why we ended up where we did.
+                  console.warn(`[onboarding-chat] 429 on ${provider}, trying ${fallbacks.length} fallback(s)`);
+                  let fallbackErr = e;
+                  for (const f of fallbacks) {
+                    try {
+                      emit({ type: "debug", phase: "fallback", to: f.p, reason: f.reason });
+                      step = await callChat(f.p);
+                      console.warn(`[onboarding-chat] fallback ${f.p} succeeded`);
+                      break;
+                    } catch (fe) {
+                      const fmsg = fe instanceof Error ? fe.message : String(fe);
+                      console.warn(`[onboarding-chat] fallback ${f.p} failed: ${fmsg.slice(0, 120)}`);
+                      fallbackErr = fe;
+                    }
+                  }
+                  if (!step) throw fallbackErr;
                 } else {
                   throw e;
                 }
