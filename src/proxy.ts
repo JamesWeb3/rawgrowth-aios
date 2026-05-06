@@ -35,6 +35,14 @@ export default auth((req) => {
   if (isPublic) return NextResponse.next();
 
   if (!req.auth) {
+    // For /api/* return JSON 401 so XHR / fetch clients don't get an
+    // opaque 307 -> HTML signin page they can't consume.
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
     const url = req.nextUrl.clone();
     url.pathname = "/auth/signin";
     url.searchParams.set("callbackUrl", pathname);

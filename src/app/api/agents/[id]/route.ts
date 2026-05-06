@@ -6,6 +6,7 @@ import {
 } from "@/lib/agents/queries";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { wouldCreateCycle } from "@/lib/tree";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,9 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    }
     const orgId = await currentOrganizationId();
     const raw = (await req.json()) as Record<string, unknown>;
 
@@ -76,8 +80,18 @@ export async function PATCH(
     const agent = await updateAgent(orgId, id, patch);
     return NextResponse.json({ agent });
   } catch (err) {
+    const msg = (err as Error).message ?? "";
+    // PostgREST single-row coerce error means the agent didn't exist
+    // (or wasn't visible to this org). Map to 404 instead of 500.
+    if (msg.includes("Cannot coerce the result to a single JSON object")) {
+      return NextResponse.json(
+        { error: "agent not found" },
+        { status: 404 },
+      );
+    }
+    console.error("[agents PATCH] error", msg);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "internal error" },
       { status: 500 },
     );
   }
@@ -89,11 +103,15 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    }
     await deleteAgent(await currentOrganizationId(), id);
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error("[agents DELETE] error", (err as Error).message);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "internal error" },
       { status: 500 },
     );
   }

@@ -3,6 +3,7 @@ import { getOrgContext } from "@/lib/auth/admin";
 import {
   filterAgentsByDept,
   getAllowedDepartments,
+  KNOWN_DEPARTMENT_SLUGS,
 } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
@@ -13,6 +14,16 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+// Validate ?department= against the known slug whitelist so a hostile
+// query string never reaches Supabase / Cloudflare WAF and triggers an
+// HTML 500 (info-disclosure: WAF page leaks supabase.co + edge stack).
+const DEPT_SLUG_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+function validDeptParam(d: string | null): boolean {
+  if (d == null || d === "") return true;
+  if (!DEPT_SLUG_RE.test(d)) return false;
+  return (KNOWN_DEPARTMENT_SLUGS as readonly string[]).includes(d);
+}
+
 export async function GET(req: NextRequest) {
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId || !ctx.userId) {
@@ -20,6 +31,13 @@ export async function GET(req: NextRequest) {
   }
   const orgId = ctx.activeOrgId;
   const dept = req.nextUrl.searchParams.get("department");
+
+  if (!validDeptParam(dept)) {
+    return NextResponse.json(
+      { error: "invalid department" },
+      { status: 400 },
+    );
+  }
 
   const allowedDepts = await getAllowedDepartments({
     userId: ctx.userId,
@@ -44,7 +62,13 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await q;
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // Never echo upstream error bodies (Supabase / Cloudflare WAF can
+    // return full HTML pages that leak the storage backend).
+    console.error("[insights GET] supabase error", error.message);
+    return NextResponse.json(
+      { error: "internal error" },
+      { status: 500 },
+    );
   }
 
   // Resolve agent names

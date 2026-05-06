@@ -3,6 +3,7 @@ import { getOrgContext } from "@/lib/auth/admin";
 import { isDepartmentAllowed } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { executeChatTask } from "@/lib/agent/tasks";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -36,6 +37,7 @@ async function loadRoutineWithACL(
   ctx: NonNullable<Awaited<ReturnType<typeof getOrgContext>>>,
   id: string,
 ): Promise<{ routine: RoutineRow; agent: { id: string; name: string; role: string | null; department: string | null } | null } | null> {
+  if (!isUuid(id)) return null;
   const db = supabaseAdmin();
   const { data: routine } = await db
     .from("rgaios_routines")
@@ -171,6 +173,9 @@ export async function DELETE(
     .delete()
     .eq("organization_id", ctx.activeOrgId)
     .eq("id", id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("[tasks DELETE] supabase error", error.message);
+    return NextResponse.json({ error: "internal error" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }
