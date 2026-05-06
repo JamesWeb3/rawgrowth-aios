@@ -123,57 +123,25 @@ REMOTE
 green "✓ Docker ready"
 echo
 
-# ─── 2. Register a deploy key so the VPS can clone the private repo ──
-bold "▸ Generating deploy key on the VPS and registering it with GitHub"
-
-# Generate an ed25519 keypair on the VPS if we don't already have one.
-# /root/.ssh/rawclaw_deploy is dedicated to this — don't reuse the host key.
-$SSH 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
-      if [ ! -f /root/.ssh/rawclaw_deploy ]; then \
-        ssh-keygen -t ed25519 -f /root/.ssh/rawclaw_deploy -N "" -C "rawclaw-deploy-${HOSTNAME}" >/dev/null; \
-      fi'
-
-DEPLOY_PUBKEY="$($SSH 'cat /root/.ssh/rawclaw_deploy.pub')"
-echo "  Public key: ${DEPLOY_PUBKEY:0:40}..."
-
-# Register it as a read-only deploy key on the repo via GitHub API.
-# Title includes the VPS IP so we can identify which key belongs to which client later.
-DEPLOY_KEY_TITLE="rawclaw-vps-${HOST//./-}"
-API_RESP="$(curl -sS -X POST \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${REPO_API_PATH}/keys" \
-  -d "$(printf '{"title":"%s","key":"%s","read_only":true}' \
-        "$DEPLOY_KEY_TITLE" \
-        "$(printf '%s' "$DEPLOY_PUBKEY" | sed 's/"/\\"/g')")")"
-
-if echo "$API_RESP" | grep -q '"id":'; then
-  green "✓ Deploy key registered with ${REPO_API_PATH} as '${DEPLOY_KEY_TITLE}'"
-elif echo "$API_RESP" | grep -q 'key is already in use'; then
-  green "✓ Deploy key already registered (reusing existing)"
-else
-  red "✗ Failed to register deploy key:"
-  echo "$API_RESP"
-  exit 1
-fi
-
-# Make sure the VPS trusts github.com's host key + uses the deploy key for this repo.
-$SSH 'ssh-keyscan -t ed25519,rsa github.com >> /root/.ssh/known_hosts 2>/dev/null && \
-      sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts && \
-      cat > /root/.ssh/config <<SSHCFG
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile /root/.ssh/rawclaw_deploy
-  IdentitiesOnly yes
-SSHCFG
-chmod 600 /root/.ssh/config /root/.ssh/rawclaw_deploy'
-
-echo
-
-# ─── 3. Clone (or pull) the repo ─────────────────────────────
+# ─── 2. Clone (or pull) the repo via HTTPS+token ─────────────
+# Skip deploy-key dance: token passed inline as basic-auth in the
+# clone URL. Works for both public and private repos as long as the
+# token has `repo` scope (read access). The token is stripped from
+# the remote URL after first clone so it's not persisted in .git/config.
 bold "▸ Cloning rawclaw (${BRANCH}) into ${TARGET}"
-$SSH "if [ -d ${TARGET}/.git ]; then cd ${TARGET} && git fetch origin ${BRANCH} && git checkout ${BRANCH} && git pull --rebase --autostash; else git clone --branch ${BRANCH} ${REPO} ${TARGET}; fi"
+HTTPS_REPO="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_API_PATH}.git"
+PUBLIC_REPO="https://github.com/${REPO_API_PATH}.git"
+$SSH "if [ -d ${TARGET}/.git ]; then \
+        cd ${TARGET} && \
+        git remote set-url origin '${HTTPS_REPO}' && \
+        git fetch origin ${BRANCH} && \
+        git checkout ${BRANCH} && \
+        git pull --rebase --autostash && \
+        git remote set-url origin '${PUBLIC_REPO}'; \
+      else \
+        git clone --branch ${BRANCH} '${HTTPS_REPO}' ${TARGET} && \
+        cd ${TARGET} && git remote set-url origin '${PUBLIC_REPO}'; \
+      fi"
 green "✓ Repo in place (branch ${BRANCH})"
 echo
 
