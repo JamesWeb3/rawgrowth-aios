@@ -6,6 +6,7 @@ import {
   retryCustomMcpTool,
   testCustomMcpTool,
 } from "@/lib/mcp/custom-tools";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -30,6 +31,9 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
 
   // First sandbox attempt against whatever code_ts is stored right
   // now. testCustomMcpTool flips the row to 'active' on pass.

@@ -7,6 +7,7 @@ import { chatReply } from "@/lib/agent/chat";
 import { applyBrandFilter } from "@/lib/brand/apply-filter";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
@@ -103,6 +104,9 @@ export async function GET(
   }
   const orgId = ctx.activeOrgId;
   const { id: agentId } = await params;
+  if (!isUuid(agentId)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
   const db = supabaseAdmin();
 
   // Cross-tenant guard.
@@ -157,6 +161,9 @@ export async function DELETE(
   }
   const orgId = ctx.activeOrgId;
   const { id: agentId } = await params;
+  if (!isUuid(agentId)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
   const db = supabaseAdmin();
 
   const { data: agent } = await db
@@ -225,6 +232,9 @@ export async function POST(
   const orgId = ctx.activeOrgId;
   const userId = ctx.userId;
   const { id: agentId } = await params;
+  if (!isUuid(agentId)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
   const db = supabaseAdmin();
 
   // Cross-tenant guard. Persona + RAG happen inside buildAgentChatPreamble.
