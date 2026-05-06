@@ -187,11 +187,17 @@ export function FilesClient({
     [files, active],
   );
 
-  async function handleFiles(list: FileList | null) {
-    if (!list || list.length === 0) return;
+  async function handleFiles(list: FileList | File[] | null) {
+    // Snapshot the FileList into a stable File[] up-front. The native
+    // FileList is a live view onto the input element; clearing
+    // `inputRef.value = ""` after kicking off this async fn would mutate
+    // the live FileList to length 0 mid-upload, leaking through into
+    // the toast count and the for-loop iterations. Always snapshot first.
+    const snapshot = list ? Array.from(list) : [];
+    if (snapshot.length === 0) return;
     setUploading(true);
     try {
-      for (const f of Array.from(list)) {
+      for (const f of snapshot) {
         const fd = new FormData();
         fd.append("file", f);
         fd.append("bucket", active);
@@ -210,7 +216,7 @@ export function FilesClient({
         setFiles((prev) => [body.file as FileRow, ...prev]);
       }
       toast.success(
-        `Uploaded ${list.length} file${list.length === 1 ? "" : "s"} to ${activeDef.label}`,
+        `Uploaded ${snapshot.length} file${snapshot.length === 1 ? "" : "s"} to ${activeDef.label}`,
       );
     } catch (err) {
       toast.error((err as Error).message);
