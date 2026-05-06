@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,6 +31,9 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
   const db = supabaseAdmin();
 
   const { data: insight } = await db
