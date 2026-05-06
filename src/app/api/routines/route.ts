@@ -4,6 +4,7 @@ import { getOrgContext } from "@/lib/auth/admin";
 import { getAllowedDepartments } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { RoutineTrigger } from "@/lib/routines/constants";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const assigneeAgentId =
       typeof body.assigneeAgentId === "string" ? body.assigneeAgentId : null;
+    if (assigneeAgentId !== null && !isUuid(assigneeAgentId)) {
+      return NextResponse.json(
+        { error: "invalid assigneeAgentId" },
+        { status: 400 },
+      );
+    }
 
     // ACL: a restricted invitee can only create routines assigned to
     // an agent in their allowed departments. Unassigned routines are

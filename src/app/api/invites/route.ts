@@ -17,14 +17,20 @@ export async function POST(req: NextRequest) {
     name?: string;
     role?: "owner" | "admin" | "member" | "developer";
   };
-  const email = String(body.email ?? "").trim();
-  const name = body.name ? String(body.name).trim() : null;
+  const email = String(body.email ?? "").trim().slice(0, 254);
+  const name = body.name ? String(body.name).trim().slice(0, 200) : null;
   const role = body.role && ["owner", "admin", "member", "developer"].includes(body.role)
     ? body.role
     : "member";
 
   if (!email) {
     return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  }
+  // Minimal RFC 5321 sanity: local@domain.tld. Sufficient to reject
+  // typos like "foo" or "user@" before we waste a sendInviteEmail call
+  // on what would land in a bounce queue anyway.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
   }
 
   try {

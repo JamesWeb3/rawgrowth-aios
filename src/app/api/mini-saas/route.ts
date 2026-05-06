@@ -40,8 +40,14 @@ export async function POST(req: NextRequest) {
     description?: string;
     prompt?: string;
   };
-  const title = String(body.title ?? "").trim();
-  const prompt = String(body.prompt ?? "").trim();
+  // Cap inputs at the same limits we use elsewhere (agents/route.ts).
+  // 200 chars covers any reasonable title; 5kb covers a paragraph-long
+  // description; 20kb is enough headroom for a prompt with embedded
+  // examples without risking row-size or token-budget blowups.
+  const title = String(body.title ?? "").trim().slice(0, 200);
+  const description =
+    body.description != null ? String(body.description).slice(0, 5000) : null;
+  const prompt = String(body.prompt ?? "").trim().slice(0, 20_000);
   if (!title || !prompt) {
     return NextResponse.json(
       { error: "title and prompt required" },
@@ -65,7 +71,7 @@ export async function POST(req: NextRequest) {
     .insert({
       organization_id: ctx.activeOrgId,
       title,
-      description: body.description ?? null,
+      description,
       prompt,
       status: "generating",
       created_by_agent_id: engineeringAgentId,

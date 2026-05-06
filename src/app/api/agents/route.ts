@@ -8,6 +8,7 @@ import {
   getAllowedDepartments,
   filterAgentsByDept,
 } from "@/lib/auth/dept-acl";
+import { isUuid } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,19 @@ export async function POST(req: NextRequest) {
     if (name.length > 200) {
       return NextResponse.json(
         { error: "name too long (max 200 chars)" },
+        { status: 400 },
+      );
+    }
+    // reportsTo points at an existing agent row, so it MUST be a valid
+    // UUID or the FK insert below throws a verbose pg error. Validate
+    // up front so we 400 instead of leaking the syntax error.
+    if (
+      body.reportsTo !== null &&
+      body.reportsTo !== undefined &&
+      (typeof body.reportsTo !== "string" || !isUuid(body.reportsTo))
+    ) {
+      return NextResponse.json(
+        { error: "invalid reportsTo" },
         { status: 400 },
       );
     }
