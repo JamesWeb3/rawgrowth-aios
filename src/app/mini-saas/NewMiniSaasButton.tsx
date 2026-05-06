@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,18 @@ export function NewMiniSaasButton() {
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Esc closes the modal. Without this, the dialog had no keyboard
+  // dismiss (only the X button), which broke a11y expectations and
+  // tripped Playwright role=dialog probes.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape" && !submitting) setOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, submitting]);
 
   async function submit() {
     if (!title.trim() || !prompt.trim()) {
@@ -55,10 +67,26 @@ export function NewMiniSaasButton() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[560px] max-w-[90vw] rounded-lg border border-border bg-card p-6 shadow-xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(e) => {
+        // Backdrop click closes; clicks inside the panel are stopped below.
+        if (e.target === e.currentTarget && !submitting) setOpen(false);
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-mini-saas-title"
+        className="w-[560px] max-w-[90vw] rounded-lg border border-border bg-card p-6 shadow-xl"
+      >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-serif text-xl tracking-tight">New mini SaaS</h2>
+          <h2
+            id="new-mini-saas-title"
+            className="font-serif text-xl tracking-tight"
+          >
+            New mini SaaS
+          </h2>
           <button
             onClick={() => setOpen(false)}
             className="rounded-md p-1 text-muted-foreground hover:text-foreground"
