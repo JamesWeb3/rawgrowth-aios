@@ -20,7 +20,19 @@ export async function PATCH(
       return NextResponse.json({ error: "invalid id" }, { status: 400 });
     }
     const orgId = await currentOrganizationId();
-    const raw = (await req.json()) as Record<string, unknown>;
+    // Tolerate empty / malformed JSON bodies. The router can race against an
+    // aborted client (page navigation cancels the in-flight PATCH), in which
+    // case `req.json()` throws "Unexpected end of JSON input". Treat that
+    // as a 400 instead of bubbling up as a 500.
+    let raw: Record<string, unknown>;
+    try {
+      raw = (await req.json()) as Record<string, unknown>;
+    } catch {
+      return NextResponse.json({ error: "invalid or empty body" }, { status: 400 });
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return NextResponse.json({ error: "invalid body" }, { status: 400 });
+    }
 
     // Accept either snake_case (postgres-style) or camelCase (frontend-style)
     // on the wire so the agent-tree drag handler, the MCP tool, and the
