@@ -107,7 +107,50 @@ export async function POST(
     });
   }
 
-  // No active question - seed this one.
+  // No active question - try to claim the 'sent' slot atomically. The
+  // partial unique index rgaios_insights_one_sent_per_org_idx
+  // (migration 0061) guarantees at most one 'sent' row per org, so a
+  // racing second click lands here, gets a 23505 violation, and
+  // downgrades to 'queued' instead. Without the catch, two concurrent
+  // POSTs both pass the active-check above and stack two unanswered
+  // questions in Atlas chat.
+  const stamp = new Date().toISOString();
+  const claim = await db
+    .from("rgaios_insights")
+    .update({
+      chat_state: "sent",
+      chat_state_updated_at: stamp,
+    } as never)
+    .eq("id", id)
+    .select("id");
+  if (claim.error) {
+    if (claim.error.code === "23505") {
+      // Lost the race - someone else just became 'sent'. Mark this one
+      // queued so the operator gets it after the active question is
+      // answered.
+      const { count } = await db
+        .from("rgaios_insights")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("chat_state", "queued");
+      await db
+        .from("rgaios_insights")
+        .update({
+          chat_state: "queued",
+          chat_state_updated_at: stamp,
+        } as never)
+        .eq("id", id);
+      return NextResponse.json({
+        ok: true,
+        agentId: ceoId,
+        queued: true,
+        position: (count ?? 0) + 1,
+      });
+    }
+    return NextResponse.json({ error: claim.error.message }, { status: 500 });
+  }
+
+  // Won the race - seed the question into Atlas chat.
   const content = formatQuestion(ins);
   await db.from("rgaios_agent_chat_messages").insert({
     organization_id: orgId,
@@ -117,14 +160,6 @@ export async function POST(
     content,
     metadata: { source: "insight", insight_id: id },
   } as never);
-
-  await db
-    .from("rgaios_insights")
-    .update({
-      chat_state: "sent",
-      chat_state_updated_at: new Date().toISOString(),
-    } as never)
-    .eq("id", id);
 
   return NextResponse.json({ ok: true, agentId: ceoId, queued: false });
 }
