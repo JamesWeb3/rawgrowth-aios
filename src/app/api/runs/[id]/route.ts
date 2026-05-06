@@ -73,9 +73,9 @@ export async function GET(
       events: events ?? [],
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 },
-    );
+    // Server logs get the cause; client gets a generic 500 so we don't
+    // leak supabase / pg internals through the response body.
+    console.error("[runs/[id]] error:", (err as Error).message);
+    return NextResponse.json({ error: "internal error" }, { status: 500 });
   }
 }

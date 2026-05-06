@@ -44,15 +44,26 @@ export async function POST(req: Request) {
         });
         if (r.ok) {
           const data = (await r.json()) as { redirectUrl?: string; connectionId?: string };
-          // Persist pending row so we can poll status later
-          await supabaseAdmin().from("rgaios_connections").insert({
-            organization_id: organizationId,
-            provider_config_key: `composio:${entry.key}`,
-            nango_connection_id: data.connectionId ?? `pending-${Date.now()}`,
-            display_name: entry.name,
-            status: "pending_token",
-            metadata: { composio_app: entry.key, started_at: new Date().toISOString() },
-          } as never);
+          // Persist pending row so the OAuth callback can find it and
+          // upgrade to 'connected'. If this insert silently fails the
+          // user gets a redirect URL but the callback later 404s the
+          // row - log the cause so we can debug instead of guessing.
+          const ins = await supabaseAdmin()
+            .from("rgaios_connections")
+            .insert({
+              organization_id: organizationId,
+              provider_config_key: `composio:${entry.key}`,
+              nango_connection_id: data.connectionId ?? `pending-${Date.now()}`,
+              display_name: entry.name,
+              status: "pending_token",
+              metadata: { composio_app: entry.key, started_at: new Date().toISOString() },
+            } as never);
+          if (ins.error) {
+            console.error(
+              `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
+              ins.error.message,
+            );
+          }
           return NextResponse.json({
             ok: true,
             redirectUrl: data.redirectUrl,
