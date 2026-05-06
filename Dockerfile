@@ -6,7 +6,7 @@
 # The same image is used for every client VPS — only env differs.
 # ─────────────────────────────────────────────────────────────
 
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # patch-package runs in postinstall and patches fastembed's broken
@@ -17,14 +17,14 @@ COPY package.json package-lock.json* ./
 COPY patches ./patches
 RUN npm ci
 
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \
