@@ -97,10 +97,13 @@ async function iter1() {
   }
 
   // Sidebar nav: visit each link from /
-  const r = await pageGet("/", { iter: ITER, surface: "home", wait: 2000 });
+  const r = await pageGet("/", { iter: ITER, surface: "home", wait: 2500 });
   if (!r) return;
-  const navLinks = await r.page.$$eval('aside a[href], nav a[href]', (els) =>
-    els.map((e) => e.getAttribute("href")).filter((h) => h && h.startsWith("/") && !h.startsWith("/api")));
+  // shadcn Sidebar renders as a <div data-slot="sidebar-wrapper">, not <aside>.
+  // Grab every internal anchor on the page (deduped below).
+  const navLinks = await r.page.$$eval('a[href]', (els) =>
+    els.map((e) => e.getAttribute("href"))
+      .filter((h) => h && h.startsWith("/") && !h.startsWith("/api") && !h.startsWith("/auth")));
   const unique = [...new Set(navLinks)];
   log({ iter: ITER, surface: "sidebar.discover", summary: `found ${unique.length} links: ${unique.slice(0, 12).join(",")}` });
   await r.page.close();
@@ -151,10 +154,12 @@ async function iter2() {
       if (firstHref) {
         const ap = await pageGet(firstHref, { iter: ITER, surface: `agent${firstHref}`, wait: 2500 });
         if (ap) {
-          const tabs = ["overview", "memory", "files", "tasks", "settings", "chat"];
+          // AgentPanelClient renders tabs as plain <button> with the
+          // label as text. Real tab list: chat, vision, memory, files,
+          // tasks, settings (no "overview"). Match by name=button.
+          const tabs = ["chat", "vision", "memory", "files", "tasks", "settings"];
           for (const tab of tabs) {
-            // tab triggers usually role=tab, name=Tab
-            const tabBtn = ap.page.getByRole("tab", { name: new RegExp(tab, "i") });
+            const tabBtn = ap.page.getByRole("button", { name: new RegExp(`^${tab}$`, "i") });
             const cnt = await tabBtn.count().catch(() => 0);
             if (cnt > 0) {
               try {
@@ -486,10 +491,12 @@ async function iter10() {
   // Notification bell - go home, click bell
   const h = await pageGet("/", { iter: ITER, surface: "notif.bell", wait: 2500 });
   if (h) {
-    const bell = h.page.locator('button[aria-label*="notif" i], button:has(svg[class*="bell" i]), button:has-text("notif" i)');
+    // CSS attr selector "i" flag is a Playwright extension that only works
+    // in `:nth-match` etc, not in raw [attr*=v i]. Use case-insensitive
+    // regex via getByRole / getByLabel instead.
+    const bell = h.page.getByRole("button", { name: /notif/i });
     let bellCnt = await bell.count();
     if (bellCnt === 0) {
-      // Generic bell icon scan via title or class
       bellCnt = await h.page.locator('button:has(svg.lucide-bell), [data-testid*="bell"]').count();
     }
     log({ iter: ITER, surface: "notif.bell.discover", summary: `count=${bellCnt}`, severity: bellCnt === 0 ? "ugly" : undefined });
