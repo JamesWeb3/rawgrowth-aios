@@ -81,10 +81,10 @@ USAGE
 fi
 
 if [ -z "${RESEND_API_KEY:-}" ]; then
-  red "✗ RESEND_API_KEY is not set. Invites and password resets will fail."
-  red "  export RESEND_API_KEY=re_... before running this script, or pass it inline:"
-  red "    RESEND_API_KEY=re_... $0 --host ... --domain ... --email ... --org \"...\""
-  exit 1
+  red "⚠ RESEND_API_KEY is not set. Invites + password-reset emails will fail"
+  red "  until you set it later via:"
+  red "    ssh ${SSH_USER:-root}@${HOST} \"cd ${TARGET:-/opt/rawgrowth} && sed -i 's/^RESEND_API_KEY=.*/RESEND_API_KEY=re_.../' .env && docker compose -f docker-compose.v3.yml restart app\""
+  red "  Continuing without it (other features work)."
 fi
 
 if [ -z "${GITHUB_TOKEN:-}" ]; then
