@@ -272,14 +272,28 @@ export async function POST(
     );
   }
 
-  // 1. Persist the user message.
-  await db.from("rgaios_agent_chat_messages").insert({
-    organization_id: orgId,
-    agent_id: agentId,
-    user_id: userId,
-    role: "user",
-    content: last.content,
-  });
+  // 1. Persist the user message. Bail loudly if the insert fails - the
+  // supabase client returns errors as a plain object instead of throwing,
+  // so without an explicit check a transient DB blip would silently drop
+  // the message, the route would still call chatReply (burning an LLM
+  // call), and a reload would show an empty thread. Surface a 500 so the
+  // client can show an error and the user can retry.
+  const userInsert = await db
+    .from("rgaios_agent_chat_messages")
+    .insert({
+      organization_id: orgId,
+      agent_id: agentId,
+      user_id: userId,
+      role: "user",
+      content: last.content,
+    });
+  if (userInsert.error) {
+    console.error("[chat] user insert failed:", userInsert.error.message);
+    return NextResponse.json(
+      { error: "Failed to save your message. Please try again." },
+      { status: 500 },
+    );
+  }
 
   // 1a. Insight chat queue: when the user replies in Atlas chat AND
   // there's a "sent" insight question awaiting a reply, mark it
