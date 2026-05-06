@@ -9,10 +9,17 @@ import { AgentPanelClient } from "./AgentPanelClient";
 
 export default async function AgentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  // chat is the default landing tab. Skip the chat-history preload when
+  // the URL deep-links to another tab so we don't burn a supabase
+  // round-trip + ship 50 messages of payload that the user never sees.
+  const tabIsChat = !sp.tab || sp.tab === "chat";
 
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId) redirect("/auth/signin");
@@ -43,24 +50,81 @@ export default async function AgentDetailPage({
     if (!allowed) notFound();
   }
 
-  // Memory: last 20 entries from audit_log keyed by detail->>'agent_id'.
-  const { data: memory } = await db
-    .from("rgaios_audit_log")
-    .select("id, ts, kind, actor_type, actor_id, detail")
-    .eq("organization_id", orgId)
-    .filter("detail->>agent_id", "eq", id)
-    .order("ts", { ascending: false })
-    .limit(20);
+  // Independent queries fan out together. Memory, assigned routines,
+  // telegram, files, skills, direct reports, and chat (if needed) all
+  // gate on agent existence above but not on each other - serializing
+  // them just inflates TTFB. Parent-agent fetch + run enrichment depend
+  // on the routines payload so they stay sequential after this batch.
+  const reportsToId = (agent as { reports_to: string | null }).reports_to;
+  const [
+    { data: memory },
+    { data: assignedRoutines },
+    { data: telegram },
+    { data: files },
+    { data: skillRows },
+    { data: directReportsRaw },
+    { data: parent },
+    { data: chatRows },
+    orgConnections,
+  ] = await Promise.all([
+    db
+      .from("rgaios_audit_log")
+      .select("id, ts, kind, actor_type, actor_id, detail")
+      .eq("organization_id", orgId)
+      .filter("detail->>agent_id", "eq", id)
+      .order("ts", { ascending: false })
+      .limit(20),
+    db
+      .from("rgaios_routines")
+      .select("id, title, status")
+      .eq("organization_id", orgId)
+      .eq("assignee_agent_id", id),
+    db
+      .from("rgaios_connections")
+      .select("status, display_name, metadata")
+      .eq("organization_id", orgId)
+      .eq("agent_id", id)
+      .eq("provider_config_key", "telegram")
+      .maybeSingle(),
+    db
+      .from("rgaios_agent_files")
+      .select("id, filename, mime_type, size_bytes, uploaded_at")
+      .eq("organization_id", orgId)
+      .eq("agent_id", id)
+      .order("uploaded_at", { ascending: false })
+      .limit(100),
+    db
+      .from("rgaios_agent_skills")
+      .select("skill_id")
+      .eq("organization_id", orgId)
+      .eq("agent_id", id),
+    db
+      .from("rgaios_agents")
+      .select("id, name, role, department")
+      .eq("organization_id", orgId)
+      .eq("reports_to", id)
+      .order("name", { ascending: true }),
+    reportsToId
+      ? db
+          .from("rgaios_agents")
+          .select("id, name, role")
+          .eq("id", reportsToId)
+          .eq("organization_id", orgId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    tabIsChat
+      ? db
+          .from("rgaios_agent_chat_messages")
+          .select("role, content")
+          .eq("organization_id", orgId)
+          .eq("agent_id", id)
+          .or("metadata->>archived.is.null,metadata->>archived.eq.false")
+          .order("created_at", { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as Array<{ role: string; content: string }> }),
+    listConnectionsForOrg(orgId),
+  ]);
 
-  // Tasks: routines assigned to this agent + their recent runs. Even
-  // routines with no runs yet should surface here so the operator sees
-  // what's wired (the previous query only returned RUNS, so a freshly
-  // assigned routine looked like "no routines" until it fired).
-  const { data: assignedRoutines } = await db
-    .from("rgaios_routines")
-    .select("id, title, status")
-    .eq("organization_id", orgId)
-    .eq("assignee_agent_id", id);
   const routineIds =
     (assignedRoutines ?? []).map((r) => (r as { id: string }).id) ?? [];
   const titleById = new Map<string, string>();
@@ -95,42 +159,11 @@ export default async function AgentDetailPage({
     }));
   const tasks = [...taggedRuns, ...placeholders];
 
-  // Telegram connection status for this agent.
-  const { data: telegram } = await db
-    .from("rgaios_connections")
-    .select("status, display_name, metadata")
-    .eq("organization_id", orgId)
-    .eq("agent_id", id)
-    .eq("provider_config_key", "telegram")
-    .maybeSingle();
-
-  // Files attached to this agent (brief §7 per-agent panel).
-  const { data: files } = await db
-    .from("rgaios_agent_files")
-    .select("id, filename, mime_type, size_bytes, uploaded_at")
-    .eq("organization_id", orgId)
-    .eq("agent_id", id)
-    .order("uploaded_at", { ascending: false })
-    .limit(100);
-
-  // Vision tab data: skills wired to this agent + direct reports + org-wide
-  // connectors visible.
-  const { data: skillRows } = await db
-    .from("rgaios_agent_skills")
-    .select("skill_id")
-    .eq("organization_id", orgId)
-    .eq("agent_id", id);
   const skills = (skillRows ?? [])
     .map((r) => SKILLS_CATALOG.find((s) => s.id === (r as { skill_id: string }).skill_id))
     .filter((s): s is (typeof SKILLS_CATALOG)[number] => !!s)
     .map((s) => ({ id: s.id, name: s.name, category: s.category, tagline: s.tagline }));
 
-  const { data: directReportsRaw } = await db
-    .from("rgaios_agents")
-    .select("id, name, role, department")
-    .eq("organization_id", orgId)
-    .eq("reports_to", id)
-    .order("name", { ascending: true });
   const directReports = (directReportsRaw ?? []).map((r) => ({
     id: (r as { id: string }).id,
     name: (r as { name: string }).name,
@@ -138,40 +171,17 @@ export default async function AgentDetailPage({
     department: (r as { department: string | null }).department,
   }));
 
-  let reportsToAgent: { id: string; name: string; role: string } | null = null;
-  if ((agent as { reports_to: string | null }).reports_to) {
-    const { data: parent } = await db
-      .from("rgaios_agents")
-      .select("id, name, role")
-      .eq("id", (agent as { reports_to: string }).reports_to)
-      .eq("organization_id", orgId)
-      .maybeSingle();
-    if (parent) {
-      reportsToAgent = {
+  const reportsToAgent: { id: string; name: string; role: string } | null = parent
+    ? {
         id: (parent as { id: string }).id,
         name: (parent as { name: string }).name,
         role: (parent as { role: string }).role,
-      };
-    }
-  }
+      }
+    : null;
 
-  // Pre-load chat history on the server so AgentChatTab renders the
-  // thread on first paint. Avoids a flash-of-empty-thread + the
-  // hydration-race where automated tests read bodyText before the
-  // client useEffect GET resolves under load.
-  const { data: chatRows } = await db
-    .from("rgaios_agent_chat_messages")
-    .select("role, content, metadata, created_at")
-    .eq("organization_id", orgId)
-    .eq("agent_id", id)
-    .or("metadata->>archived.is.null,metadata->>archived.eq.false")
-    .order("created_at", { ascending: false })
-    .limit(50);
   const initialChatMessages = (chatRows ?? [])
-    .map((r) => r as unknown as { role: string; content: string })
+    .map((r) => r as { role: string; content: string })
     .reverse();
-
-  const orgConnections = await listConnectionsForOrg(orgId);
   const connectors = orgConnections
     .filter((c) => c.status === "connected")
     .map((c) => ({

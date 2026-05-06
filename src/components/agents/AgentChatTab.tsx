@@ -237,9 +237,11 @@ export default function AgentChatTab({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Hydrate prior conversation from server. Failures are non-fatal -
-  // a fresh thread just starts empty.
+  // SSR seeds initialMessages on first paint. Skip the client GET when
+  // we already have rows, otherwise we'd burn a round-trip and overwrite
+  // the SSR-seeded state with the same data.
   useEffect(() => {
+    if (initialMessages.length > 0) return;
     let cancelled = false;
     fetch(`/api/agents/${agentId}/chat`)
       .then(async (r) => {
@@ -270,6 +272,8 @@ export default function AgentChatTab({
     return () => {
       cancelled = true;
     };
+    // initialMessages reference is stable per agent (set from SSR prop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
   // Auto-scroll on new content.
