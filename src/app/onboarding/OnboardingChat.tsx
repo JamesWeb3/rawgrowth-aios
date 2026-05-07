@@ -50,10 +50,21 @@ type ChatMessage =
       fields?: Record<string, unknown>;
       error?: string;
     }
+  | {
+      role: "uploaded_file";
+      id: string;
+      filename: string;
+      size: number;
+      url: string;
+      status: "uploading" | "ready" | "error";
+      error?: string;
+    }
   | { role: "brand_docs_uploader"; id: string }
   | { role: "telegram_connector"; id: string }
   | { role: "integration_connector"; id: string; provider: IntegrationProvider }
   | { role: "portal_button"; id: string };
+
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB - matches /api/onboarding/brand-docs/upload
 
 // If the last message is an empty assistant placeholder, drop it. Used before
 // inserting reasoning pills / inline widgets so the avatar doesn't render
@@ -99,6 +110,9 @@ export default function OnboardingChat({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOverChat, setDragOverChat] = useState(false);
+  const dragCounter = useRef(0);
 
   // Auto-scroll to bottom on new content
   useEffect(() => {
@@ -335,13 +349,119 @@ export default function OnboardingChat({
     }
   }
 
+  // Chat-surface drag-drop. Dropped files upload to brand-docs (type='other')
+  // and surface as an uploaded_file bubble; we then post a canned user line
+  // so the AI sees the filename and can react in-conversation.
+  async function uploadChatFile(file: File) {
+    if (streaming) return;
+    setError("");
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`"${file.name}" is over 25 MB - drop a smaller file.`);
+      return;
+    }
+    const id =
+      (globalThis.crypto?.randomUUID?.() as string) || `up_${Date.now()}_${Math.random()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "uploaded_file",
+        id,
+        filename: file.name,
+        size: file.size,
+        url: "",
+        status: "uploading",
+      },
+    ]);
+
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("type", "other");
+      const res = await fetch("/api/onboarding/brand-docs/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+
+      const url: string = data.document?.storage_url ?? "";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "uploaded_file" && m.id === id
+            ? { ...m, status: "ready", url }
+            : m
+        )
+      );
+
+      // Tell the AI a file landed so it can incorporate it into onboarding.
+      const canned = `I uploaded a file: ${file.name} (${formatBytes(file.size)}). It's saved at ${url || "[uploaded to brand-docs]"}.`;
+      sendMessage(canned);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "uploaded_file" && m.id === id
+            ? { ...m, status: "error", error: message }
+            : m
+        )
+      );
+      setError(message);
+    }
+  }
+
+  async function uploadFiles(files: FileList | File[]) {
+    const arr = Array.from(files);
+    for (const f of arr) {
+      // Sequential to keep order + share a single error surface.
+      await uploadChatFile(f);
+    }
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragOverChat(true);
+  }
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = Math.max(0, dragCounter.current - 1);
+    if (dragCounter.current === 0) setDragOverChat(false);
+  }
+  function handleDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragOverChat(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) void uploadFiles(files);
+  }
+
   const pct = Math.min(
     100,
     Math.round((progress.current / Math.max(progress.total, 1)) * 100)
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragOverChat && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[rgba(6,11,8,0.78)] backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[#0CBF6A]/60 bg-[rgba(12,191,106,0.06)] px-8 py-6 text-center">
+            <Upload className="h-6 w-6 text-[#0CBF6A]" />
+            <p className="text-sm font-medium text-foreground">Drop file to attach</p>
+            <p className="text-[11px] text-muted-foreground/70">Up to 25 MB - PDFs, images, transcripts</p>
+          </div>
+        </div>
+      )}
       {/* Progress bar */}
       <div className="rg-fade-in shrink-0 border-b border-[rgba(255,255,255,0.06)] bg-[#0A1210]/40">
         <div className="mx-auto flex max-w-2xl items-center gap-4 px-6 py-3 md:px-8">
@@ -388,13 +508,34 @@ export default function OnboardingChat({
       <div className="shrink-0 border-t border-[rgba(255,255,255,0.06)] bg-[#060B08]/80 backdrop-blur">
         <div className="mx-auto max-w-2xl px-6 py-4 md:px-8">
           <div className="flex items-end gap-2 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[#0A1210] p-2 focus-within:border-[rgba(12,191,106,0.4)]">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              aria-label="Attach file"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground/70 transition-colors hover:bg-[rgba(255,255,255,0.04)] hover:text-foreground disabled:opacity-40"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  void uploadFiles(e.target.files);
+                  e.target.value = "";
+                }
+              }}
+            />
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              placeholder="Type your answer..."
+              placeholder="Type your answer or drop a file..."
               className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 outline-none"
             />
             <Button
@@ -409,7 +550,7 @@ export default function OnboardingChat({
             </Button>
           </div>
           <p className="mt-2 text-center text-[11px] text-muted-foreground/50">
-            Powered by Rawgrowth AI · Press Enter to send, Shift+Enter for newline
+            Powered by Rawgrowth AI · Press Enter to send, Shift+Enter for newline · Drop files to attach
           </p>
         </div>
       </div>
@@ -432,6 +573,10 @@ function MessageBubble({
 }) {
   if (message.role === "reasoning") {
     return <ReasoningBubble message={message} />;
+  }
+
+  if (message.role === "uploaded_file") {
+    return <UploadedFileBubble message={message} />;
   }
 
   if (message.role === "user") {
@@ -603,6 +748,59 @@ function formatValue(v: unknown): string {
   if (typeof v === "string") return v || " - ";
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return JSON.stringify(v);
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let size = n;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i += 1;
+  }
+  return `${size.toFixed(size < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+type UploadedFileMessage = Extract<ChatMessage, { role: "uploaded_file" }>;
+
+function UploadedFileBubble({ message }: { message: UploadedFileMessage }) {
+  const isError = message.status === "error";
+  const isUploading = message.status === "uploading";
+  return (
+    <div className="rg-fade-in flex justify-end" data-role="uploaded_file">
+      <div
+        className={`flex max-w-[85%] items-center gap-2.5 rounded-2xl rounded-br-md border px-3 py-2 text-sm ${
+          isError
+            ? "border-destructive/40 bg-destructive/10 text-destructive"
+            : "border-[rgba(12,191,106,0.25)] bg-[rgba(12,191,106,0.08)] text-foreground"
+        }`}
+      >
+        <FileText className="h-4 w-4 shrink-0 opacity-80" />
+        <div className="min-w-0 flex-1">
+          {message.url && message.status === "ready" ? (
+            <a
+              href={message.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block truncate font-medium hover:underline"
+            >
+              {message.filename}
+            </a>
+          ) : (
+            <p className="truncate font-medium">{message.filename}</p>
+          )}
+          <p className="text-[11px] text-muted-foreground/70">
+            {isUploading
+              ? `Uploading ${formatBytes(message.size)}…`
+              : isError
+                ? message.error || "Upload failed"
+                : `Attached · ${formatBytes(message.size)}`}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function BrandDocsUploader({
