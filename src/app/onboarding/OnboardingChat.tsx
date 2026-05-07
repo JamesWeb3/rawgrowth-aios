@@ -95,7 +95,7 @@ export default function OnboardingChat({
   const greetingName = firstName?.trim() || "there";
   const initialGreeting = useMemo(
     () =>
-      `Hi ${greetingName}, welcome to the Rawgrowth Onboarding. We're going to ask you a series of questions to understand exactly how we can support your business. Ready to get started?`,
+      `Hi ${greetingName}, welcome to Rawgrowth onboarding. Drop your brand assets right here, decks, brand guides, sales call transcripts, ad creatives, anything that already explains your business. I will read them and pre-fill what I can, then only ask about what is genuinely missing. You can also paste links (your site, IG, YouTube) and I will scrape the public pages. Ready when you are.`,
     [greetingName]
   );
 
@@ -503,6 +503,32 @@ export default function OnboardingChat({
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 md:px-8">
         <div className="mx-auto max-w-2xl space-y-6 py-8">
+          {/* Hero drop zone, visible until the client uploads at least
+              one file. Drop-first UX per Pedro: read assets before
+              firing the long-form questionnaire. */}
+          {!messages.some(
+            (m) => m.role === "uploaded_file" && m.status !== "error",
+          ) && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              className="group flex w-full flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[rgba(12,191,106,0.35)] bg-[rgba(12,191,106,0.04)] px-6 py-10 text-center transition-colors hover:border-[#0CBF6A]/70 hover:bg-[rgba(12,191,106,0.08)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Upload className="h-7 w-7 text-[#0CBF6A]" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  Drop your brand assets here
+                </p>
+                <p className="text-[12px] text-muted-foreground/80">
+                  Decks, brand guides, sales call transcripts, ad creatives, screenshots. I will read them and pre-fill what I can.
+                </p>
+                <p className="text-[11px] text-muted-foreground/60">
+                  Click to browse, or drag files anywhere on this page. Up to 25 MB each.
+                </p>
+              </div>
+            </button>
+          )}
           {messages.map((msg, i) => (
             <MessageBubble
               key={i}
