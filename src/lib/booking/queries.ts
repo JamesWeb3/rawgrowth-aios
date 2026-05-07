@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { isUuid } from "@/lib/utils";
 import type {
   AvailabilityRow,
   BookingRow,
@@ -107,6 +108,10 @@ export async function getEventTypeById(
   orgId: string,
   id: string,
 ): Promise<EventTypeRow | null> {
+  // Guard against non-UUID path params reaching Postgres. Without this,
+  // /booking/event-types/notauuid lights up "invalid input syntax for
+  // type uuid" (22P02) and the page 500s instead of 404s.
+  if (!isUuid(id)) return null;
   const { data, error } = await supabaseAdmin()
     .from("rgaios_kalendly_event_types")
     .select("*")

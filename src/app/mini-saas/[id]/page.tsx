@@ -4,6 +4,7 @@ import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { isUuid } from "@/lib/utils";
 import { MiniSaasDetailClient } from "./Client";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,9 @@ export default async function MiniSaasDetailPage({
   const { id } = await params;
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId) redirect("/auth/signin");
+  // Skip the Postgres round-trip for non-UUID ids - keeps logs clean and
+  // returns a proper 404 instead of letting Supabase 22P02 leak through.
+  if (!isUuid(id)) notFound();
 
   const { data } = await supabaseAdmin()
     .from("rgaios_mini_saas")
