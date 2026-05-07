@@ -54,8 +54,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/docker/entrypoint.sh /usr/local/b
 # Install runtime tooling (pg + jsonwebtoken + bcryptjs) with their full
 # transitive trees. Hand-picking from the builder stage is fragile because
 # it skips deps like postgres-array, postgres-date, etc.
+#
+# Versions pinned exact: latest pg (>=8.14) ships a transitive dep with
+# `workspace:*` in its package.json that npm 10 can't resolve outside a
+# real workspace. Lock to a known-good trio so the image builds offline
+# of upstream churn.
 RUN npm install --omit=dev --no-save --no-package-lock \
-      pg@^8 jsonwebtoken@^9 bcryptjs@^3
+      pg@8.13.1 jsonwebtoken@9.0.2 bcryptjs@3.0.2
 
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
