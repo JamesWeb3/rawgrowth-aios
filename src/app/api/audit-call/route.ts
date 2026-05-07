@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   const source = SOURCE_VALUES.has(sourceRaw) ? sourceRaw : "audit_call_paste";
 
   const db = supabaseAdmin();
-  const extraction = await extractAuditCall(transcript);
+  const extraction = await extractAuditCall(ctx.activeOrgId, transcript);
 
   // Brand-voice guard the summary - the ONLY long-form output. The LLM
   // is already told to dodge the banned list, but the substring rewrite
@@ -101,9 +101,15 @@ export async function POST(req: NextRequest) {
         error: extraction._error,
       },
     } as never);
+    // 503 specifically for "no LLM provider wired" so the UI can show
+    // a clear "Connect Claude Max at /connections" prompt instead of a
+    // generic 502 that looks like an outage.
+    const isNotConfigured = /No LLM provider configured/i.test(
+      extraction._error,
+    );
     return NextResponse.json(
       { ok: false, error: extraction._error },
-      { status: 502 },
+      { status: isNotConfigured ? 503 : 502 },
     );
   }
 

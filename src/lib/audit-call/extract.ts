@@ -1,4 +1,4 @@
-import { chatComplete } from "@/lib/llm/provider";
+import { chatCompleteOAuthFirst } from "@/lib/llm/oauth-first";
 import { BANNED_WORDS } from "@/lib/brand/tokens";
 
 /**
@@ -17,9 +17,10 @@ import { BANNED_WORDS } from "@/lib/brand/tokens";
  * Contract mirrors extract-insights:
  *   - One chatComplete step, no tool loop.
  *   - Always returns a shape, even on parse failure (`_error` set).
- *   - Provider resolves via global LLM_PROVIDER env so a per-VPS flip
- *     between openai / anthropic-api / anthropic-cli works without code
- *     changes.
+ *   - Provider goes through chatCompleteOAuthFirst, which prefers the
+ *     org's Claude Max OAuth token (rgaios_connections, set via
+ *     /connections) over any API key in the environment. API keys are
+ *     a fallback only.
  */
 
 export type SuggestedAgent = {
@@ -172,6 +173,7 @@ function isolateJson(raw: string): string {
  * rather than throw.
  */
 export async function extractAuditCall(
+  organizationId: string,
   transcript: string,
 ): Promise<AuditCallExtraction> {
   const text = (transcript ?? "").trim();
@@ -187,7 +189,7 @@ export async function extractAuditCall(
 
   let raw = "";
   try {
-    const res = await chatComplete({
+    const res = await chatCompleteOAuthFirst(organizationId, {
       system: SYSTEM_PROMPT,
       messages: [
         {
