@@ -92,6 +92,8 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+    volumes:
+      - app-storage:/app/storage
 
   caddy:
     image: caddy:2-alpine
@@ -112,3 +114,4 @@ volumes:
   pgdata:
   caddy-data:
   caddy-config:
+  app-storage:

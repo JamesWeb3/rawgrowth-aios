@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { uploadToBucket, removeFromBucket } from "@/lib/storage/local";
 
 const ALLOWED_TYPES = new Set(["logo", "guideline", "asset", "other"]);
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -34,20 +35,22 @@ export async function POST(req: NextRequest) {
     const path = `${orgId}/${type}/${Date.now()}-${safeName}`;
 
     const bytes = Buffer.from(await file.arrayBuffer());
-    const { error: uploadErr } = await supabaseAdmin().storage
-      .from(BUCKET)
-      .upload(path, bytes, {
-        contentType: file.type || "application/octet-stream",
-        upsert: false,
-      });
-    if (uploadErr) {
-      console.error("[brand-docs/upload] storage error:", uploadErr);
-      return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+    let publicUrl: string;
+    try {
+      const upload = await uploadToBucket(
+        BUCKET,
+        path,
+        bytes,
+        file.type || "application/octet-stream",
+      );
+      publicUrl = upload.publicUrl;
+    } catch (err) {
+      console.error("[brand-docs/upload] storage error:", err);
+      return NextResponse.json(
+        { error: (err as Error).message ?? "storage failure" },
+        { status: 500 },
+      );
     }
-
-    const {
-      data: { publicUrl },
-    } = supabaseAdmin().storage.from(BUCKET).getPublicUrl(path);
 
     const { data: doc, error: insertErr } = await supabaseAdmin()
       .from("rgaios_onboarding_documents")
@@ -116,11 +119,17 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const prefix = `/storage/v1/object/public/${BUCKET}/`;
+    // Match either Supabase Storage public URL or self-hosted local URL.
     const url = String(doc.storage_url || "");
-    const path = url.includes(prefix) ? url.split(prefix)[1] : null;
+    const cloudPrefix = `/storage/v1/object/public/${BUCKET}/`;
+    const localPrefix = `/api/storage/${BUCKET}/`;
+    const path = url.includes(cloudPrefix)
+      ? url.split(cloudPrefix)[1]
+      : url.includes(localPrefix)
+        ? url.split(localPrefix)[1]
+        : null;
     if (path) {
-      await supabaseAdmin().storage.from(BUCKET).remove([path]);
+      await removeFromBucket(BUCKET, path);
     }
 
     await supabaseAdmin().from("rgaios_onboarding_documents").delete().eq("id", id);

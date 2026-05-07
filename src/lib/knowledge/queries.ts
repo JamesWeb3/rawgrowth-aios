@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
+import { uploadToBucket, removeFromBucket } from "@/lib/storage/local";
 
 type KnowledgeRow =
   Database["public"]["Tables"]["rgaios_knowledge_files"]["Row"];
@@ -39,11 +40,10 @@ export async function getKnowledgeFile(
 export async function readKnowledgeFileContent(
   storagePath: string,
 ): Promise<string> {
-  const { data, error } = await supabaseAdmin()
-    .storage.from(BUCKET)
-    .download(storagePath);
-  if (error) throw new Error(`readKnowledgeFileContent: ${error.message}`);
-  return await data.text();
+  const { readFromBucket } = await import("@/lib/storage/local");
+  const result = await readFromBucket(BUCKET, storagePath);
+  if (!result) throw new Error(`readKnowledgeFileContent: not found ${storagePath}`);
+  return result.bytes.toString("utf8");
 }
 
 export async function createKnowledgeFile(input: {
@@ -75,20 +75,17 @@ export async function createKnowledgeFile(input: {
 
   const path = storagePathFor(input.organizationId, inserted.id);
 
-  // 2. Upload the actual bytes.
-  const { error: uploadErr } = await supabaseAdmin()
-    .storage.from(BUCKET)
-    .upload(path, contentBuffer, {
-      contentType: mimeType,
-      upsert: true,
-    });
-  if (uploadErr) {
+  // 2. Upload the actual bytes (storage adapter dispatches to Supabase
+  // Storage on hosted, local FS on self_hosted).
+  try {
+    await uploadToBucket(BUCKET, path, Buffer.from(contentBuffer), mimeType);
+  } catch (err) {
     // Roll back the row if the upload failed.
     await supabaseAdmin()
       .from("rgaios_knowledge_files")
       .delete()
       .eq("id", inserted.id);
-    throw new Error(`createKnowledgeFile upload: ${uploadErr.message}`);
+    throw new Error(`createKnowledgeFile upload: ${(err as Error).message}`);
   }
 
   // 3. Patch the storage_path onto the row so future reads know where to go.
@@ -132,7 +129,11 @@ export async function deleteKnowledgeFile(
 
   // 1. Remove the storage object  -  best-effort (continue even if missing).
   if (row.storage_path) {
-    await supabaseAdmin().storage.from(BUCKET).remove([row.storage_path]);
+    try {
+      await removeFromBucket(BUCKET, row.storage_path);
+    } catch (err) {
+      console.warn("[knowledge] storage remove failed:", (err as Error).message);
+    }
   }
 
   // 2. Delete the row.

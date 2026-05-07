@@ -33,9 +33,13 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     DEPLOY_MODE=self_hosted
 
-# Drop root
+# Drop root + create local-storage dir owned by nextjs (used by
+# src/lib/storage/local.ts when DEPLOY_MODE=self_hosted; mounted as
+# a docker-compose volume so files survive restarts).
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 nextjs && \
+    mkdir -p /app/storage && \
+    chown -R nextjs:nodejs /app/storage
 
 # The standalone output ships with a minimal server.js + node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
