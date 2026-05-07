@@ -47,6 +47,7 @@ const files = [
   "0059_custom_mcp_tools.sql",
   "0060_atlas_coordinate_dedup.sql",
   "0061_insight_sent_dedup.sql",
+  "0062_invite_allowed_departments.sql",
 ];
 
 const client = new pg.Client({ connectionString: url });
