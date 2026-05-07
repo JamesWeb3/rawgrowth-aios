@@ -157,4 +157,80 @@ test.describe("agent flows e2e", () => {
     expect(body.department).toBe("marketing");
     expect(body.knownDepartment).toBe(true);
   });
+
+  test("CRM stats route returns aggregate shape on /sales", async ({
+    page,
+  }) => {
+    await signIn(page);
+    const r = await page.request.get(
+      `${BASE_URL}/api/crm/stats?department=sales`,
+    );
+    expect(r.status()).toBe(200);
+    const body = (await r.json()) as {
+      contacts?: number;
+      deals?: number;
+      pipelineValue?: number;
+      topRecent?: unknown[];
+    };
+    expect(typeof body.contacts).toBe("number");
+    expect(typeof body.deals).toBe("number");
+    expect(typeof body.pipelineValue).toBe("number");
+    expect(Array.isArray(body.topRecent)).toBe(true);
+  });
+
+  test("dept-widgets route returns slug-specific widget array", async ({
+    page,
+  }) => {
+    await signIn(page);
+    for (const slug of [
+      "marketing",
+      "fulfilment",
+      "finance",
+      "development",
+    ]) {
+      const r = await page.request.get(
+        `${BASE_URL}/api/dashboard/dept-widgets?slug=${slug}`,
+      );
+      expect(r.status(), `slug=${slug}`).toBe(200);
+      const body = (await r.json()) as {
+        slug?: string;
+        widgets?: Array<{ id: string; label: string; value: string }>;
+      };
+      expect(body.slug).toBe(slug);
+      expect(Array.isArray(body.widgets)).toBe(true);
+    }
+  });
+
+  test("portal status route 400/404 on bad ids, no auth required", async ({
+    request,
+  }) => {
+    const bad = await request.get(`${BASE_URL}/api/portal/not-a-uuid/status`);
+    expect(bad.status()).toBe(400);
+    const missing = await request.get(
+      `${BASE_URL}/api/portal/00000000-0000-0000-0000-000000000000/status`,
+    );
+    expect(missing.status()).toBe(404);
+  });
+
+  test("audit-call POST validates transcript shape", async ({ page }) => {
+    await signIn(page);
+    const empty = await page.request.post(`${BASE_URL}/api/audit-call`, {
+      data: { transcript: "" },
+    });
+    expect(empty.status(), `empty body ${empty.status()}`).toBe(400);
+    // 503 / 200 are both acceptable here: 200 when ANTHROPIC_API_KEY is
+    // wired in CI / dev, 503 when the LLM provider isn't configured (the
+    // route returns "Transcription engine not configured" with a clear
+    // shape). Either proves the validation gate passed.
+    const ok = await page.request.post(`${BASE_URL}/api/audit-call`, {
+      data: {
+        transcript:
+          "Client runs a B2B SaaS doing $50k MRR. Pain: cant scale outbound, only 2 SDRs. Wants AI agents to automate prospect research.",
+      },
+    });
+    expect(
+      [200, 503].includes(ok.status()),
+      `audit-call ${ok.status()}`,
+    ).toBe(true);
+  });
 });
