@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { uploadToBucket } from "@/lib/storage/local";
 import { chunkText } from "@/lib/knowledge/chunker";
 import { embedBatch, toPgVector } from "@/lib/knowledge/embedder";
 import { extractText } from "@/lib/knowledge/extract";
@@ -72,14 +73,18 @@ export async function POST(req: NextRequest) {
   const storagePath = `${orgId}/${agentId}/${Date.now()}-${safeName}`;
   const bytes = Buffer.from(await file.arrayBuffer());
 
-  const { error: uploadErr } = await db.storage
-    .from(BUCKET)
-    .upload(storagePath, bytes, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-  if (uploadErr) {
-    return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+  try {
+    await uploadToBucket(
+      BUCKET,
+      storagePath,
+      bytes,
+      file.type || "application/octet-stream",
+    );
+  } catch (uploadErr) {
+    return NextResponse.json(
+      { error: (uploadErr as Error).message },
+      { status: 500 },
+    );
   }
 
   const { data: inserted, error: metaErr } = await db

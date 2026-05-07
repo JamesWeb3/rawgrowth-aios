@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { uploadToBucket } from "@/lib/storage/local";
 import { chunkText } from "@/lib/knowledge/chunker";
 import { embedBatch, toPgVector } from "@/lib/knowledge/embedder";
 
@@ -37,16 +38,18 @@ export async function ingestAgentFile(input: {
   // makes the source obvious in queries without needing a real blob.
   let storagePath: string = `inline://${input.agentId}/${input.filename}`;
   if (input.storage) {
-    const { error: uploadErr } = await db.storage
-      .from(BUCKET)
-      .upload(input.storage.path, input.storage.bytes, {
-        contentType: input.mimeType ?? "application/octet-stream",
-        upsert: false,
-      });
-    if (uploadErr) {
-      warnings.push(`storage upload failed: ${uploadErr.message}`);
-    } else {
+    try {
+      await uploadToBucket(
+        BUCKET,
+        input.storage.path,
+        input.storage.bytes,
+        input.mimeType ?? "application/octet-stream",
+      );
       storagePath = input.storage.path;
+    } catch (uploadErr) {
+      warnings.push(
+        `storage upload failed: ${(uploadErr as Error).message}`,
+      );
     }
   }
 

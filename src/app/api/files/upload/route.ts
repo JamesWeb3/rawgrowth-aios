@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { uploadToBucket } from "@/lib/storage/local";
 import { ingestCompanyChunk } from "@/lib/knowledge/company-corpus";
 
 export const runtime = "nodejs";
@@ -91,12 +92,14 @@ export async function POST(req: NextRequest) {
   //    convention: <orgId>/files/<bucket>/<id>-<safeName>.
   const safeName = file.name.replace(/[^\w.\-]/g, "_");
   const path = `${orgId}/files/${bucket}/${inserted.id}-${safeName}`;
-  const { error: uploadErr } = await db.storage
-    .from(STORAGE_BUCKET)
-    .upload(path, bytes, { contentType: mimeType, upsert: true });
-  if (uploadErr) {
+  try {
+    await uploadToBucket(STORAGE_BUCKET, path, bytes, mimeType);
+  } catch (uploadErr) {
     await db.from("rgaios_knowledge_files").delete().eq("id", inserted.id);
-    return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+    return NextResponse.json(
+      { error: (uploadErr as Error).message },
+      { status: 500 },
+    );
   }
 
   // 3. Patch the storage_path so reads can find the blob later.
