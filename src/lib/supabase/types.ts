@@ -214,6 +214,7 @@ export type Database = {
           expires_at: string;
           accepted_at: string | null;
           created_at: string;
+          allowed_departments: string[];
         };
         Insert: {
           token_hash: string;
@@ -224,6 +225,7 @@ export type Database = {
           invited_by?: string | null;
           expires_at: string;
           accepted_at?: string | null;
+          allowed_departments?: string[];
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_invites"]["Row"]>;
         Relationships: [];

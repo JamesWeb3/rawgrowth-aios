@@ -9,6 +9,7 @@ import {
   type ChatMessage,
 } from "@/lib/llm/provider";
 import { drainScrapeQueue } from "@/lib/scrape/worker";
+import { fetchSource } from "@/lib/scrape/fetcher";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { mirrorBrandProfile } from "@/lib/knowledge/company-corpus";
 import {
@@ -106,6 +107,16 @@ Sub-sections (in order) and field names to extract:
 13. additionalContext: anything_else, most_excited, most_nervous, how_heard, convincing_content
 
 After \`save_questionnaire_section\` for additionalContext (the final sub-section), call \`finalize_questionnaire\`. The system will AUTOMATICALLY generate the brand profile and stream it into the chat  -  you do NOT need to call generate_brand_profile for the initial version.
+
+URL-AWARE EXTRACTION: whenever the client volunteers a URL (their website, a social handle URL, a competitor's site, an inspiration page), call \`scrape_url({ url })\` BEFORE asking the next question. The tool returns the page title and a short text excerpt. Use that to:
+- pre-fill obvious fields (e.g. business_name from the homepage title, top_platform from a social URL, what_you_sell from the hero copy)
+- ask sharper follow-ups instead of generic questions
+- gently confirm what you found ("Looks like you sell X - is that still the main offer?") rather than re-asking for info already on the page
+
+Rules for scrape_url:
+- Only call it for HTTP(S) URLs the client actually shared. Do NOT invent URLs.
+- One call per URL per conversation. Cache mentally; do not re-scrape the same URL.
+- If the result is blocked/errored, just continue conversationally - no need to call it out.
 
 ------------------------------------------------------------
 SECTION 3  -  Brand Profile
@@ -431,7 +442,61 @@ const TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "scrape_url",
+      description:
+        "Fetch the public text content of a URL the client shared (their website, a social profile, a competitor, an inspiration page) so you can pre-fill questionnaire fields and ask sharper follow-ups instead of generic questions. Returns { ok, title, excerpt } on success or { ok: false, blocked, error } when the page is unreachable / behind auth. Call BEFORE asking the next question whenever a URL appears in the user's message. Only call it for URLs the client volunteered; do not invent URLs. One call per URL per conversation.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description:
+              "Absolute http(s) URL the client shared (homepage, social profile, competitor site, etc.).",
+          },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
+
+async function scrapeUrlForChat(url: string) {
+  // Defensive normalisation - the model occasionally hands us bare domains.
+  let target = (url ?? "").trim();
+  if (!target) return { ok: false, error: "Empty URL" };
+  if (!/^https?:\/\//i.test(target)) target = `https://${target}`;
+  try {
+    new URL(target);
+  } catch {
+    return { ok: false, error: `Invalid URL: ${url}` };
+  }
+
+  const result = await fetchSource(target);
+  if (!result.ok) {
+    return {
+      ok: false,
+      url: result.url,
+      blocked: result.blocked,
+      status: result.status,
+      error: result.error,
+    };
+  }
+  // Cap the excerpt aggressively so we don't blow the context budget on a
+  // single tool result. The model just needs enough to extract a few fields.
+  const excerpt = (result.content || "").slice(0, 3000);
+  return {
+    ok: true as const,
+    url: result.url,
+    status: result.status,
+    title: result.title,
+    excerpt,
+    truncated: (result.content?.length ?? 0) > excerpt.length,
+  };
+}
 
 type IncomingMessage = { role: "user" | "assistant"; content: string };
 
@@ -1451,6 +1516,18 @@ export async function POST(req: NextRequest) {
                 reasoningLabel = "Locking in milestone calls";
               } else if (tc.name === "complete_onboarding") {
                 reasoningLabel = "Finalising your onboarding";
+              } else if (tc.name === "scrape_url") {
+                const rawUrl =
+                  typeof parsedForReasoning.url === "string"
+                    ? parsedForReasoning.url
+                    : "";
+                let host = rawUrl;
+                try {
+                  host = new URL(
+                    /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`,
+                  ).hostname;
+                } catch {}
+                reasoningLabel = host ? `Scanning ${host}` : "Scanning URL";
               }
               const reasoningId =
                 (globalThis.crypto?.randomUUID?.() as string) ||
@@ -1615,6 +1692,23 @@ export async function POST(req: NextRequest) {
                 } else if (tc.name === "complete_schedule_calls_section") {
                   result = await completeScheduleCallsSection(user.id);
                   label = "Milestone calls scheduled";
+                } else if (tc.name === "scrape_url") {
+                  const rawUrl =
+                    typeof parsedForReasoning.url === "string"
+                      ? parsedForReasoning.url
+                      : "";
+                  const scrape = await scrapeUrlForChat(rawUrl);
+                  // Cast through a permissive shape - the tool result schema
+                  // is wider than ToolResult's typed slots; the model just
+                  // sees the JSON payload.
+                  result = scrape as unknown as ToolResult;
+                  let host = rawUrl;
+                  try {
+                    host = new URL(
+                      /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`,
+                    ).hostname;
+                  } catch {}
+                  label = host ? `Scraped ${host}` : "Scraped URL";
                 } else if (tc.name === "complete_onboarding") {
                   result = await completeOnboarding(user.id, incoming);
                   label = "Onboarding complete";
@@ -1656,6 +1750,26 @@ export async function POST(req: NextRequest) {
                       ? { slack_channel_name: parsedForReasoning.slack_channel_name }
                       : {}),
                   };
+                } else if (tc.name === "scrape_url") {
+                  const r = result as unknown as {
+                    url?: string;
+                    title?: string | null;
+                    excerpt?: string;
+                    status?: number;
+                  };
+                  fields = {
+                    url: r.url ?? parsedForReasoning.url,
+                    ...(r.title ? { title: r.title } : {}),
+                    ...(r.status ? { status: r.status } : {}),
+                    ...(r.excerpt
+                      ? {
+                          excerpt:
+                            r.excerpt.length > 220
+                              ? `${r.excerpt.slice(0, 220)}…`
+                              : r.excerpt,
+                        }
+                      : {}),
+                  };
                 }
                 const doneLabel = reasoningLabel
                   .replace(/^Extracting/, "Saved")
@@ -1669,7 +1783,8 @@ export async function POST(req: NextRequest) {
                   .replace(/^Locking in milestone calls/, "Calls locked in")
                   .replace(/^Locking in your brand documents/, "Brand documents locked in")
                   .replace(/^Opening the upload panel/, "Upload panel opened")
-                  .replace(/^Opening the Telegram connector/, "Telegram connector opened");
+                  .replace(/^Opening the Telegram connector/, "Telegram connector opened")
+                  .replace(/^Scanning /, "Scanned ");
                 emit({
                   type: "reasoning",
                   status: "done",

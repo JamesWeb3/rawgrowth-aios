@@ -41,7 +41,19 @@ type PendingInvite = {
   invited_by_name: string | null;
   created_at: string;
   expires_at: string;
+  allowed_departments: string[];
 };
+
+// Mirrors KNOWN_DEPARTMENT_SLUGS from src/lib/auth/dept-acl.ts. Kept inline
+// so this client component doesn't pull a server-only module. If you add
+// a new dept slug, sync both lists.
+const DEPT_OPTIONS: Array<{ slug: string; label: string }> = [
+  { slug: "marketing", label: "Marketing" },
+  { slug: "sales", label: "Sales" },
+  { slug: "fulfilment", label: "Fulfilment" },
+  { slug: "finance", label: "Finance" },
+  { slug: "development", label: "Development" },
+];
 type Response = {
   members: Member[];
   invites: PendingInvite[];
@@ -220,7 +232,14 @@ export function MembersView() {
                       {inv.email}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={roleBadgeClass(inv.role)}>{inv.role}</span>
+                      <div className="flex flex-col items-start gap-0.5">
+                        <span className={roleBadgeClass(inv.role)}>{inv.role}</span>
+                        {inv.allowed_departments.length > 0 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {inv.allowed_departments.join(", ")}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {new Date(inv.created_at).toLocaleDateString()}
@@ -261,6 +280,7 @@ function InviteSheet({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
+  const [allowedDepartments, setAllowedDepartments] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -268,7 +288,14 @@ function InviteSheet({
     setName("");
     setEmail("");
     setRole("member");
+    setAllowedDepartments([]);
     setError(null);
+  }
+
+  function toggleDept(slug: string) {
+    setAllowedDepartments((prev) =>
+      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
+    );
   }
 
   async function submit() {
@@ -282,7 +309,12 @@ function InviteSheet({
       const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim() || null, email: email.trim(), role }),
+        body: JSON.stringify({
+          name: name.trim() || null,
+          email: email.trim(),
+          role,
+          allowed_departments: allowedDepartments,
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -351,6 +383,33 @@ function InviteSheet({
                 <SelectItem value="developer">Developer (Rawgrowth support)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Department access</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Leave empty for full access. Pick one or more to scope this
+              member to only those departments in the sidebar and /agents.
+            </p>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {DEPT_OPTIONS.map((d) => {
+                const on = allowedDepartments.includes(d.slug);
+                return (
+                  <button
+                    key={d.slug}
+                    type="button"
+                    onClick={() => toggleDept(d.slug)}
+                    aria-pressed={on}
+                    className={
+                      on
+                        ? "rounded-full border border-primary/40 bg-primary/15 px-2.5 py-1 text-[11px] font-medium text-primary"
+                        : "rounded-full border border-border bg-input/30 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           {error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
