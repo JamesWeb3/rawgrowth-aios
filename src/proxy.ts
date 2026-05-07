@@ -22,6 +22,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/cron",             // CRON_SECRET bearer, called by the self-hosted tick timer
   "/api/connections/slack/oauth/callback", // Slack OAuth redirect  -  state is self-verifying
   "/api/book",             // public booking endpoints (slot fetch + create + manage)
+  "/api/portal",           // buyer status page polls before any session exists
 ];
 
 // CSRF defense-in-depth (on top of SameSite=Lax session cookies):
