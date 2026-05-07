@@ -20,7 +20,6 @@ export type PendingInvite = {
   invited_by_name: string | null;
   created_at: string;
   expires_at: string;
-  allowed_departments: string[];
 };
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -42,7 +41,7 @@ export async function listPendingInvites(
   const { data, error } = await db
     .from("rgaios_invites")
     .select(
-      `email, name, role, created_at, expires_at, accepted_at, allowed_departments,
+      `email, name, role, created_at, expires_at, accepted_at,
        inviter:invited_by ( name )`,
     )
     .eq("organization_id", organizationId)
@@ -57,7 +56,6 @@ export async function listPendingInvites(
     created_at: string;
     expires_at: string;
     accepted_at: string | null;
-    allowed_departments: string[] | null;
     inviter: { name: string | null } | null;
   };
 
@@ -70,7 +68,6 @@ export async function listPendingInvites(
       invited_by_name: r.inviter?.name ?? null,
       created_at: r.created_at,
       expires_at: r.expires_at,
-      allowed_departments: (r.allowed_departments ?? []) as string[],
     }));
 }
 
@@ -80,7 +77,6 @@ export async function createInvite(params: {
   name: string | null;
   role: MemberRole;
   invitedBy: string;
-  allowedDepartments?: string[];
 }): Promise<{ token: string }> {
   const email = params.email.trim().toLowerCase();
   if (!email.includes("@")) throw new Error("Invalid email");
@@ -104,9 +100,6 @@ export async function createInvite(params: {
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
-  const allowedDepartments = (params.allowedDepartments ?? []).filter(
-    (s) => typeof s === "string" && s.length > 0,
-  );
 
   const { error } = await db.from("rgaios_invites").insert({
     token_hash: tokenHash,
@@ -116,7 +109,6 @@ export async function createInvite(params: {
     organization_id: params.organizationId,
     invited_by: params.invitedBy,
     expires_at: expiresAt,
-    allowed_departments: allowedDepartments,
   });
   if (error) throw new Error(`createInvite: ${error.message}`);
 
@@ -159,27 +151,6 @@ export async function acceptInvite(params: {
     .select("id, organization_id")
     .single();
   if (insErr || !user) throw new Error(`acceptInvite user: ${insErr?.message}`);
-
-  // Mirror the invite's per-department scope onto the membership row so
-  // the dept-acl helpers (src/lib/auth/dept-acl.ts) hide non-allowed
-  // depts in the sidebar + /agents for this invitee. Empty array = no
-  // restriction (matches existing behavior).
-  const allowedDepartments = ((invite.allowed_departments as string[] | null) ?? []).filter(
-    (s) => typeof s === "string" && s.length > 0,
-  );
-  // rgaios_organization_memberships isn't in the generated supabase types
-  // (matches the existing dept-acl.ts read pattern), so cast through unknown
-  // to satisfy the typed builder. Migrations 0001 + 0037 define the shape.
-  const membershipRow = {
-    organization_id: invite.organization_id,
-    user_id: user.id,
-    role: invite.role,
-    allowed_departments: allowedDepartments,
-  } as unknown as never;
-  const { error: memErr } = await db
-    .from("rgaios_organization_memberships")
-    .upsert(membershipRow, { onConflict: "organization_id,user_id" });
-  if (memErr) throw new Error(`acceptInvite membership: ${memErr.message}`);
 
   await db
     .from("rgaios_invites")
