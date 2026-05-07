@@ -9,7 +9,7 @@ export default function ConnectionsPage() {
   return (
     <PageShell
       title="Connections"
-      description="Claude Max, the Rawgrowth MCP, messaging channels, and analytics sources. Every external link this workspace owns."
+      description="Claude Max, messaging channels, and analytics sources. Every external link this workspace owns."
     >
       <ConnectionsView />
     </PageShell>
