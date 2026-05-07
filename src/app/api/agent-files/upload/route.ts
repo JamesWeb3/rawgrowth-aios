@@ -31,7 +31,20 @@ export async function POST(req: NextRequest) {
   const orgId = ctx.activeOrgId;
   const db = supabaseAdmin();
 
-  const form = await req.formData();
+  // Guard against malformed multipart bodies: Next 16 surfaces parser
+  // failures as a server-level TypeError that 500s the request, leaks
+  // a stack trace, and shows up in the browser as an opaque error
+  // toast. Wrapping the parse here turns it into a clean 400 the
+  // FileDropZone / AgentChatTab handlers already render to the user.
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Bad upload body: ${(err as Error).message}` },
+      { status: 400 },
+    );
+  }
   const file = form.get("file");
   const agentId = String(form.get("agent_id") ?? "").trim();
   if (!(file instanceof File)) {
