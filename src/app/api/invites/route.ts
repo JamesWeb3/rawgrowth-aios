@@ -68,23 +68,35 @@ export async function POST(req: NextRequest) {
     const base = process.env.NEXTAUTH_URL ?? new URL(req.url).origin;
     const inviteUrl = `${base}/auth/invite?token=${encodeURIComponent(token)}`;
 
-    await sendInviteEmail({
-      to: email,
-      inviteUrl,
-      organizationName: org?.name ?? "your organization",
-      inviterName: inviter?.name ?? null,
-      recipientName: name,
-    });
+    // Email is best-effort. If RESEND_API_KEY is missing or Resend
+    // throws, we still want the invite row persisted + the link
+    // returned so the operator can hand it off manually. Without this
+    // the route used to 400 the whole invite when Resend was unconfigured.
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      await sendInviteEmail({
+        to: email,
+        inviteUrl,
+        organizationName: org?.name ?? "your organization",
+        inviterName: inviter?.name ?? null,
+        recipientName: name,
+      });
+      emailSent = true;
+    } catch (err) {
+      emailError = (err as Error).message;
+      console.warn("[invites] sendInviteEmail failed:", emailError);
+    }
 
     await db.from("rgaios_audit_log").insert({
       organization_id: ctx.activeOrgId,
       kind: "member_invited",
       actor_type: "user",
       actor_id: ctx.userId,
-      detail: { email, role, allowed_departments: allowedDepartments },
+      detail: { email, role, allowed_departments: allowedDepartments, email_sent: emailSent },
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, inviteUrl, emailSent, emailError });
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },
