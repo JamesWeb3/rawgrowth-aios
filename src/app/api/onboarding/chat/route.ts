@@ -337,6 +337,27 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "open_integration_connector",
+      description:
+        "Render an inline OAuth connector card for a third-party integration (Slack, Gmail, Google Drive, HubSpot). Call this once per provider during the integrations section so the client can finish OAuth without leaving the chat.",
+      parameters: {
+        type: "object",
+        properties: {
+          provider: {
+            type: "string",
+            enum: ["slack", "hubspot", "google-drive", "gmail"],
+            description:
+              "Which provider's OAuth widget to show. Must match the IntegrationProvider union on the client.",
+          },
+        },
+        required: ["provider"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "complete_brand_docs_section",
       description:
         "Call after the client confirms they're finished uploading (or have nothing to upload). Advances onboarding_step to 5.",
@@ -1498,6 +1519,12 @@ export async function POST(req: NextRequest) {
                 reasoningLabel = "Opening the upload panel";
               } else if (tc.name === "open_telegram_connector") {
                 reasoningLabel = "Opening the Telegram connector";
+              } else if (tc.name === "open_integration_connector") {
+                const prov =
+                  typeof parsedForReasoning.provider === "string"
+                    ? parsedForReasoning.provider
+                    : "integration";
+                reasoningLabel = `Opening the ${prov} connector`;
               } else if (tc.name === "complete_brand_docs_section") {
                 reasoningLabel = "Locking in your brand documents";
               } else if (tc.name === "save_software_access") {
@@ -1664,6 +1691,29 @@ export async function POST(req: NextRequest) {
                     note: "Telegram connector has been rendered to the client. Wait for their next message before doing anything else.",
                   };
                   label = "Telegram connector shown";
+                } else if (tc.name === "open_integration_connector") {
+                  const allowed = new Set([
+                    "slack",
+                    "hubspot",
+                    "google-drive",
+                    "gmail",
+                  ]);
+                  const input = (tc.input ?? {}) as Record<string, unknown>;
+                  const provider =
+                    typeof input.provider === "string" ? input.provider : "";
+                  if (!allowed.has(provider)) {
+                    result = {
+                      ok: false,
+                      error: `unknown provider '${provider}' - allowed: slack, hubspot, google-drive, gmail`,
+                    };
+                  } else {
+                    emit({ type: "integration_connector", provider });
+                    result = {
+                      ok: true,
+                      note: `Integration connector for ${provider} has been rendered. Wait silently for the OAuth round-trip; the client will type a continue message when done.`,
+                    };
+                    label = `Integration connector shown (${provider})`;
+                  }
                 } else if (tc.name === "show_brand_docs_uploader") {
                   emit({ type: "brand_docs_uploader" });
                   result = {
