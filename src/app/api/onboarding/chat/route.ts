@@ -1377,7 +1377,25 @@ export async function POST(req: NextRequest) {
                       : openaiModel),
                 system: systemBlock,
                 messages,
-                tools: TOOLS,
+                // Lite mode: when the latest user message is just a
+                // file upload ack ("I uploaded a file: ..."), skip the
+                // 23-tool schema entirely. The model just acknowledges
+                // the file in plain text. Cuts input tokens by ~80%
+                // and dodges Anthropic's per-minute input rate limit
+                // that was 429ing every onboarding-chat request that
+                // shipped the full tool schema. Once the user types a
+                // real reply, tools come back.
+                tools: (() => {
+                  const lastUser = [...messages]
+                    .reverse()
+                    .find((m) => m.role === "user");
+                  const lastText =
+                    typeof lastUser?.content === "string" ? lastUser.content : "";
+                  const isFileOnlyTurn = /^I uploaded a file:/.test(
+                    lastText.trim(),
+                  );
+                  return isFileOnlyTurn ? undefined : TOOLS;
+                })(),
                 temperature: 0.3,
                 maxSteps: 1,
                 claudeMaxOauthToken,
