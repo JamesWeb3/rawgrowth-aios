@@ -121,11 +121,19 @@ async function tryRefreshClaudeMaxToken(
 ): Promise<string | null> {
   const { encryptSecret } = await import("@/lib/crypto");
   const { refreshClaudeMaxAccessToken } = await import("@/lib/agent/oauth");
+  // After migration 0063 there can be multiple claude-max rows per org
+  // (one per member). Without order+limit, maybeSingle() throws. We
+  // always refresh against the oldest row - that one is the legacy /
+  // org-level grant most likely to still have a valid refresh_token.
+  // Per-user 401s on a different row will eventually drain through the
+  // pool's cooldown rather than refresh from here.
   const { data } = await supabaseAdmin()
     .from("rgaios_connections")
     .select("metadata")
     .eq("organization_id", organizationId)
     .eq("provider_config_key", "claude-max")
+    .order("created_at", { ascending: true })
+    .limit(1)
     .maybeSingle();
   if (!data) return null;
   const meta = (data.metadata ?? {}) as {
