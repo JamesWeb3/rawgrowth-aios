@@ -193,6 +193,14 @@ export async function extractAuditCall(
     const res = await chatCompleteOAuthFirst(
       organizationId,
       {
+        // Haiku 4.5 over Sonnet for the audit-call extractor: the output
+        // is a tightly-shaped JSON (4 fields, ~1500 token cap), Haiku
+        // hits this shape reliably, costs ~5x less per call, and (most
+        // importantly) burns through the OAuth bucket much slower so the
+        // pool rotation in oauth-first.ts has fewer cold tokens to dodge
+        // when an operator pastes back-to-back transcripts. See
+        // 8b38258 + 15cf642 for the 429 backstory.
+        model: "claude-haiku-4-5",
         system: SYSTEM_PROMPT,
         messages: [
           {

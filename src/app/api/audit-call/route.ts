@@ -105,16 +105,31 @@ export async function POST(req: NextRequest) {
         error: extraction._error,
       },
     } as never);
-    // 503 specifically for "no LLM provider wired" so the UI can show
-    // a clear "Connect Claude Max at /connections" prompt instead of a
-    // generic 502 that looks like an outage.
-    const isNotConfigured = /No LLM provider configured/i.test(
-      extraction._error,
-    );
-    return NextResponse.json(
-      { ok: false, error: extraction._error },
-      { status: isNotConfigured ? 503 : 502 },
-    );
+    // Status code matrix:
+    //   503 — "no LLM provider wired" (UI shows: connect Claude Max).
+    //   429 — Anthropic rate-limit hit on every pooled token (UI shows:
+    //         "all tokens cooling, retry in ~60s"). Real status, not the
+    //         generic 502 - Cloudflare intercepts upstream 502/504 and
+    //         replaces the JSON body with an HTML error page, which
+    //         broke the audit-call paste flow on prod (the UI then had
+    //         no machine-readable reason to show the user).
+    //   422 — extractor returned a parsable but invalid shape.
+    //   502 — anything else (treated as transient bug, surfaces as
+    //         "something went wrong, retry"). Cloudflare can still wrap
+    //         this; the 429 / 503 carve-outs cover the cases we know
+    //         about.
+    const errMsg = extraction._error;
+    const isNotConfigured = /No LLM provider configured/i.test(errMsg);
+    const isRateLimited =
+      /\b429\b/.test(errMsg) ||
+      /rate_limit_error/i.test(errMsg) ||
+      /Too Many Requests/i.test(errMsg);
+    const isParseFail = /^json parse|model did not return/i.test(errMsg);
+    let status = 502;
+    if (isNotConfigured) status = 503;
+    else if (isRateLimited) status = 429;
+    else if (isParseFail) status = 422;
+    return NextResponse.json({ ok: false, error: errMsg }, { status });
   }
 
   // Pre-create draft agents so the operator promotes them from /agents
