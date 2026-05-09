@@ -12,6 +12,7 @@ import { drainScrapeQueue } from "@/lib/scrape/worker";
 import { fetchSource } from "@/lib/scrape/fetcher";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { mirrorBrandProfile } from "@/lib/knowledge/company-corpus";
+import { embedOne } from "@/lib/knowledge/embedder";
 import {
   QUESTIONNAIRE_SECTIONS,
   QUESTIONNAIRE_FIELDS,
@@ -22,199 +23,34 @@ import {
   computeOnboardingProgress,
 } from "@/lib/onboarding";
 
-const SYSTEM_PROMPT = `You are the Rawgrowth onboarding assistant. The flow is FILE-FIRST. The client lands on a big drop zone and is encouraged to drop brand assets (decks, brand guides, sales call transcripts, ad creatives, website screenshots, ICP docs) before any chat happens. Read what they upload. Use it to pre-fill questionnaire fields and skip the questions those files already answered. Only ask the human about fields the files do not cover.
+// Slim system prompt (~2kb). Identity + tone + meta-rules only. Section
+// playbooks and per-tool long descriptions used to live inline here
+// (88kb total) and shipped on EVERY Anthropic call, which 429'd the
+// per-minute input rate limit after a few turns. They now live in
+// rgaios_onboarding_knowledge (migration 0064) and are retrieved by
+// embedding similarity per turn (see retrieveOnboardingContext below).
+// Slim descriptions live in TOOLS so the model still has a schema to
+// invoke; long-form per-tool docs are in the same RAG table.
+const SYSTEM_PROMPT = `You are the Rawgrowth onboarding assistant.
 
-When a file gets uploaded, the user message will read \`I uploaded a file: <name> (<size>)\`. Treat that as a signal to (a) acknowledge in ONE short clause, (b) silently extract anything useful (offer, ICP, voice, competitors, channel, pain points), (c) skip every Section 1/2 field whose answer is already in the file, (d) only ask about gaps the files did not answer.
+Identity: warm, brief, curious. One question per turn. Acknowledge each answer before moving on. No long bullet lists. File-first flow - the client may drop brand assets before chat starts; read them, extract what you can, and skip questions those files already answered.
 
-When the client pastes a URL (their site, IG, YouTube, a competitor), call \`scrape_url\` first, then ask the next gap question informed by what came back.
+Meta-rules:
+1. NEVER repeat a question already answered in this conversation. Scan history first.
+2. NEVER announce section transitions. Banned phrasing: "moving on", "let's move on", "let's continue", "next up", "now let's talk about", "now let's explore", "let's wrap things up", "let's discuss", "let's start with", "on to the next", "let's get to". Just acknowledge in one short clause then ask the next question directly.
+3. ALWAYS call the provided tools to persist data - never just describe what you would save.
+4. When a user message reads "I uploaded a file: <name> (<size>)" - acknowledge in ONE short clause, silently extract, skip questions the file answered.
+5. When the client pastes a URL, call scrape_url FIRST, then ask the next gap question informed by what came back.
 
-Tone: warm, brief, curious. One question per turn. Acknowledge each answer before moving on. No long bullet lists.
-
-You must call the provided tools to persist data.
-
-STRICT RULE  -  no transition announcements. Do NOT say any of these or any close paraphrase:
-• "moving on to the next section"
-• "let's move on"
-• "I'll move on"
-• "let's continue"
-• "next up"
-• "now let's talk about…"
-• "now let's explore…"
-• "now let's shift to…"
-• "let's wrap things up"
-• "let's discuss…"
-• "let's start with…"
-• "on to the next…"
-• "let's get to…"
-
-Instead: acknowledge the client's previous answer in ONE short clause if you like (e.g. "Got it."), then ask your next question directly  -  no transitional phrasing that names a topic or section.
-
-NEVER repeat a question that's already been answered in this conversation. Before asking, scan the message history for an answer to that exact question. If you find one, skip to the next field.
-
-------------------------------------------------------------
-SECTION 1  -  Communication preferences
-------------------------------------------------------------
-This section captures ONLY four values. Do NOT ask about anything else.
-
-Fields for Section 1 (the ONLY questions allowed here):
-  • messaging_channel  -  one of telegram / slack / whatsapp
-  • messaging_handle  -  their handle for that channel (@username / workspace.slack.com / phone with country code)
-  • slack_workspace_url  -  optional
-  • slack_channel_name  -  optional
-
-FORBIDDEN in Section 1 (these are Section 2 basicInfo fields  -  ask them LATER):
-  ✗ phone (standalone; "phone with country code" ONLY when it's the WhatsApp handle)
-  ✗ timezone
-  ✗ preferred_comms / preferred communication method
-  ✗ email, full name, business name
-
-Ask in order (one question per turn, acknowledge each answer first):
-1. Which messaging channel  -  Telegram, Slack, or WhatsApp?
-2. Their handle for that channel.
-3. "Do you have a Slack workspace you'd like to connect too?"
-   • YES → ask workspace URL, then channel name.
-   • NO → acknowledge briefly, DO NOT ask further Slack questions.
-
-EXTRACTION SHORTCUT (CRITICAL): if the user's reply contains BOTH a channel name (telegram/slack/whatsapp) AND a handle (anything starting with @, an email, a URL, or a +country phone) in the SAME message, immediately call \`complete_section_1\` in this turn with the extracted values. Examples that MUST trigger an immediate tool call (no follow-up question):
-  - "telegram, my handle is @chrisacme" → channel=telegram, handle=@chrisacme
-  - "use slack, workspace.slack.com #general" → channel=slack, handle=workspace.slack.com (and pass slack fields too)
-  - "whatsapp +5511999990001" → channel=whatsapp, handle=+5511999990001
-  - "tg @founder" → channel=telegram, handle=@founder
-
-Do NOT re-ask "which messaging channel?" if the user already named one. Treat synonyms (tg, telegram, slack, sl, whatsapp, wa) as the same channel.
-
-Once you have those four values, call \`complete_section_1\`. Pass slack_workspace_url/slack_channel_name as null if they declined.
-
-IMMEDIATELY after the tool returns, proceed to Section 2. Do NOT say "section 1 done" or "let's move on".
-
-------------------------------------------------------------
-SECTION 2  -  Brand Questionnaire (13 sub-sections)
-------------------------------------------------------------
-Walk through each sub-section below in order. For each:
-- Ask conversationally, grouping 1–3 related questions per turn.
-- Don't force every field  -  accept what the client volunteers.
-- Once you have enough for that sub-section, call \`save_questionnaire_section({section_id, data})\` with only the fields you've actually captured.
-- Then IMMEDIATELY ask the first question of the next sub-section. Never announce boundaries.
-
-Sub-sections (in order) and field names to extract:
-
-1. basicInfo: full_name, business_name, email, phone, timezone, preferred_comms
-2. socialPresence: instagram, youtube, twitter, linkedin, website, other_platforms, top_platform, focus_platform, paid_ads
-3. originStory: origin, proudest, unfair_advantage
-4. businessModel: what_you_sell, offer_pricing, monthly_revenue, revenue_breakdown, profit_margin, team_size
-5. targetAudience: ideal_client, pain_points, dream_outcome, why_you, audience_hangouts
-6. goals: revenue_goal_90d, massive_win, top_metrics, twelve_month_vision, definition_of_winning
-7. challenges: top_challenges, area_ratings, tried_solutions, bottleneck
-8. brandVoice: voice_description, tone_avoid, favorite_phrases, never_say, brand_personality, content_formats_enjoy, content_formats_chore, face_on_camera
-9. competitors: competitor_list, competitor_admire, how_different, content_inspirations, admired_brands
-10. contentMessaging: posting_frequency, core_topics, best_content, want_more_of, one_thing, misconceptions, hot_take
-11. sales: sales_process, takes_calls, close_rate, objections, ideal_vs_nightmare
-12. toolsSystems: tech_stack, tools_love, tools_frustrate, ai_comfort
-13. additionalContext: anything_else, most_excited, most_nervous, how_heard, convincing_content
-
-After \`save_questionnaire_section\` for additionalContext (the final sub-section), call \`finalize_questionnaire\`. The system will AUTOMATICALLY generate the brand profile and stream it into the chat  -  you do NOT need to call generate_brand_profile for the initial version.
-
-URL-AWARE EXTRACTION: whenever the client volunteers a URL (their website, a social handle URL, a competitor's site, an inspiration page), call \`scrape_url({ url })\` BEFORE asking the next question. The tool returns the page title and a short text excerpt. Use that to:
-- pre-fill obvious fields (e.g. business_name from the homepage title, top_platform from a social URL, what_you_sell from the hero copy)
-- ask sharper follow-ups instead of generic questions
-- gently confirm what you found ("Looks like you sell X - is that still the main offer?") rather than re-asking for info already on the page
-
-Rules for scrape_url:
-- Only call it for HTTP(S) URLs the client actually shared. Do NOT invent URLs.
-- One call per URL per conversation. Cache mentally; do not re-scrape the same URL.
-- If the result is blocked/errored, just continue conversationally - no need to call it out.
-
-------------------------------------------------------------
-SECTION 3  -  Brand Profile
-------------------------------------------------------------
-This section does NOT ask the client any questions. The brand profile is generated from their questionnaire data.
-
-Flow:
-1. You call \`finalize_questionnaire\`. The system handles status messaging and streams the generated markdown profile into the chat automatically.
-2. After the \`finalize_questionnaire\` tool result comes back (it will say \`brand_profile_generated: true\` on success), write ONE short message (2–3 sentences) that:
-   • Asks them to review the profile above
-   • Tells them to reply "approve" if it looks right, or describe changes they'd like
-   • Mentions they can edit it later from their dashboard
-3. Wait for their response.
-   • If they approve ("looks good", "approve", "ship it") → call \`approve_brand_profile\`. The system handles transition messaging on its own. Stop immediately after the tool call - do NOT write more text.
-   • If they request changes → call \`generate_brand_profile({ feedback: "verbatim feedback" })\`. A new streaming version will render the same way. After it completes, ask for approval again.
-
-------------------------------------------------------------
-SECTION 3.5  -  Telegram bot connection (only if messaging_channel = telegram)
-------------------------------------------------------------
-After \`approve_brand_profile\` succeeds AND the client said \`messaging_channel = telegram\` in Section 1, you must immediately call \`open_telegram_connector\`. The system will render an inline panel in the chat that lists each Department Head agent that needs a bot and lets the client paste BotFather tokens right there.
-
-Rules:
-- If the channel is slack or whatsapp, SKIP this step entirely - go straight to Section 4 by calling \`show_brand_docs_uploader\`.
-- Do NOT write any text right before or right after the \`open_telegram_connector\` tool call. The system emits a short transition line on its own.
-- Wait silently while the client connects bots or hits Continue. The UI handles BotFather instructions; do NOT repeat them.
-- The client will reply with a one-line summary like "Connected Telegram for Marketing." or "No Telegram bots connected yet". When that message arrives, write ONE short acknowledgement (1-2 sentences) that names which bots are live (or notes none were connected and they can wire them later from /agents), then proceed to Section 4 by calling \`show_brand_docs_uploader\`.
-
-------------------------------------------------------------
-SECTION 4  -  Brand Documents
-------------------------------------------------------------
-Goal: collect the client's logos, brand guidelines, and any other brand assets.
-
-Flow:
-1. In one short sentence, invite them to drop in their logos / brand guidelines / other assets.
-2. IMMEDIATELY call \`show_brand_docs_uploader\`. The system will render an inline drag-and-drop widget in the chat.
-3. Wait silently while they upload or skip. Do NOT describe the widget or list the zones  -  the UI does that.
-4. When the client sends a message indicating they're done ("uploaded", "that's all", "no docs"), call \`complete_brand_docs_section\` and proceed immediately to Section 6.
-
-------------------------------------------------------------
-SECTION 6  -  Software Access
-------------------------------------------------------------
-Goal: confirm the client has added chris@rawgrowth.ai to each of the platforms below, or that they don't use that platform.
-
-Walk through these platforms ONE AT A TIME, in order:
-${SOFTWARE_ACCESS_PLATFORMS.map(
-  (p, i) => `${i + 1}. ${p.id}  -  ${p.label}`
-).join("\n")}
-
-For each platform:
-- Ask something like: "Have you added chris@rawgrowth.ai as admin on [Platform Name]?" For Drive/Notion: "Have you shared your Rawgrowth folder with chris@rawgrowth.ai?"
-- If the client needs help, you can share the steps: ${SOFTWARE_ACCESS_PLATFORMS.map((p) => `${p.id}: ${p.steps.join(" → ")}`).join(" | ")}
-- When they confirm they've done it → call \`save_software_access({ platform: "<platform_id>", confirmed: true })\`
-- If they say they don't use that platform or want to skip → call \`save_software_access({ platform: "<platform_id>", confirmed: false, notes: "<why>" })\`
-
-After ALL 6 platforms have been covered with save_software_access calls, call \`complete_software_access_section\`. Then proceed to Section 7 without announcing the boundary.
-
-------------------------------------------------------------
-SECTION 7  -  Schedule Milestone Calls
-------------------------------------------------------------
-Goal: get the client to book their 4 milestone calls with the team.
-
-The booking URL for ALL calls is: ${CALENDLY_BASE_URL}
-
-Walk through these calls ONE AT A TIME, in order:
-${SCHEDULE_CALLS.map(
-  (c) =>
-    `- ${c.id}: ${c.title} (${c.description})`
-).join("\n")}
-
-For each call:
-- Present it briefly and give the Calendly link as a clickable markdown link: [Book ${"${call.title}"}](${CALENDLY_BASE_URL})
-- When the client confirms they've booked it (or says skip/later) → call \`confirm_call_booking({ call_id: "<id>", booked: true/false, notes?: "..." })\`
-
-After all 4 calls are covered, call \`complete_schedule_calls_section\`. Then proceed to Section 8 without announcing.
-
-------------------------------------------------------------
-SECTION 8  -  Completion
-------------------------------------------------------------
-Once Section 7 is done, call \`complete_onboarding\` immediately. After it returns, give a short warm congratulations mentioning:
-- Their AI department will begin training on their brand immediately
-- First deliverables land in their portal within ~5 days
-- Their Week 1 Kickoff call will bring everything together
-
-Keep it to 3–4 sentences. No bullet lists. No section labels.`;
+The "Relevant playbook context" block injected into your context per turn contains the section-specific rules and tool documentation you need for the current step. Follow it. The "NEXT ACTION" block at the bottom of context tells you exactly what to do this turn.`;
 
 const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
       name: "complete_section_1",
-      description:
-        "Persist Section 1 (communication preferences). Call once after all required info is gathered.",
+      // Slim description (long-form in rgaios_onboarding_knowledge).
+      description: "Persist Section 1 communication preferences.",
       parameters: {
         type: "object",
         properties: {
@@ -246,8 +82,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "save_questionnaire_section",
-      description:
-        "Upsert the answers for one Section 2 sub-section into the brand intake record. Include only fields the client actually provided.",
+      description: "Save one Section 2 sub-section's answers.",
       parameters: {
         type: "object",
         properties: {
@@ -272,8 +107,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "finalize_questionnaire",
-      description:
-        "Mark the brand questionnaire as submitted and advance onboarding_step to 3. Call once, after save_questionnaire_section for additionalContext.",
+      description: "Submit the brand questionnaire.",
       parameters: {
         type: "object",
         properties: {},
@@ -285,8 +119,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "generate_brand_profile",
-      description:
-        "Generate (or regenerate) the client's brand profile from their questionnaire data. The rendered markdown is automatically shown in the chat when this returns  -  never repeat its content in your reply.",
+      description: "Regenerate the brand profile from intake data.",
       parameters: {
         type: "object",
         properties: {
@@ -305,8 +138,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "approve_brand_profile",
-      description:
-        "Call when the client approves the latest brand profile. Marks it approved and advances onboarding_step to 4.",
+      description: "Approve the latest brand profile.",
       parameters: {
         type: "object",
         properties: {},
@@ -318,8 +150,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "show_brand_docs_uploader",
-      description:
-        "Render the inline brand-docs uploader in the chat so the client can drag in logos, guidelines, and assets. Call once at the start of Section 4.",
+      description: "Show the brand-docs uploader widget.",
       parameters: {
         type: "object",
         properties: {},
@@ -331,8 +162,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "open_telegram_connector",
-      description:
-        "Render the inline Telegram bot connector in the chat. Lists every Department Head agent with a pending Telegram slot and lets the client paste BotFather tokens right inside the conversation. Call this once after `approve_brand_profile` succeeds AND only when messaging_channel = telegram.",
+      description: "Show the Telegram bot connector widget.",
       parameters: {
         type: "object",
         properties: {},
@@ -344,8 +174,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "open_integration_connector",
-      description:
-        "Render an inline OAuth connector card for a third-party integration (Slack, Gmail, Google Drive, HubSpot). Call this once per provider during the integrations section so the client can finish OAuth without leaving the chat.",
+      description: "Show an OAuth connector card for one provider.",
       parameters: {
         type: "object",
         properties: {
@@ -365,8 +194,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "complete_brand_docs_section",
-      description:
-        "Call after the client confirms they're finished uploading (or have nothing to upload). Advances onboarding_step to 5.",
+      description: "Mark brand-docs section complete.",
       parameters: {
         type: "object",
         properties: {},
@@ -378,8 +206,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "save_software_access",
-      description:
-        "Record the client's software access status for one platform. Call once per platform in Section 6.",
+      description: "Record access status for one platform.",
       parameters: {
         type: "object",
         properties: {
@@ -406,8 +233,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "complete_software_access_section",
-      description:
-        "Call once after all platforms have been covered with save_software_access. Advances onboarding_step to 5.",
+      description: "Mark software-access section complete.",
       parameters: {
         type: "object",
         properties: {},
@@ -419,8 +245,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "confirm_call_booking",
-      description:
-        "Record whether the client booked one of the milestone calls. Call once per call in Section 7.",
+      description: "Record one milestone call booking.",
       parameters: {
         type: "object",
         properties: {
@@ -447,8 +272,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "complete_schedule_calls_section",
-      description:
-        "Call after all 4 milestone calls have been covered. Advances onboarding_step to 6.",
+      description: "Mark schedule-calls section complete.",
       parameters: {
         type: "object",
         properties: {},
@@ -460,8 +284,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "complete_onboarding",
-      description:
-        "Mark the client as fully onboarded. Call this in Section 8 after Section 7 is complete.",
+      description: "Mark the client as fully onboarded.",
       parameters: {
         type: "object",
         properties: {},
@@ -473,8 +296,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "scrape_url",
-      description:
-        "Fetch the public text content of a URL the client shared (their website, a social profile, a competitor, an inspiration page) so you can pre-fill questionnaire fields and ask sharper follow-ups instead of generic questions. Returns { ok, title, excerpt } on success or { ok: false, blocked, error } when the page is unreachable / behind auth. Call BEFORE asking the next question whenever a URL appears in the user's message. Only call it for URLs the client volunteered; do not invent URLs. One call per URL per conversation.",
+      description: "Fetch public text from a URL the client shared.",
       parameters: {
         type: "object",
         properties: {
@@ -1051,11 +873,19 @@ export async function POST(req: NextRequest) {
     if (client?.company)
       knownLines.push(`- business_name: ${JSON.stringify(client.company)}`);
 
+    // Track the active section_id for the RAG retrieval bias. The
+    // matcher (rgaios_match_onboarding_knowledge) prefers in-section
+    // chunks when this is non-null. Falls through to pure cosine if
+    // we can't pin a section.
+    let activeSectionId: string | null = null;
+
     let nextActionBlock = "";
 
     if (!section1Done) {
+      activeSectionId = "section_1";
       nextActionBlock = `Section 1 is NOT yet complete. Your ONE and ONLY job right now is Section 1  -  ask about messaging channel (Telegram/Slack/WhatsApp), handle, then the optional Slack workspace. Do NOT ask any Section 2 questions (no timezone, no phone, no preferred_comms) until \`complete_section_1\` has been called.`;
     } else if (!questionnaireSubmitted) {
+      activeSectionId = "section_2";
       const nextSub = subsectionState.find((s) => !s.saved);
       if (nextSub) {
         const allFields = QUESTIONNAIRE_FIELDS[nextSub.id] || [];
@@ -1102,8 +932,10 @@ export async function POST(req: NextRequest) {
         nextActionBlock = `All 13 Section 2 sub-sections are saved but \`finalize_questionnaire\` hasn't been called. Call it now  -  the brand profile will be auto-generated.`;
       }
     } else if (!profileGenerated) {
+      activeSectionId = "section_3";
       nextActionBlock = `Questionnaire is submitted but the brand profile hasn't been generated. This is unexpected  -  call \`generate_brand_profile({ feedback: null })\` to recover.`;
     } else if (!profileApproved) {
+      activeSectionId = "section_3";
       nextActionBlock = `Brand profile v${latestProfile?.version} is rendered and waiting on the client's decision. If they approve → call \`approve_brand_profile\`. If they ask for changes → call \`generate_brand_profile({ feedback: "<their exact words>" })\`.`;
     } else if (!brandDocsDone) {
       // Section 3.5  -  Telegram connector (only when messaging_channel = telegram).
@@ -1131,12 +963,14 @@ export async function POST(req: NextRequest) {
       );
 
       if (isTelegramClient && !telegramConnectorReplied) {
+        activeSectionId = "section_3_5";
         if (!telegramConnectorShown) {
           nextActionBlock = `You are in Section 3.5 (Telegram bot connection). The client picked Telegram in Section 1, so they need to wire up at least one Department Head bot before we move on. Call \`open_telegram_connector\` IMMEDIATELY. Do NOT write any text - the system handles the transition line. Do NOT call \`show_brand_docs_uploader\` yet.`;
         } else {
           nextActionBlock = `You are in Section 3.5. The Telegram connector is already visible to the client. Wait silently for them to either connect bots or hit Continue. When their canned summary message arrives ("Connected Telegram for ..." or "No Telegram bots connected ..."), write ONE short acknowledgement (1-2 sentences max, name which bots are live or note none) and then IMMEDIATELY call \`show_brand_docs_uploader\` to start Section 4. Do NOT call \`open_telegram_connector\` again.`;
         }
       } else {
+        activeSectionId = "section_4";
         // Section 4  -  brand documents
         const { data: docs } = await supabaseAdmin()
           .from("rgaios_onboarding_documents")
@@ -1156,6 +990,7 @@ export async function POST(req: NextRequest) {
         }
       }
     } else if (!softwareAccessDone) {
+      activeSectionId = "section_6";
       // Section 6  -  find next platform to ask about
       const nextPlatform = SOFTWARE_ACCESS_PLATFORMS.find(
         (p) => !softwarePlatformsCovered.has(p.id)
@@ -1168,6 +1003,7 @@ export async function POST(req: NextRequest) {
         nextActionBlock = `All 6 software platforms have been covered (${[...softwarePlatformsCovered].join(", ")}). Call \`complete_software_access_section\` now.`;
       }
     } else if (!scheduleCallsDone) {
+      activeSectionId = "section_7";
       // Section 7  -  find next call to ask about
       const nextCall = SCHEDULE_CALLS.find((c) => !bookedCallIds.has(c.id));
       if (nextCall) {
@@ -1178,6 +1014,7 @@ export async function POST(req: NextRequest) {
         nextActionBlock = `All 4 milestone calls have been covered. Call \`complete_schedule_calls_section\` now.`;
       }
     } else if (!onboardingDone) {
+      activeSectionId = "section_8";
       nextActionBlock = `Sections 1–7 are complete. Call \`complete_onboarding\` now, then write a short warm congratulations (3–4 sentences).`;
     } else {
       nextActionBlock = `Onboarding is fully complete. If the client says anything further, respond warmly and briefly.`;
@@ -1205,7 +1042,78 @@ export async function POST(req: NextRequest) {
       role: m.role,
       content: m.content,
     }));
-    const systemBlock = SYSTEM_PROMPT + contextPrompt;
+
+    // RAG retrieval. Pull the top-K most relevant onboarding-knowledge
+    // chunks for this turn and inject them as a "Relevant playbook
+    // context" block. Reasons: section playbooks + per-tool long
+    // descriptions used to live inline in SYSTEM_PROMPT (~88kb); that
+    // shipped on every Anthropic call and 429'd the per-minute input
+    // limit. They now live in rgaios_onboarding_knowledge (migration
+    // 0064) - we hit them by embedding the (last user message + active
+    // section_id) and letting the matcher prefer in-section chunks.
+    //
+    // Fail-soft: if embedder or RPC errors, fall back to no playbook
+    // injection. The slim system prompt + next-action block alone are
+    // usually enough for the model to advance one step; the playbook
+    // chunks are sharper guidance, not load-bearing for correctness.
+    const lastUserText = (() => {
+      const lastUser = [...safeIncoming].reverse().find((m) => m.role === "user");
+      return typeof lastUser?.content === "string" ? lastUser.content : "";
+    })();
+    let playbookBlock = "";
+    try {
+      const queryText = activeSectionId
+        ? `${activeSectionId}: ${lastUserText}`.slice(0, 1000)
+        : lastUserText.slice(0, 1000);
+      if (queryText.trim().length > 0) {
+        const queryEmbedding = await embedOne(queryText);
+        // The fastembed path zero-pads to 1536d; the migration column is
+        // vector(384) native. Slice back to the native head before
+        // sending to the RPC. (This works because padToTarget appends
+        // zeros; the first 384 dims are the real signal.)
+        const native384 = queryEmbedding.slice(0, 384);
+        const vec = `[${native384.join(",")}]`;
+        // Generated supabase-js types don't yet know about the 0064 RPC,
+        // so cast through unknown for both the rpc name and the param
+        // bag to keep the call typed where it can be (response).
+        const rpcRes = await (supabaseAdmin().rpc as unknown as (
+          fn: string,
+          args: Record<string, unknown>,
+        ) => Promise<{
+          data: Array<{ kind: string; section_id: string | null; content: string }> | null;
+          error: { message: string } | null;
+        }>)(
+          "rgaios_match_onboarding_knowledge",
+          {
+            p_query_embedding: vec,
+            p_match_count: 5,
+            p_min_similarity: 0.0,
+            p_section_id: activeSectionId,
+          },
+        );
+        const chunks = rpcRes.data;
+        const rpcErr = rpcRes.error;
+        if (rpcErr) {
+          console.warn(
+            `[onboarding-chat] RAG match failed: ${rpcErr.message}`,
+          );
+        } else if (Array.isArray(chunks) && chunks.length > 0) {
+          const formatted = chunks
+            .map(
+              (c) =>
+                `[${c.kind}${c.section_id ? ` ${c.section_id}` : ""}] ${c.content}`,
+            )
+            .join("\n\n---\n\n");
+          playbookBlock = `\n\n------------------------------------------------------------\nRelevant playbook context (top ${chunks.length})\n------------------------------------------------------------\n${formatted}\n`;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[onboarding-chat] RAG retrieval threw: ${(err as Error).message}`,
+      );
+    }
+
+    const systemBlock = SYSTEM_PROMPT + playbookBlock + contextPrompt;
 
     // Provider preference: env override wins. Otherwise auto-pick:
     //   - if Claude Max OAuth is connected for this org -> claude-max-oauth

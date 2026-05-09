@@ -49,6 +49,7 @@ const files = [
   "0061_insight_sent_dedup.sql",
   "0062_invite_allowed_departments.sql",
   "0063_connections_per_user.sql",
+  "0064_onboarding_knowledge.sql",
 ];
 
 const client = new pg.Client({ connectionString: url });
