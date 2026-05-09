@@ -354,6 +354,9 @@ export async function POST(
           // Dashboard chat has no MCP tool drain - swap "always handoff"
           // for "answer from injected context" in the persona preamble.
           noHandoff: true,
+          // Pool rotation: try caller's own claude-max bucket before
+          // borrowing other org members' buckets on 429.
+          callerUserId: userId,
         });
 
         if (!result.ok) {

@@ -42,18 +42,72 @@ type RawgrowthAgent = {
   description: string | null;
 };
 
-async function loadClaudeMaxToken(
+type ClaudeMaxRow = {
+  id: string;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+/**
+ * Load every connected Claude Max OAuth token for the org. Caller's own
+ * row first (so their bucket is hit before borrowing other members'),
+ * then the rest deterministically by row id. Mirrors the rotation order
+ * in lib/llm/oauth-first.ts so both code paths drain the same pool the
+ * same way - no surprise re-orderings between onboarding chat and agent
+ * chat. Returns an empty array if no tokens exist or all decrypt-fail.
+ */
+async function loadClaudeMaxTokenPool(
   organizationId: string,
-): Promise<string | null> {
-  const { data } = await supabaseAdmin()
+  callerUserId?: string | null,
+): Promise<string[]> {
+  const { data, error } = await supabaseAdmin()
     .from("rgaios_connections")
-    .select("metadata")
+    .select("id, user_id, metadata")
     .eq("organization_id", organizationId)
     .eq("provider_config_key", "claude-max")
-    .maybeSingle();
-  if (!data) return null;
-  const meta = (data.metadata ?? {}) as { access_token?: string };
-  return tryDecryptSecret(meta.access_token);
+    .eq("status", "connected");
+  if (error || !data) return [];
+  // Two-step cast: generated types lag the migration that added user_id
+  // (0063), so the supabase-js inferred shape still claims the column
+  // doesn't exist. Same pattern used in lib/llm/oauth-first.ts.
+  const rows = data as unknown as ClaudeMaxRow[];
+  const ordered = [...rows].sort((a, b) => {
+    const aOwn = callerUserId && a.user_id === callerUserId ? 0 : 1;
+    const bOwn = callerUserId && b.user_id === callerUserId ? 0 : 1;
+    if (aOwn !== bOwn) return aOwn - bOwn;
+    return a.id.localeCompare(b.id);
+  });
+  const tokens: string[] = [];
+  for (const row of ordered) {
+    const meta = (row.metadata ?? {}) as { access_token?: string };
+    if (!meta.access_token) continue;
+    const tok = tryDecryptSecret(meta.access_token);
+    if (tok) tokens.push(tok);
+  }
+  return tokens;
+}
+
+/**
+ * 60s in-process cooldown on tokens we just saw 429 / 401 on. Same
+ * window as oauth-first.ts because Anthropic's per-account buckets
+ * recover on the same cadence regardless of which call site triggered
+ * the throttle. Map cleared on process restart.
+ */
+const CHAT_TOKEN_COOLDOWN: Map<string, number> = new Map();
+const CHAT_COOLDOWN_MS = 60_000;
+
+function isChatTokenCold(token: string): boolean {
+  const until = CHAT_TOKEN_COOLDOWN.get(token);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    CHAT_TOKEN_COOLDOWN.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function markChatTokenCold(token: string): void {
+  CHAT_TOKEN_COOLDOWN.set(token, Date.now() + CHAT_COOLDOWN_MS);
 }
 
 /**
@@ -372,6 +426,13 @@ export async function chatReply(input: {
    * higher (8192) so the model has room for a full HTML doc + assets.
    */
   maxTokens?: number;
+  /**
+   * Optional: caller's user id. Threaded through so the OAuth pool
+   * rotation hits the caller's own Claude Max bucket first before
+   * borrowing any other org member's bucket. Without this the rotation
+   * still works, just non-preferentially.
+   */
+  callerUserId?: string | null;
 }): Promise<AgentChatResult> {
   const {
     organizationId,
@@ -383,10 +444,14 @@ export async function chatReply(input: {
     extraPreamble,
     noHandoff,
     maxTokens,
+    callerUserId,
   } = input;
 
-  const claudeToken = await loadClaudeMaxToken(organizationId);
-  if (!claudeToken) {
+  const claudeTokens = await loadClaudeMaxTokenPool(
+    organizationId,
+    callerUserId,
+  );
+  if (claudeTokens.length === 0) {
     return {
       ok: false,
       error:
@@ -458,46 +523,90 @@ export async function chatReply(input: {
     });
   }
 
-  let res: Response;
-  try {
-    res = await callAnthropic(claudeToken);
-  } catch (err) {
-    return {
-      ok: false,
-      error: `Anthropic call failed: ${(err as Error).message}`,
-    };
-  }
+  // Two-pass pool walk: first pass skips tokens we just saw 429 / 401
+  // on (60s cooldown), second pass tries cold tokens too in case the
+  // bucket cleared early. Mirrors the rotation strategy in
+  // lib/llm/oauth-first.ts so the dashboard chat surface and the
+  // onboarding chat surface drain the same pool the same way.
+  let res: Response | null = null;
+  let lastStatus = 0;
+  let lastBody = "";
+  let networkErr: Error | null = null;
 
-  // 401: try silent refresh + retry once. Most chat sessions hit
-  // this when the access_token's ~hour TTL ran out mid-conversation.
-  if (res.status === 401) {
-    const fresh = await tryRefreshClaudeMaxToken(organizationId);
-    if (fresh) {
+  outer: for (const filter of [
+    (t: string) => !isChatTokenCold(t),
+    () => true,
+  ]) {
+    for (let i = 0; i < claudeTokens.length; i++) {
+      const tok = claudeTokens[i];
+      if (!filter(tok)) continue;
+      let r: Response;
       try {
-        res = await callAnthropic(fresh);
+        r = await callAnthropic(tok);
       } catch (err) {
-        return {
-          ok: false,
-          error: `Anthropic call failed after refresh: ${(err as Error).message}`,
-        };
+        networkErr = err as Error;
+        continue;
+      }
+      // 401: silent refresh + retry on the SAME token slot. If the
+      // refresh helper updates the row's metadata, subsequent rotations
+      // will pick up the fresh access_token from DB on the next call.
+      if (r.status === 401) {
+        const fresh = await tryRefreshClaudeMaxToken(organizationId);
+        if (fresh) {
+          try {
+            r = await callAnthropic(fresh);
+          } catch (err) {
+            networkErr = err as Error;
+            continue;
+          }
+        }
+      }
+      if (r.ok) {
+        res = r;
+        break outer;
+      }
+      // 429 / 401 on this token → cool it down, rotate to next.
+      // Anything else (5xx, validation, network) we still rotate
+      // because a different token / bucket might succeed.
+      lastStatus = r.status;
+      lastBody = await r.text().catch(() => "");
+      if (r.status === 429 || r.status === 401) {
+        markChatTokenCold(tok);
+        console.warn(
+          `[chat] Claude Max token ${i + 1}/${claudeTokens.length} ${r.status}, cooling ${CHAT_COOLDOWN_MS / 1000}s, rotating`,
+        );
+      } else {
+        console.warn(
+          `[chat] Claude Max token ${i + 1}/${claudeTokens.length} returned ${r.status}, rotating`,
+        );
       }
     }
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    // Still 401 after refresh attempt = refresh_token also dead (or
-    // never stored). Operator must re-OAuth manually.
-    if (res.status === 401) {
+  if (!res) {
+    if (networkErr && lastStatus === 0) {
+      return {
+        ok: false,
+        error: `Anthropic call failed: ${networkErr.message}`,
+      };
+    }
+    if (lastStatus === 401) {
       return {
         ok: false,
         error:
-          "Claude Max token expired or invalid. Reconnect at Dashboard → Connections to keep this agent replying.",
+          "Claude Max token expired or invalid for every connected member. Reconnect at Dashboard → Connections.",
+      };
+    }
+    if (lastStatus === 429) {
+      return {
+        ok: false,
+        error:
+          "Anthropic rate limit hit on every Claude Max token in the pool. Wait a minute or connect another member's account.",
       };
     }
     return {
       ok: false,
-      error: `Anthropic ${res.status}: ${text.slice(0, 300)}`,
+      error: `Anthropic ${lastStatus || "?"}: ${lastBody.slice(0, 300)}`,
     };
   }
 
