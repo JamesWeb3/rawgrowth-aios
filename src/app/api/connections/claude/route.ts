@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { currentOrganizationId } from "@/lib/supabase/constants";
+import { getOrgContext } from "@/lib/auth/admin";
 import { upsertConnection, getConnection } from "@/lib/connections/queries";
 import { encryptSecret, tryDecryptSecret } from "@/lib/crypto";
 
@@ -23,7 +24,14 @@ const TOKEN_PREFIX = "sk-ant-oat01-";
 export async function GET(req: NextRequest) {
   try {
     const organizationId = await currentOrganizationId();
-    const conn = await getConnection(organizationId, PROVIDER_KEY);
+    // Per-user OAuth (migration 0063). Pass session userId so Sara sees
+    // her own row, not the org-wide fallback that another member wired.
+    const ctx = await getOrgContext();
+    const conn = await getConnection(
+      organizationId,
+      PROVIDER_KEY,
+      ctx?.userId ?? null,
+    );
     if (!conn) {
       return NextResponse.json({ connected: false });
     }
@@ -110,13 +118,18 @@ export async function POST(req: NextRequest) {
     }
 
     const organizationId = await currentOrganizationId();
+    const ctx = await getOrgContext();
+    const sessionUserId = ctx?.userId ?? null;
     const installedAt = new Date().toISOString();
     const encrypted = encryptSecret(trimmed);
 
     const conn = await upsertConnection({
       organizationId,
       providerConfigKey: PROVIDER_KEY,
-      nangoConnectionId: `claude-max:${organizationId}`,
+      userId: sessionUserId,
+      nangoConnectionId: sessionUserId
+        ? `claude-max:${organizationId}:${sessionUserId}`
+        : `claude-max:${organizationId}`,
       displayName: "Claude Max",
       metadata: {
         access_token: encrypted,
@@ -150,11 +163,16 @@ export async function POST(req: NextRequest) {
 export async function DELETE() {
   try {
     const organizationId = await currentOrganizationId();
-    const { error } = await supabaseAdmin()
+    const ctx = await getOrgContext();
+    const sessionUserId = ctx?.userId ?? null;
+    const baseDelete = supabaseAdmin()
       .from("rgaios_connections")
       .delete()
       .eq("organization_id", organizationId)
       .eq("provider_config_key", PROVIDER_KEY);
+    const { error } = await (sessionUserId
+      ? baseDelete.eq("user_id", sessionUserId)
+      : baseDelete.is("user_id", null));
     if (error) throw new Error(error.message);
 
     await supabaseAdmin()
