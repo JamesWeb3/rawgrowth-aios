@@ -46,9 +46,13 @@ services:
       # behind Caddy. Internally it listens on port 3000.
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pull pre-built image from GHCR by default (workflow:
+    # .github/workflows/build-image.yml builds on push to v3 and pushes
+    # ghcr.io/rawgrowth-consulting/rawclaw:v3). Override RAWCLAW_IMAGE
+    # to pin a specific sha-tagged build, or unset and use --build to
+    # build locally for dev.
+    image: ${RAWCLAW_IMAGE:-ghcr.io/rawgrowth-consulting/rawclaw:v3}
+    pull_policy: always
     restart: unless-stopped
     # Allow the container to reach the host's rawclaw-drain server at
     # http://host.docker.internal:9876 — that systemd service spawns
