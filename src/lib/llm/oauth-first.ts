@@ -79,6 +79,30 @@ async function listClaudeOauthTokens(
   return tokens;
 }
 
+/**
+ * In-process cooldown for tokens we just saw 429 / 401 on. Anthropic's
+ * IP / account buckets typically clear within 30-90s, so a 60s cooldown
+ * keeps us from re-hitting a known-cold token while the pool rotates
+ * around it. Map keyed on the access_token string itself; cleared on
+ * process restart (cron-tick reboots the process when workers OOM).
+ */
+const TOKEN_COOLDOWN: Map<string, number> = new Map();
+const COOLDOWN_MS = 60_000;
+
+function isOnCooldown(token: string): boolean {
+  const until = TOKEN_COOLDOWN.get(token);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    TOKEN_COOLDOWN.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function markCold(token: string): void {
+  TOKEN_COOLDOWN.set(token, Date.now() + COOLDOWN_MS);
+}
+
 function isRateLimit(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -104,26 +128,39 @@ export async function chatCompleteOAuthFirst(
 ): Promise<ChatResponse> {
   const tokens = await listClaudeOauthTokens(orgId, userId);
 
+  // Two-pass: first try only tokens NOT on cooldown, then warm-up cold
+  // ones if we ran out. Avoids burning cycles on tokens we just saw 429
+  // on while the pool has fresh ones available.
+  const passes: Array<(t: string) => boolean> = [
+    (t) => !isOnCooldown(t),
+    () => true,
+  ];
+
   let lastErr: unknown = null;
-  for (let i = 0; i < tokens.length; i++) {
-    try {
-      return await chatComplete({
-        ...req,
-        provider: "claude-max-oauth",
-        claudeMaxOauthToken: tokens[i],
-      });
-    } catch (err) {
-      lastErr = err;
-      // Rotate on 429 (rate limit) and 401 (expired/revoked token).
-      // Anything else (network, abort, validation) bubbles up — those
-      // aren't bucket-pressure failures and retrying the next token
-      // wouldn't change the outcome.
-      if (!isRateLimit(err) && !isAuthFail(err)) throw err;
-      console.warn(
-        `[oauth-first] token ${i + 1}/${tokens.length} failed (${
-          isRateLimit(err) ? "429" : "401"
-        }), trying next`,
-      );
+  for (const filter of passes) {
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (!filter(tok)) continue;
+      try {
+        return await chatComplete({
+          ...req,
+          provider: "claude-max-oauth",
+          claudeMaxOauthToken: tok,
+        });
+      } catch (err) {
+        lastErr = err;
+        // Rotate on 429 (rate limit) and 401 (expired/revoked token).
+        // Anything else (network, abort, validation) bubbles up — those
+        // aren't bucket-pressure failures and retrying the next token
+        // wouldn't change the outcome.
+        if (!isRateLimit(err) && !isAuthFail(err)) throw err;
+        markCold(tok);
+        console.warn(
+          `[oauth-first] token ${i + 1}/${tokens.length} failed (${
+            isRateLimit(err) ? "429" : "401"
+          }), marked cold ${COOLDOWN_MS / 1000}s, trying next`,
+        );
+      }
     }
   }
 

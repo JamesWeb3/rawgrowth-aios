@@ -247,10 +247,11 @@ async function runClaudeMaxOauth(req: ChatRequest): Promise<ChatResponse> {
   // 429 retry: Anthropic returns retry-after (seconds until window
   // resets) AND anthropic-ratelimit-requests-reset (ISO timestamp).
   // Honour whichever is present so we don't burn cycles guessing. Up
-  // to 5 attempts capped at ~90s total so a deeply saturated pool
-  // (Pedro running multiple CLI sessions) still gets a real reset
-  // window instead of failing on the first 429.
-  const RETRIES = 5;
+  // 2 retries cap. The pool dispatcher in lib/llm/oauth-first
+  // rotates to other tokens on 429 anyway, and burning 5 attempts
+  // (75s of backoff) per token before giving up costs more than the
+  // pool can save. Two passes per token + cooldown is faster overall.
+  const RETRIES = 2;
   const MAX_WAIT_MS = 65_000;
   let res;
   let lastErr = "";
