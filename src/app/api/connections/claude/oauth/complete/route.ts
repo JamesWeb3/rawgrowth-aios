@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { currentOrganizationId } from "@/lib/supabase/constants";
+import { getOrgContext } from "@/lib/auth/admin";
 import { upsertConnection } from "@/lib/connections/queries";
 import { encryptSecret } from "@/lib/crypto";
 import { exchangeCodeForToken, unpackState } from "@/lib/agent/oauth";
@@ -75,11 +76,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Per-user scope (migration 0063). Each member gets their own row so
+    // Pedro / Chris / Dilan don't share one Anthropic account and rate-
+    // limit each other on parallel sessions. nangoConnectionId now embeds
+    // the user id for traceability.
+    const ctx = await getOrgContext();
+    const sessionUserId = ctx?.userId ?? null;
+
     const installedAt = new Date().toISOString();
     const conn = await upsertConnection({
       organizationId: sessionOrgId,
       providerConfigKey: PROVIDER_KEY,
-      nangoConnectionId: `claude-max:${sessionOrgId}`,
+      userId: sessionUserId,
+      nangoConnectionId: sessionUserId
+        ? `claude-max:${sessionOrgId}:${sessionUserId}`
+        : `claude-max:${sessionOrgId}`,
       displayName: "Claude Max",
       metadata: {
         access_token: encryptSecret(exchange.access_token),

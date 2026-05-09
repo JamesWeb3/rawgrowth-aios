@@ -30,8 +30,12 @@ export class LlmNotConfiguredError extends Error {
   }
 }
 
-async function getClaudeOauthToken(orgId: string): Promise<string | null> {
-  const conn = await getConnection(orgId, "claude-max");
+async function getClaudeOauthToken(
+  orgId: string,
+  userId?: string | null,
+): Promise<string | null> {
+  // Per-user first, then legacy org-wide row. Migration 0063.
+  const conn = await getConnection(orgId, "claude-max", userId ?? null);
   if (!conn || conn.status !== "connected") return null;
   const meta = (conn.metadata ?? {}) as { access_token?: string };
   if (!meta.access_token) return null;
@@ -42,8 +46,9 @@ async function getClaudeOauthToken(orgId: string): Promise<string | null> {
 export async function chatCompleteOAuthFirst(
   orgId: string,
   req: Omit<ChatRequest, "provider" | "claudeMaxOauthToken">,
+  userId?: string | null,
 ): Promise<ChatResponse> {
-  const token = await getClaudeOauthToken(orgId);
+  const token = await getClaudeOauthToken(orgId, userId);
   if (token) {
     return chatComplete({
       ...req,

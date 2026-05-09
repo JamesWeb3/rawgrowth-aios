@@ -1214,17 +1214,41 @@ export async function POST(req: NextRequest) {
       : resolveProvider();
     let claudeMaxOauthToken: string | undefined;
     if (!envOverride) {
-      // Try Claude Max first
+      // Per-user OAuth (migration 0063). Prefer the connecting member's
+      // own Anthropic account so Pedro / Chris / Dilan don't share one
+      // token and rate-limit each other on parallel sessions. Fall back
+      // to the org-wide row (user_id IS NULL) if the current user never
+      // wired their own.
       try {
         const { tryDecryptSecret } = await import("@/lib/crypto");
-        const { data: conn } = await supabaseAdmin()
-          .from("rgaios_connections")
-          .select("metadata")
-          .eq("organization_id", user.id)
-          .eq("provider_config_key", "claude-max")
-          .maybeSingle();
-        const meta = (conn?.metadata ?? {}) as { access_token?: string };
-        const tok = tryDecryptSecret(meta.access_token);
+        const db = supabaseAdmin();
+        const sessionUserId = ctx.userId ?? null;
+        let metaRow: { access_token?: string } | null = null;
+        if (sessionUserId) {
+          const perUser = await db
+            .from("rgaios_connections")
+            .select("metadata")
+            .eq("organization_id", user.id)
+            .eq("provider_config_key", "claude-max")
+            .eq("user_id", sessionUserId)
+            .maybeSingle();
+          if (perUser.data) {
+            metaRow = (perUser.data.metadata ?? {}) as { access_token?: string };
+          }
+        }
+        if (!metaRow?.access_token) {
+          const orgWide = await db
+            .from("rgaios_connections")
+            .select("metadata")
+            .eq("organization_id", user.id)
+            .eq("provider_config_key", "claude-max")
+            .is("user_id", null)
+            .maybeSingle();
+          if (orgWide.data) {
+            metaRow = (orgWide.data.metadata ?? {}) as { access_token?: string };
+          }
+        }
+        const tok = tryDecryptSecret(metaRow?.access_token);
         if (tok) {
           provider = "claude-max-oauth";
           claudeMaxOauthToken = tok;

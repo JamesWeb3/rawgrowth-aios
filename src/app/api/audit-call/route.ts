@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
   const source = SOURCE_VALUES.has(sourceRaw) ? sourceRaw : "audit_call_paste";
 
   const db = supabaseAdmin();
-  const extraction = await extractAuditCall(ctx.activeOrgId, transcript);
+  const extraction = await extractAuditCall(
+    ctx.activeOrgId,
+    transcript,
+    ctx.userId,
+  );
 
   // Brand-voice guard the summary - the ONLY long-form output. The LLM
   // is already told to dodge the banned list, but the substring rewrite

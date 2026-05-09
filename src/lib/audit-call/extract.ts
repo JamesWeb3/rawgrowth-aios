@@ -175,6 +175,7 @@ function isolateJson(raw: string): string {
 export async function extractAuditCall(
   organizationId: string,
   transcript: string,
+  userId?: string | null,
 ): Promise<AuditCallExtraction> {
   const text = (transcript ?? "").trim();
   if (!text) return { ...EMPTY, _error: "empty transcript" };
@@ -189,16 +190,20 @@ export async function extractAuditCall(
 
   let raw = "";
   try {
-    const res = await chatCompleteOAuthFirst(organizationId, {
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `Transcript:\n\n${truncated}\n\nReturn the JSON object now.`,
-        },
-      ],
-      temperature: 0.2,
-    });
+    const res = await chatCompleteOAuthFirst(
+      organizationId,
+      {
+        system: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: `Transcript:\n\n${truncated}\n\nReturn the JSON object now.`,
+          },
+        ],
+        temperature: 0.2,
+      },
+      userId,
+    );
     raw = res.text.trim();
   } catch (err) {
     const message = err instanceof Error ? err.message : "chat failed";
