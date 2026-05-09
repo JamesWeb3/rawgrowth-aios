@@ -647,9 +647,12 @@ ${sections}`;
 
   let content = "";
   try {
-    const provider = resolveProvider("ONBOARDING_LLM_PROVIDER");
-    const result = await chatComplete({
-      provider,
+    // Pool-rotate via oauth-first so brand-profile generation gets the
+    // same 429 fallback the onboarding chat path has. orgId is `userId`
+    // by legacy naming convention; the dispatcher reads claude-max
+    // tokens scoped to that org.
+    const { chatCompleteOAuthFirst } = await import("@/lib/llm/oauth-first");
+    const result = await chatCompleteOAuthFirst(userId, {
       system:
         "You are a brand strategist building a comprehensive brand profile.",
       messages: [{ role: "user", content: prompt }],

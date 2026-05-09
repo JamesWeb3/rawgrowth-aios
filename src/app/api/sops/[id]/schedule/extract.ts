@@ -66,16 +66,29 @@ export async function loadSopContent(
  */
 export async function extractSopSchedule(
   sopMarkdown: string,
+  organizationId?: string,
+  userId?: string | null,
 ): Promise<SopExtraction> {
   if (!sopMarkdown.trim()) {
     return FALLBACK;
   }
   try {
-    const res = await chatComplete({
-      system: SOP_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: sopMarkdown }],
-      temperature: 0,
-    });
+    const { chatCompleteOAuthFirst } = await import("@/lib/llm/oauth-first");
+    const res = organizationId
+      ? await chatCompleteOAuthFirst(
+          organizationId,
+          {
+            system: SOP_SYSTEM_PROMPT,
+            messages: [{ role: "user", content: sopMarkdown }],
+            temperature: 0,
+          },
+          userId,
+        )
+      : await chatComplete({
+          system: SOP_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: sopMarkdown }],
+          temperature: 0,
+        });
     return parseSopExtraction(res.text);
   } catch (err) {
     // No LLM provider configured / transient outage. Return the daily
