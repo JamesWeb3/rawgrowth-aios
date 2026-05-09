@@ -1418,25 +1418,76 @@ export async function POST(req: NextRequest) {
                   } else {
                     throw e;
                   }
-                } else if (msg.includes("429") && fallbacks.length > 0) {
-                  // 429: walk the fallback chain. Stop at the first one
-                  // that returns text. Emits a debug event per attempt so
-                  // the operator can see why we ended up where we did.
-                  console.warn(`[onboarding-chat] 429 on ${provider}, trying ${fallbacks.length} fallback(s)`);
+                } else if (msg.includes("429")) {
+                  // 429: pool rotation. Pull every connected claude-max
+                  // row in the org (different Anthropic accounts thanks
+                  // to per-user OAuth, migration 0063) and try each in
+                  // sequence before falling through to env-key
+                  // providers. Same pattern lib/llm/oauth-first uses for
+                  // non-onboarding paths.
                   let fallbackErr = e;
-                  for (const f of fallbacks) {
+                  let rotated = false;
+                  if (provider === "claude-max-oauth") {
                     try {
-                      emit({ type: "debug", phase: "fallback", to: f.p, reason: f.reason });
-                      step = await callChat(f.p);
-                      console.warn(`[onboarding-chat] fallback ${f.p} succeeded`);
-                      break;
-                    } catch (fe) {
-                      const fmsg = fe instanceof Error ? fe.message : String(fe);
-                      console.warn(`[onboarding-chat] fallback ${f.p} failed: ${fmsg.slice(0, 120)}`);
-                      fallbackErr = fe;
+                      const { tryDecryptSecret } = await import("@/lib/crypto");
+                      const { data: poolRows } = await supabaseAdmin()
+                        .from("rgaios_connections")
+                        .select("id, user_id, metadata")
+                        .eq("organization_id", user.id)
+                        .eq("provider_config_key", "claude-max")
+                        .eq("status", "connected");
+                      const poolTokens: string[] = [];
+                      for (const row of (poolRows ?? []) as Array<{
+                        metadata: Record<string, unknown> | null;
+                      }>) {
+                        const meta = (row.metadata ?? {}) as { access_token?: string };
+                        const tok = tryDecryptSecret(meta.access_token);
+                        if (tok && tok !== claudeMaxOauthToken) poolTokens.push(tok);
+                      }
+                      console.warn(
+                        `[onboarding-chat] 429 on caller token, rotating through ${poolTokens.length} other org token(s)`,
+                      );
+                      for (let pi = 0; pi < poolTokens.length; pi++) {
+                        try {
+                          emit({ type: "debug", phase: "pool-rotate", attempt: pi + 1 });
+                          claudeMaxOauthToken = poolTokens[pi];
+                          step = await callChat();
+                          console.warn(`[onboarding-chat] pool token #${pi + 1} succeeded`);
+                          rotated = true;
+                          break;
+                        } catch (pe) {
+                          const pmsg = pe instanceof Error ? pe.message : String(pe);
+                          console.warn(
+                            `[onboarding-chat] pool token #${pi + 1} failed: ${pmsg.slice(0, 120)}`,
+                          );
+                          fallbackErr = pe;
+                        }
+                      }
+                    } catch (poolErr) {
+                      console.warn(
+                        `[onboarding-chat] pool rotation lookup failed: ${(poolErr as Error).message}`,
+                      );
                     }
                   }
-                  if (!step) throw fallbackErr;
+                  if (!rotated && fallbacks.length > 0) {
+                    console.warn(
+                      `[onboarding-chat] pool exhausted, trying ${fallbacks.length} env fallback(s)`,
+                    );
+                    for (const f of fallbacks) {
+                      try {
+                        emit({ type: "debug", phase: "fallback", to: f.p, reason: f.reason });
+                        step = await callChat(f.p);
+                        console.warn(`[onboarding-chat] fallback ${f.p} succeeded`);
+                        rotated = true;
+                        break;
+                      } catch (fe) {
+                        const fmsg = fe instanceof Error ? fe.message : String(fe);
+                        console.warn(`[onboarding-chat] fallback ${f.p} failed: ${fmsg.slice(0, 120)}`);
+                        fallbackErr = fe;
+                      }
+                    }
+                  }
+                  if (!rotated) throw fallbackErr;
                 } else {
                   throw e;
                 }
