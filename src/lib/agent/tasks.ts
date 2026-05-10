@@ -112,56 +112,145 @@ export async function extractAndCreateTasks(input: {
     };
   }
 
-  const tasks: CreatedTask[] = [];
+  // Parse every <task> block into a normalised payload first, then
+  // batch the database writes. The previous loop did one routine
+  // insert + one run insert per task sequentially - 5 tasks = 10 round
+  // trips on the demo path. Now: one routine batch + one run batch +
+  // one audit batch, regardless of N.
+  type PendingTask = {
+    title: string;
+    description: string;
+    assignee: { id: string; name: string };
+  };
+  const pending: PendingTask[] = [];
   for (const m of matches) {
     const assigneeLabel = m[1] ?? null;
-    const body = (m[2] ?? "").trim();
-    if (!body) continue;
-    const titleMatch = body.match(/Title:\s*(.+)/i);
-    const descMatch = body.match(/Description:\s*([\s\S]+)/i);
-    const title = (titleMatch?.[1] ?? body.split("\n")[0] ?? "Task")
+    const bodyRaw = (m[2] ?? "").trim();
+    if (!bodyRaw) continue;
+    const titleMatch = bodyRaw.match(/Title:\s*(.+)/i);
+    const descMatch = bodyRaw.match(/Description:\s*([\s\S]+)/i);
+    const title = (titleMatch?.[1] ?? bodyRaw.split("\n")[0] ?? "Task")
       .trim()
       .slice(0, 200);
-    const description = (descMatch?.[1] ?? body).trim().slice(0, 4000);
-
+    const description = (descMatch?.[1] ?? bodyRaw).trim().slice(0, 4000);
     const assignee = resolveAssignee(assigneeLabel);
+    pending.push({ title, description, assignee });
+  }
 
-    // Insert the routine row.
-    const { data: routine, error: routineErr } = await db
-      .from("rgaios_routines")
-      .insert({
-        organization_id: orgId,
-        title,
-        description,
-        assignee_agent_id: assignee.id,
-        status: "active",
-      } as never)
-      .select("id")
-      .single();
-    if (routineErr || !routine) {
-      console.warn(
-        `[tasks] routine insert failed: ${routineErr?.message}`,
-      );
-      continue;
+  if (pending.length === 0) {
+    return { visibleReply, tasks: [] };
+  }
+
+  // Batch insert routines. Supabase preserves input order in the
+  // returned rows when given an array - we rely on that for the
+  // routineId correlation below. If the whole batch fails, fall back
+  // to per-row inserts so one bad payload can't lose every task.
+  const routineRows = pending.map((p) => ({
+    organization_id: orgId,
+    title: p.title,
+    description: p.description,
+    assignee_agent_id: p.assignee.id,
+    status: "active",
+  }));
+  const routineIds: (string | null)[] = new Array(pending.length).fill(null);
+  const { data: insertedRoutines, error: batchRoutineErr } = await db
+    .from("rgaios_routines")
+    .insert(routineRows as never)
+    .select("id");
+  if (
+    !batchRoutineErr &&
+    Array.isArray(insertedRoutines) &&
+    insertedRoutines.length === pending.length
+  ) {
+    for (let i = 0; i < pending.length; i++) {
+      const row = (insertedRoutines as Array<{ id?: string }>)[i];
+      if (row && typeof row.id === "string") routineIds[i] = row.id;
     }
-    const routineId = (routine as { id: string }).id;
+  } else {
+    console.warn(
+      `[tasks] batch routine insert failed, retrying per-row: ${batchRoutineErr?.message}`,
+    );
+    for (let i = 0; i < pending.length; i++) {
+      const { data: routine, error: routineErr } = await db
+        .from("rgaios_routines")
+        .insert(routineRows[i] as never)
+        .select("id")
+        .single();
+      if (routineErr || !routine) {
+        console.warn(
+          `[tasks] routine insert failed (${pending[i].title}): ${routineErr?.message}`,
+        );
+        continue;
+      }
+      routineIds[i] = (routine as { id: string }).id;
+    }
+  }
 
-    // Insert the run row + fire the dispatcher. Drain executes async.
-    const { data: run } = await db
+  // Batch insert runs for every routine that landed. Build a parallel
+  // index map so we can correlate the returned run id back to its
+  // pending entry.
+  const runIdByPendingIdx: (string | null)[] = new Array(
+    pending.length,
+  ).fill(null);
+  const runRows: Array<Record<string, unknown>> = [];
+  const runRowPendingIdx: number[] = [];
+  for (let i = 0; i < pending.length; i++) {
+    const rId = routineIds[i];
+    if (!rId) continue;
+    runRows.push({
+      organization_id: orgId,
+      routine_id: rId,
+      source: "chat_task",
+      status: "pending",
+      input_payload: {
+        delegated_by_agent_id: speakerAgentId,
+        title: pending[i].title,
+      },
+    });
+    runRowPendingIdx.push(i);
+  }
+  if (runRows.length > 0) {
+    const { data: insertedRuns, error: batchRunErr } = await db
       .from("rgaios_routine_runs")
-      .insert({
-        organization_id: orgId,
-        routine_id: routineId,
-        source: "chat_task",
-        status: "pending",
-        input_payload: {
-          delegated_by_agent_id: speakerAgentId,
-          title,
-        },
-      } as never)
-      .select("id")
-      .single();
-    const runId = (run as { id: string } | null)?.id ?? null;
+      .insert(runRows as never)
+      .select("id");
+    if (
+      !batchRunErr &&
+      Array.isArray(insertedRuns) &&
+      insertedRuns.length === runRows.length
+    ) {
+      for (let j = 0; j < runRows.length; j++) {
+        const row = (insertedRuns as Array<{ id?: string }>)[j];
+        if (row && typeof row.id === "string") {
+          runIdByPendingIdx[runRowPendingIdx[j]] = row.id;
+        }
+      }
+    } else {
+      console.warn(
+        `[tasks] batch run insert failed, retrying per-row: ${batchRunErr?.message}`,
+      );
+      for (let j = 0; j < runRows.length; j++) {
+        const { data: run } = await db
+          .from("rgaios_routine_runs")
+          .insert(runRows[j] as never)
+          .select("id")
+          .single();
+        const id = (run as { id: string } | null)?.id ?? null;
+        if (id) runIdByPendingIdx[runRowPendingIdx[j]] = id;
+      }
+    }
+  }
+
+  // Side effects per task: dispatch + after()/inline fallback +
+  // collect audit-log rows for a single batch insert below.
+  const tasks: CreatedTask[] = [];
+  const auditRows: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < pending.length; i++) {
+    const routineId = routineIds[i];
+    if (!routineId) continue;
+    const runId = runIdByPendingIdx[i];
+    const { title, description, assignee } = pending[i];
+
     if (runId) {
       // Two paths:
       //   1. dispatchRun (drain server / hosted after())
@@ -177,9 +266,6 @@ export async function extractAndCreateTasks(input: {
           `[tasks] dispatchRun failed for run ${runId}: ${(err as Error).message}`,
         );
       }
-      // Try Next.js after() so we return fast + execute in background.
-      // Falls back to fire-and-forget Promise when called outside a
-      // request scope (smoke scripts, cron tick, etc).
       const exec = () =>
         executeChatTask({
           orgId,
@@ -196,23 +282,20 @@ export async function extractAndCreateTasks(input: {
       }
     }
 
-    // Audit log so the activity feed picks it up.
-    try {
-      await db.from("rgaios_audit_log").insert({
-        organization_id: orgId,
-        kind: "task_created",
-        actor_type: "agent",
-        actor_id: speakerAgentId,
-        detail: {
-          agent_id: assignee.id,
-          routine_id: routineId,
-          run_id: runId,
-          title,
-          delegated_from: speakerAgentId,
-          ...(insightId ? { insight_id: insightId } : {}),
-        },
-      } as never);
-    } catch {}
+    auditRows.push({
+      organization_id: orgId,
+      kind: "task_created",
+      actor_type: "agent",
+      actor_id: speakerAgentId,
+      detail: {
+        agent_id: assignee.id,
+        routine_id: routineId,
+        run_id: runId,
+        title,
+        delegated_from: speakerAgentId,
+        ...(insightId ? { insight_id: insightId } : {}),
+      },
+    });
 
     tasks.push({
       routineId,
@@ -221,6 +304,14 @@ export async function extractAndCreateTasks(input: {
       assigneeAgentId: assignee.id,
       assigneeName: assignee.name,
     });
+  }
+
+  // Single audit-log batch insert. Best-effort - feed display issues
+  // shouldn't block returning the tasks payload to the caller.
+  if (auditRows.length > 0) {
+    try {
+      await db.from("rgaios_audit_log").insert(auditRows as never);
+    } catch {}
   }
 
   return { visibleReply, tasks };

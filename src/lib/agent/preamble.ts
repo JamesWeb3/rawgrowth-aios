@@ -88,6 +88,7 @@ export async function buildAgentChatPreamble(input: {
             .from("rgaios_agents")
             .select("name, role")
             .eq("id", a.reports_to)
+            .eq("organization_id", orgId)
             .maybeSingle();
           const p = parent as { name: string; role: string } | null;
           if (p) parentLabel = `${p.name} (${p.role})`;
@@ -183,10 +184,16 @@ export async function buildAgentChatPreamble(input: {
   // truthfully says "I don't have access to the run log" - which
   // looks like a broken bot to the user.
   try {
+    // Defense-in-depth: helper is called from chat route, telegram
+    // webhook, executeChatTask. Each caller should pre-validate the
+    // agent against the org, but the CEO branch below injects WHOLE-ORG
+    // run history into the preamble - if agentId ever slipped through
+    // cross-tenant we'd leak other-org titles. Belt + suspenders.
     const { data: agentRow3 } = await db
       .from("rgaios_agents")
       .select("role")
       .eq("id", agentId)
+      .eq("organization_id", orgId)
       .maybeSingle();
     const isCeo =
       (agentRow3 as { role?: string } | null)?.role === "ceo";

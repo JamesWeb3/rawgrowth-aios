@@ -30,10 +30,15 @@ type IncomingMessage = { role: string; content: string };
  */
 async function maybePromoteInsightQueue(orgId: string, agentId: string) {
   const db = supabaseAdmin();
+  // Defense-in-depth: caller already org-scoped the agent at POST entry,
+  // but this helper is internal-callable, so add the explicit filter
+  // here too. Cheap and avoids an orphaned insight promotion if the
+  // call site ever drifts.
   const { data: agent } = await db
     .from("rgaios_agents")
     .select("role")
     .eq("id", agentId)
+    .eq("organization_id", orgId)
     .maybeSingle();
   if ((agent as unknown as { role?: string } | null)?.role !== "ceo") return;
 

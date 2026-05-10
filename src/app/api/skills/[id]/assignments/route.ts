@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { replaceSkillAssignments } from "@/lib/skills/queries";
 import { getSkill } from "@/lib/skills/catalog";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,37 @@ export async function PUT(
     );
 
     const orgId = await currentOrganizationId();
+
+    // Cross-tenant guard. Migration 0012 has independent FKs on
+    // (agent_id) and (organization_id) but no compound check that the
+    // pair is consistent. Without this, a forged client request could
+    // pollute another org's skill catalog with rows whose agent_id
+    // points at a foreign org. Verify every requested agent_id belongs
+    // to caller's org BEFORE writing any rows.
+    if (agentIds.length > 0) {
+      const { data: ownAgents, error: agentsErr } = await supabaseAdmin()
+        .from("rgaios_agents")
+        .select("id")
+        .in("id", agentIds)
+        .eq("organization_id", orgId);
+      if (agentsErr) {
+        return NextResponse.json(
+          { error: agentsErr.message },
+          { status: 500 },
+        );
+      }
+      const ownSet = new Set(
+        ((ownAgents ?? []) as Array<{ id: string }>).map((r) => r.id),
+      );
+      const foreign = agentIds.filter((aid) => !ownSet.has(aid));
+      if (foreign.length > 0) {
+        return NextResponse.json(
+          { error: "agent not in your organization" },
+          { status: 403 },
+        );
+      }
+    }
+
     await replaceSkillAssignments(orgId, id, agentIds);
     return NextResponse.json({ ok: true, count: agentIds.length });
   } catch (err) {

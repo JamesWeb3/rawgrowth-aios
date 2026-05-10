@@ -136,24 +136,47 @@ export async function POST(req: NextRequest) {
   // instead of re-typing every role. status='draft' keeps the existing
   // listAgentsForOrg / runtime gating happy: drafts don't get scheduled,
   // don't drain budget, and don't show up in the active agent count.
-  // Insert one row at a time so a single bad row (e.g. role label that
-  // trips a future check constraint) doesn't kill the whole batch.
+  //
+  // Batch insert in one round trip - Atlas can suggest 8-12 agents from
+  // a long discovery transcript and the previous one-at-a-time loop
+  // serialised them through supabase, adding ~1.5-2s per agent on the
+  // demo path. If the batch fails for any single row, fall back to the
+  // per-row loop so a single bad role label can't lose every other
+  // suggestion (the original safety net).
   const createdAgentIds: string[] = [];
-  for (const agent of extraction.suggestedAgents) {
-    const { data, error } = await db
+  const draftRows = extraction.suggestedAgents.map((agent) => ({
+    organization_id: ctx.activeOrgId,
+    name: `Draft - ${agent.role}`.slice(0, 120),
+    role: agent.role.toLowerCase().slice(0, 40) || "general",
+    title: agent.role.slice(0, 80),
+    description: agent.why.slice(0, 500),
+    status: "draft",
+  }));
+  if (draftRows.length > 0) {
+    const { data: batch, error: batchErr } = await db
       .from("rgaios_agents")
-      .insert({
-        organization_id: ctx.activeOrgId,
-        name: `Draft - ${agent.role}`.slice(0, 120),
-        role: agent.role.toLowerCase().slice(0, 40) || "general",
-        title: agent.role.slice(0, 80),
-        description: agent.why.slice(0, 500),
-        status: "draft",
-      } as never)
-      .select("id")
-      .maybeSingle();
-    if (!error && data && typeof (data as { id?: string }).id === "string") {
-      createdAgentIds.push((data as { id: string }).id);
+      .insert(draftRows as never)
+      .select("id");
+    if (!batchErr && Array.isArray(batch)) {
+      for (const row of batch as Array<{ id?: string }>) {
+        if (typeof row.id === "string") createdAgentIds.push(row.id);
+      }
+    } else {
+      // Batch failed - fall back to per-row inserts so one bad row
+      // doesn't lose the other suggestions.
+      console.warn(
+        `[audit-call] batch draft insert failed, retrying per-row: ${batchErr?.message}`,
+      );
+      for (const row of draftRows) {
+        const { data, error } = await db
+          .from("rgaios_agents")
+          .insert(row as never)
+          .select("id")
+          .maybeSingle();
+        if (!error && data && typeof (data as { id?: string }).id === "string") {
+          createdAgentIds.push((data as { id: string }).id);
+        }
+      }
     }
   }
 

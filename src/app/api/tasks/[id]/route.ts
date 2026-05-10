@@ -49,10 +49,17 @@ async function loadRoutineWithACL(
   const r = routine as RoutineRow;
   let agent: { id: string; name: string; role: string | null; department: string | null } | null = null;
   if (r.assignee_agent_id) {
+    // Defense-in-depth: routine itself was already org-scoped above,
+    // and the FK on assignee_agent_id should keep cross-tenant rows
+    // from existing in practice - but the FK is to agents(id) only,
+    // not (id, organization_id). Add the explicit org filter so the
+    // returned name/role/department block can never leak from another
+    // org if a stale row ever slipped through.
     const { data: a } = await db
       .from("rgaios_agents")
       .select("id, name, role, department")
       .eq("id", r.assignee_agent_id)
+      .eq("organization_id", ctx.activeOrgId!)
       .maybeSingle();
     agent = (a as typeof agent) ?? null;
     const allowed = await isDepartmentAllowed(
