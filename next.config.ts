@@ -28,6 +28,9 @@ const nextConfig: NextConfig = {
     "fastembed",
     "onnxruntime-node",
     "@anush008/tokenizers",
+    "tar",
+    "@huggingface/hub",
+    "progress",
   ],
   // Auto-train + default-org seed read role-template starter MDs at
   // runtime via fs.readFile from src/lib/agents/starter-content/. Next
