@@ -82,7 +82,7 @@
   "overrides": {
     "path-to-regexp": "^6.3.0",
     "postcss": "^8.5.10",
-    "tar": "^7.5.11",
+    "tar": "^6.2.1",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
