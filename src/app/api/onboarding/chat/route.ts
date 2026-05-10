@@ -1237,6 +1237,32 @@ export async function POST(req: NextRequest) {
         });
 
 
+        // Hard short-circuit: if this turn is JUST the file-upload ack
+        // ("I uploaded a file: <name>") with no real text on top, skip
+        // the Anthropic call entirely. Even with lite mode (no tools)
+        // the 6kb system + RAG block burns enough input tokens that
+        // it 429s on a saturated Claude Max bucket while shorter
+        // agent-chat calls slip under. Reply is a fixed warm ack so
+        // the client sees the bubble fill instantly. The actual
+        // extraction happens on the NEXT turn when the user types
+        // real input and the LLM call fires under a fresh bucket.
+        const lastUserSc = [...messages]
+          .reverse()
+          .find((m) => m.role === "user");
+        const lastTextSc =
+          typeof lastUserSc?.content === "string" ? lastUserSc.content : "";
+        const fileOnlyMatch = /^I uploaded a file: ([^\n]+)/.exec(
+          lastTextSc.trim(),
+        );
+        if (fileOnlyMatch) {
+          const name = fileOnlyMatch[1].trim();
+          const ack = `Got it. I'm reading ${name} now and will pull what I can from it. Drop more if you have them, or type a quick line about your business when you're ready.`;
+          emit({ type: "text", delta: ack });
+          emit({ type: "done" });
+          controller.close();
+          return;
+        }
+
         try {
           for (let iter = 0; iter < 6; iter++) {
             // Track whether the provider streamed any token via onTextDelta.
