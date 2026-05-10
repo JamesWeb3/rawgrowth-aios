@@ -59,6 +59,18 @@ services:
       # and embedding endpoints (text-embedding-3-large).
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
+      # Per-call-site LLM provider overrides. Without these the route
+      # handlers see process.env.*_LLM_PROVIDER=undefined and silently
+      # fall through to provider auto-detection (claude-max OAuth when
+      # the org has it connected). That breaks the per-VPS plan: AGENTS.md
+      # locks onboarding chat on OpenAI gpt-4o for trial. provision-vps.sh
+      # writes both vars into /opt/rawgrowth/.env; this block is what
+      # actually surfaces them inside the container.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      ONBOARDING_LLM_PROVIDER: ${ONBOARDING_LLM_PROVIDER:-}
+      EXECUTOR_LLM_PROVIDER: ${EXECUTOR_LLM_PROVIDER:-}
+      BRAND_VOICE_LLM_PROVIDER: ${BRAND_VOICE_LLM_PROVIDER:-}
+
       # fastembed (default RAG provider) caches the ~33MB ONNX model in
       # this directory. Volume-mounted so docker rebuilds + container
       # recreations don't re-download from HuggingFace + re-pay the
