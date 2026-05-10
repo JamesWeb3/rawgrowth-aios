@@ -5,7 +5,17 @@ import { isDepartmentAllowed } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { listConnectionsForOrg } from "@/lib/connections/queries";
 import { SKILLS_CATALOG } from "@/lib/skills/catalog";
+import { isUuid } from "@/lib/utils";
 import { AgentPanelClient } from "./AgentPanelClient";
+
+// Without these, Next.js 16's static-render heuristic can collapse
+// `/agents/[id]` to a single cached render (W8 saw every uuid land on
+// Atlas chat - the first agent rendered at build/warm time leaked into
+// every subsequent request). The page is auth-gated + per-org so it
+// must be dynamic per request, on the node runtime (supabase admin
+// client + jose JWT decode aren't edge-safe).
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export default async function AgentDetailPage({
   params,
@@ -15,6 +25,11 @@ export default async function AgentDetailPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  // Reject non-UUID before it reaches Postgres + 500s with "invalid
+  // input syntax for type uuid". Mirrors the badUuidResponse() guard
+  // every /api/[id] route already uses.
+  if (!isUuid(id)) notFound();
+
   const sp = await searchParams;
   // chat is the default landing tab. Skip the chat-history preload when
   // the URL deep-links to another tab so we don't burn a supabase

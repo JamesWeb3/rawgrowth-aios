@@ -45,7 +45,13 @@ export function routineFromRows(
 
 export function triggerFromRow(row: TriggerRow): RoutineTrigger {
   const cfg = (row.config ?? {}) as Record<string, unknown>;
-  switch (row.kind) {
+  // Legacy compat: agent-commands.ts (Atlas chat <command type="routine_create">)
+  // historically inserted rows with kind='cron'. The current write path uses
+  // kind='schedule', but the 8 pre-existing rows still need to render. Treat
+  // 'cron' as a schedule with custom preset so /api/routines GET stops
+  // throwing "Unknown trigger kind: cron" and 500ing the whole list.
+  const kind = (row.kind as string) === "cron" ? "schedule" : row.kind;
+  switch (kind) {
     case "schedule":
       return {
         id: row.id,
@@ -81,8 +87,13 @@ export function triggerFromRow(row: TriggerRow): RoutineTrigger {
     case "manual":
       return { id: row.id, kind: "manual", enabled: row.enabled };
     default: {
-      const _exhaustive: never = row.kind;
-      throw new Error(`Unknown trigger kind: ${String(_exhaustive)}`);
+      // Defensive: any unknown kind that slips past the cron coercion
+      // above falls back to manual rather than 500ing the whole list.
+      // The audit trail still shows the original row.kind via the DB.
+      console.warn(
+        `[routines/dto] unknown trigger kind "${String(row.kind)}" on trigger ${row.id} - falling back to manual`,
+      );
+      return { id: row.id, kind: "manual", enabled: row.enabled };
     }
   }
 }

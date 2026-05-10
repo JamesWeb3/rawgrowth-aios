@@ -376,12 +376,16 @@ async function execRoutineCreate(
     const cron = cronByPreset[p.schedule.trim().toLowerCase()] ?? null;
     if (cron) {
       try {
+        // kind='schedule' (not 'cron') matches the canonical TriggerKind
+        // union in routines/constants.ts. Older rows with kind='cron' are
+        // tolerated by triggerFromRow but new inserts go through the same
+        // path the UI + MCP routines_create use.
         await db.from("rgaios_routine_triggers").insert({
           organization_id: orgId,
           routine_id: routineId,
-          kind: "cron",
+          kind: "schedule",
           enabled: true,
-          config: { cron },
+          config: { preset: "custom", cron, timezone: "UTC" },
         } as never);
       } catch (err) {
         console.warn(
