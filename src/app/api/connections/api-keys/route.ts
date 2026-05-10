@@ -142,21 +142,56 @@ export async function PUT(req: NextRequest) {
   }
   const encrypted = encryptSecret(apiKey);
   const now = new Date().toISOString();
-  const { error } = await supabaseAdmin()
+  const providerConfigKey = `${provider}-key`;
+  // Migration 0063 widened the unique index on rgaios_connections to
+  // (org, coalesce(user_id::text,''), provider_config_key,
+  // coalesce(agent_id::text,'')) which is a COALESCE-based partial that
+  // supabase-js .upsert() cannot target (the same gotcha called out in
+  // src/lib/connections/queries.ts upsertConnection). API keys are
+  // org-wide (user_id=NULL, agent_id=NULL) so we mirror the org-wide
+  // path there: lookup the existing row scoped to NULL user_id + NULL
+  // agent_id, then UPDATE or INSERT.
+  const db = supabaseAdmin();
+  const existing = await db
     .from("rgaios_connections")
-    .upsert(
-      {
-        organization_id: ctx.activeOrgId,
-        provider_config_key: `${provider}-key`,
+    .select("id")
+    .eq("organization_id", ctx.activeOrgId)
+    .eq("provider_config_key", providerConfigKey)
+    .is("user_id", null)
+    .is("agent_id", null)
+    .maybeSingle();
+  if (existing.error) {
+    return NextResponse.json({ error: existing.error.message }, { status: 500 });
+  }
+  if (existing.data) {
+    const { error } = await db
+      .from("rgaios_connections")
+      .update({
         status: "connected",
         connected_at: now,
         updated_at: now,
         metadata: { api_key: encrypted } as never,
-      } as never,
-      { onConflict: "organization_id,provider_config_key" },
-    );
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      } as never)
+      .eq("id", existing.data.id);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+  } else {
+    const { error } = await db
+      .from("rgaios_connections")
+      .insert({
+        organization_id: ctx.activeOrgId,
+        user_id: null,
+        agent_id: null,
+        provider_config_key: providerConfigKey,
+        status: "connected",
+        connected_at: now,
+        updated_at: now,
+        metadata: { api_key: encrypted } as never,
+      } as never);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
   await supabaseAdmin()
     .from("rgaios_audit_log")
@@ -179,11 +214,16 @@ export async function DELETE(req: NextRequest) {
   if (!KNOWN_PROVIDERS.some((p) => p.key === provider)) {
     return NextResponse.json({ error: "unknown provider" }, { status: 400 });
   }
+  // Scope to NULL user_id + NULL agent_id - api-keys rows are always
+  // org-wide; never touch a per-user / per-agent row that happens to
+  // share the `${provider}-key` provider_config_key.
   const { error } = await supabaseAdmin()
     .from("rgaios_connections")
     .delete()
     .eq("organization_id", ctx.activeOrgId)
-    .eq("provider_config_key", `${provider}-key`);
+    .eq("provider_config_key", `${provider}-key`)
+    .is("user_id", null)
+    .is("agent_id", null);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

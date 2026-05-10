@@ -96,34 +96,68 @@ export async function POST(req: Request) {
               link_token?: string;
             };
             // Persist pending row so the OAuth callback can find it and
-            // upgrade to 'connected'. UPSERT on (org, user, provider, agent)
-            // unique constraint - re-clicking Connect on a stale pending /
-            // errored row replaces it with the new connected_account_id +
+            // upgrade to 'connected'. Lookup-then-update-or-insert,
+            // mirroring src/lib/connections/queries.ts: the only unique
+            // index that covers user_id is the COALESCE-based partial
+            // from migration 0063 which supabase-js .upsert(onConflict)
+            // cannot target (Postgres needs a literal column / expression
+            // match). Re-clicking Connect on a stale pending / errored
+            // row replaces it with the new connected_account_id +
             // auth_config_id from this v3 link attempt. If a 'connected'
             // row exists we still overwrite to pending_token; the user
             // explicitly clicked Connect again, treat as reconnect.
-            const ins = await supabaseAdmin()
-              .from("rgaios_connections")
-              .upsert(
-                {
-                  organization_id: organizationId,
-                  user_id: userId ?? null,
-                  provider_config_key: `composio:${entry.key}`,
-                  nango_connection_id:
-                    data.connected_account_id ?? `pending-${Date.now()}`,
-                  display_name: entry.name,
-                  status: "pending_token",
-                  metadata: {
-                    composio_app: entry.key,
-                    composio_auth_config_id: authConfigId,
-                    started_at: new Date().toISOString(),
-                  },
-                } as never,
-                {
-                  onConflict:
-                    "organization_id,user_id,provider_config_key,agent_id",
-                },
+            const providerConfigKey = `composio:${entry.key}`;
+            const db = supabaseAdmin();
+            const existing = userId
+              ? await db
+                  .from("rgaios_connections")
+                  .select("id")
+                  .eq("organization_id", organizationId)
+                  .eq("provider_config_key", providerConfigKey)
+                  .is("agent_id", null)
+                  .eq("user_id" as never, userId)
+                  .maybeSingle()
+              : await db
+                  .from("rgaios_connections")
+                  .select("id")
+                  .eq("organization_id", organizationId)
+                  .eq("provider_config_key", providerConfigKey)
+                  .is("agent_id", null)
+                  .is("user_id" as string, null)
+                  .maybeSingle();
+            if (existing.error) {
+              console.error(
+                `[composio] pending row lookup failed for org ${organizationId} ${entry.key}:`,
+                existing.error.message,
               );
+              return NextResponse.json(
+                { error: "could not stage connection: " + existing.error.message },
+                { status: 500 },
+              );
+            }
+            const pendingRow = {
+              organization_id: organizationId,
+              user_id: userId ?? null,
+              agent_id: null,
+              provider_config_key: providerConfigKey,
+              nango_connection_id:
+                data.connected_account_id ?? `pending-${Date.now()}`,
+              display_name: entry.name,
+              status: "pending_token",
+              metadata: {
+                composio_app: entry.key,
+                composio_auth_config_id: authConfigId,
+                started_at: new Date().toISOString(),
+              },
+            };
+            const ins = existing.data
+              ? await db
+                  .from("rgaios_connections")
+                  .update(pendingRow as never)
+                  .eq("id", existing.data.id)
+              : await db
+                  .from("rgaios_connections")
+                  .insert(pendingRow as never);
             if (ins.error) {
               console.error(
                 `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
