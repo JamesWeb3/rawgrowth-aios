@@ -88,7 +88,11 @@ export async function POST(req: NextRequest) {
         return new NextResponse(null, { status: 204 });
 
       case "tools/list":
-        return NextResponse.json(reply(msg.id, { tools: listTools() }));
+        return NextResponse.json(
+          reply(msg.id, {
+            tools: listTools({ organizationId: org.id }),
+          }),
+        );
 
       case "tools/call": {
         const name = String(msg.params?.name ?? "");

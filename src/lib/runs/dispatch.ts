@@ -22,14 +22,29 @@ import { executeRun } from "./executor";
  */
 export function dispatchRun(runId: string, organizationId: string) {
   if (isSelfHosted || isV3) {
-    void supabaseAdmin()
-      .from("rgaios_audit_log")
-      .insert({
-        organization_id: organizationId,
-        kind: isV3 ? "run_queued_for_drain" : "run_queued_for_claude",
-        actor_type: "system",
-        actor_id: "dispatcher",
-        detail: { run_id: runId },
+    // Supabase's PostgrestBuilder is a PromiseLike, not a real Promise,
+    // so .catch() isn't on the prototype. Wrap with Promise.resolve()
+    // to get full Promise semantics for both error-payload + thrown
+    // rejection handling. Pre-fix this was `void ...insert(...)` which
+    // silently swallowed both branches.
+    Promise.resolve(
+      supabaseAdmin()
+        .from("rgaios_audit_log")
+        .insert({
+          organization_id: organizationId,
+          kind: isV3 ? "run_queued_for_drain" : "run_queued_for_claude",
+          actor_type: "system",
+          actor_id: "dispatcher",
+          detail: { run_id: runId },
+        }),
+    )
+      .then(({ error }) => {
+        if (error) {
+          console.error("[dispatch.audit] insert failed", error);
+        }
+      })
+      .catch((err) => {
+        console.error("[dispatch.audit] insert threw", err);
       });
     if (isV3) {
       const drainUrl = process.env.RAWCLAW_DRAIN_URL;

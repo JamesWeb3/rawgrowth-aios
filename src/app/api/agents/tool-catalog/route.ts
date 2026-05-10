@@ -35,7 +35,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const allTools = listTools();
+  const allTools = listTools({ organizationId: ctx.activeOrgId });
   const connections = await listConnectionsForOrg(ctx.activeOrgId);
   const connectedKeys = new Set(
     connections

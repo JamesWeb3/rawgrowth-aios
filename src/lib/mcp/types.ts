@@ -35,6 +35,17 @@ export type McpTool = {
   requiresIntegration?: string;
   /** Marks a tool as a write  -  used later by the approvals layer. */
   isWrite?: boolean;
+  /**
+   * Org scoping for in-process custom tools (R08 cross-tenant fix).
+   * - undefined: global tool (every static src/lib/mcp/tools/* file).
+   *   Visible + callable to every org.
+   * - string: per-org custom tool registered via registerCustomTool()
+   *   from the sandbox-pass test path. Only listTools(ctx) /
+   *   callTool(name, args, ctx) for the same orgId can see it.
+   * Without this flag, an org-A draft would land in the shared global
+   * Map and any org-B bearer would list + call it.
+   */
+  orgId?: string;
   handler: (
     args: Record<string, unknown>,
     ctx: ToolContext,

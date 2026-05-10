@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { dispatchRun } from "@/lib/runs/dispatch";
 import { registerTool, text, textError } from "../registry";
 
 /**
@@ -105,6 +106,11 @@ registerTool({
     if (runErr || !run) {
       return textError(`Could not enqueue invocation: ${runErr?.message ?? "unknown"}`);
     }
+
+    // Trigger the executor / drain. Without this the run sits in
+    // `pending` until the systemd-tick fallback catches it (1-2 min),
+    // which always loses the race against the timeoutMs cap below.
+    dispatchRun(run.id, ctx.organizationId);
 
     // Poll for completion with a hard wall-clock cap.
     const started = Date.now();

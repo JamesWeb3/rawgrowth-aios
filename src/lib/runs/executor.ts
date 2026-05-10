@@ -444,7 +444,10 @@ function buildToolset(
   agentId: string | null,
   writePolicy: Record<string, "direct" | "requires_approval" | "draft_only">,
 ): ToolSet {
-  const mcpTools = listTools();
+  // Pass toolCtx so per-org custom tools (R08 isolation) surface to
+  // the executor for the org that drafted them, while staying hidden
+  // from every other tenant.
+  const mcpTools = listTools(toolCtx);
   const explicit = Object.keys(writePolicy).length > 0;
   const toolset: ToolSet = {};
   for (const t of mcpTools) {
@@ -482,11 +485,17 @@ function buildToolset(
         }
 
         const result = await callTool(t.name, typedArgs, toolCtx);
-        await auditLog(toolCtx.organizationId, "tool_call", {
+        // Fire-and-forget the audit insert so cumulative round-trip
+        // latency doesn't push the run past the 120s wall-clock cap
+        // when the model makes many tool calls. Audit is observability,
+        // not in the critical execution path.
+        void auditLog(toolCtx.organizationId, "tool_call", {
           run_id: runId,
           agent_id: agentId,
           tool: t.name,
           is_error: result.isError ?? false,
+        }).catch((err) => {
+          console.error("[executor.audit] tool_call insert failed", err);
         });
         const flat = result.content.map((c) => c.text).join("\n");
         return flat;

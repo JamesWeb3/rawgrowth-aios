@@ -31,22 +31,26 @@ export async function claimRun(runId: string): Promise<RunContext | null> {
   if (error) throw new Error(`claimRun: ${error.message}`);
   if (!run) return null; // already claimed or gone
 
-  const { data: routine, error: rErr } = await db
-    .from("rgaios_routines")
-    .select("*")
-    .eq("id", run.routine_id)
-    .single();
-  if (rErr || !routine) throw new Error(`claimRun routine: ${rErr?.message}`);
-
-  let trigger: TriggerRow | null = null;
-  if (run.trigger_id) {
-    const { data } = await db
-      .from("rgaios_routine_triggers")
+  // Routine + trigger are independent of each other; fire them in
+  // parallel. Agent depends on routine.assignee_agent_id so it's the
+  // only one that has to wait for routine.
+  const [routineRes, triggerRes] = await Promise.all([
+    db
+      .from("rgaios_routines")
       .select("*")
-      .eq("id", run.trigger_id)
-      .maybeSingle();
-    trigger = data;
-  }
+      .eq("id", run.routine_id)
+      .single(),
+    run.trigger_id
+      ? db
+          .from("rgaios_routine_triggers")
+          .select("*")
+          .eq("id", run.trigger_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null as TriggerRow | null }),
+  ]);
+  const { data: routine, error: rErr } = routineRes;
+  if (rErr || !routine) throw new Error(`claimRun routine: ${rErr?.message}`);
+  const trigger: TriggerRow | null = triggerRes.data;
 
   let agent: AgentRow | null = null;
   if (routine.assignee_agent_id) {

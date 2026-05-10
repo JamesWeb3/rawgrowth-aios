@@ -418,9 +418,12 @@ export async function testCustomMcpTool(input: {
   // to it for the lifetime of this Node worker. On the next deploy
   // someone has to add a static import to /src/lib/mcp/tools/index.ts;
   // until then the route reads the row + warns.
+  // Per-org scoping (R08 cross-tenant fix): stamp the captured tool
+  // with the requesting org's id so registry.listTools(ctx) / callTool
+  // only surface it back to the same tenant.
   for (const t of captured.registered) {
     try {
-      registerCustomTool(t);
+      registerCustomTool({ ...t, orgId: row.organization_id });
     } catch (err) {
       console.warn(
         `[custom-tools] live registration of ${t.name} failed: ${(err as Error).message}`,
@@ -505,12 +508,28 @@ export async function retryCustomMcpTool(input: {
  * promote a passing tool into the in-process map. Survives only until
  * the worker restarts - for permanence the file has to be shipped via
  * /src/lib/mcp/tools/index.ts on the next deploy.
+ *
+ * The caller MUST stamp `orgId` so the registry can scope the tool to
+ * the tenant that drafted it (R08 cross-tenant fix). A tool without
+ * orgId would land in the global slot and leak to every tenant via
+ * /api/mcp tools/list.
  */
 export function registerCustomTool(tool: McpTool): void {
-  const existing = listTools().find((t) => t.name === tool.name);
+  if (!tool.orgId) {
+    throw new Error(
+      "registerCustomTool requires an orgId; refusing to register an unscoped custom tool.",
+    );
+  }
+  // Look up against the org-scoped view of the registry. A static
+  // global tool with the same bare name + a per-org custom tool with
+  // the same bare name now coexist on different keys, so the global
+  // import is no longer a blocker for org-local registration.
+  const existing = listTools({ organizationId: tool.orgId }).find(
+    (t) => t.name === tool.name,
+  );
   if (existing) {
     console.warn(
-      `[custom-tools] ${tool.name} is already in the registry (static import?). Skipping live load.`,
+      `[custom-tools] ${tool.name} is already in this org's registry. Skipping live load.`,
     );
     return;
   }
