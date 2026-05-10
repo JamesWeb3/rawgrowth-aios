@@ -96,27 +96,34 @@ export async function POST(req: Request) {
               link_token?: string;
             };
             // Persist pending row so the OAuth callback can find it and
-            // upgrade to 'connected'. If this insert fails we MUST refuse
-            // the redirect - otherwise the user OAuths upstream, the
-            // callback can't find the row to flip to 'connected', and the
-            // connection silently rots in pending forever. Surface the
-            // cause so the operator sees a clear toast.
+            // upgrade to 'connected'. UPSERT on (org, user, provider, agent)
+            // unique constraint - re-clicking Connect on a stale pending /
+            // errored row replaces it with the new connected_account_id +
+            // auth_config_id from this v3 link attempt. If a 'connected'
+            // row exists we still overwrite to pending_token; the user
+            // explicitly clicked Connect again, treat as reconnect.
             const ins = await supabaseAdmin()
               .from("rgaios_connections")
-              .insert({
-                organization_id: organizationId,
-                user_id: userId ?? null,
-                provider_config_key: `composio:${entry.key}`,
-                nango_connection_id:
-                  data.connected_account_id ?? `pending-${Date.now()}`,
-                display_name: entry.name,
-                status: "pending_token",
-                metadata: {
-                  composio_app: entry.key,
-                  composio_auth_config_id: authConfigId,
-                  started_at: new Date().toISOString(),
+              .upsert(
+                {
+                  organization_id: organizationId,
+                  user_id: userId ?? null,
+                  provider_config_key: `composio:${entry.key}`,
+                  nango_connection_id:
+                    data.connected_account_id ?? `pending-${Date.now()}`,
+                  display_name: entry.name,
+                  status: "pending_token",
+                  metadata: {
+                    composio_app: entry.key,
+                    composio_auth_config_id: authConfigId,
+                    started_at: new Date().toISOString(),
+                  },
+                } as never,
+                {
+                  onConflict:
+                    "organization_id,user_id,provider_config_key,agent_id",
                 },
-              } as never);
+              );
             if (ins.error) {
               console.error(
                 `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
