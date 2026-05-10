@@ -5,6 +5,14 @@
 
 export type ToolContext = {
   organizationId: string;
+  /**
+   * Caller's rgaios_users.id when available (PR 1, migration 0063).
+   * Per-org bearer-token MCP path leaves this null so composioCall
+   * falls back to the org-wide row. In-process callers (workflow
+   * executor, custom-tool sandbox) populate it from the run owner so
+   * per-user OAuth buckets get hit first instead of the org default.
+   */
+  userId?: string | null;
 };
 
 export type ToolResult = {

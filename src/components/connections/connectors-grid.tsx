@@ -189,6 +189,14 @@ function ConnectorCard({
 }) {
   const initial = entry.name.charAt(0).toUpperCase();
   const fg = readableForeground(entry.brandColor);
+  // Track per-card logo failure so a 404 / network error from
+  // logos.composio.dev silently demotes to the letter-avatar fallback
+  // instead of leaving a broken-image icon. Bespoke entries (telegram,
+  // supabase, vercel) and a handful of apps Composio's CDN doesn't host
+  // (anthropic, s3, zapier, webhook) ship `logoUrl` undefined, so they
+  // skip the <img> branch entirely.
+  const [logoFailed, setLogoFailed] = useState(false);
+  const showLogo = Boolean(entry.logoUrl) && !logoFailed;
   return (
     <Card
       className={
@@ -204,13 +212,24 @@ function ConnectorCard({
       )}
       <CardContent className="flex flex-col gap-3 p-4">
         <div className="flex items-start gap-3">
-          <div
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg font-mono text-[15px] font-semibold ring-1 ring-black/10"
-            style={{ backgroundColor: entry.brandColor, color: fg }}
-            aria-hidden
-          >
-            {initial}
-          </div>
+          {showLogo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={entry.logoUrl}
+              alt={`${entry.name} logo`}
+              loading="lazy"
+              onError={() => setLogoFailed(true)}
+              className="size-10 shrink-0 rounded-md bg-white object-contain p-1 ring-1 ring-black/10"
+            />
+          ) : (
+            <div
+              className="flex size-10 shrink-0 items-center justify-center rounded-lg font-mono text-[15px] font-semibold ring-1 ring-black/10"
+              style={{ backgroundColor: entry.brandColor, color: fg }}
+              aria-hidden
+            >
+              {initial}
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-semibold text-foreground">
               {entry.name}

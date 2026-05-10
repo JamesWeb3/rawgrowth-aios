@@ -15,6 +15,14 @@ export const runtime = "nodejs";
  * caller's active org. Without this check, an attacker who learned a
  * sibling tenant's connectionId could forge a callback URL and flip
  * that tenant's pending Composio row to connected.
+ *
+ * User-scope (migration 0063 parity): also constrained to the
+ * caller's user_id. Without this filter, two members of the same org
+ * who each kicked off a pending Gmail connect would race - whoever's
+ * callback fires first wins the row, and the other member's pending
+ * row stays stuck. The POST handler writes user_id on insert; this
+ * filter matches it on update so each member's callback flips only
+ * their own row.
  */
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
@@ -32,6 +40,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Per-user filter: a logged-in caller flips only the row keyed on
+  // their user_id. Cast on column name + value because Supabase
+  // generated types are stale relative to migration 0063 (column
+  // exists in DB, types haven't been regenerated yet).
   const { error } = await supabaseAdmin()
     .from("rgaios_connections")
     .update({
@@ -39,7 +51,8 @@ export async function GET(req: NextRequest) {
       metadata: { composio_callback_at: new Date().toISOString() },
     } as never)
     .eq("nango_connection_id", connectionId)
-    .eq("organization_id", ctx.activeOrgId);
+    .eq("organization_id", ctx.activeOrgId)
+    .eq("user_id" as never, (ctx.userId ?? null) as never);
 
   if (error) {
     return NextResponse.redirect(

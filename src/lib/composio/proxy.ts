@@ -107,10 +107,14 @@ export async function listComposioTokensForUser(
   const rows = data as ConnectionRow[];
   // Per-user rows first (caller's bucket). Then null-user (org-wide
   // legacy). Stable id-sort inside each group so rotation order is
-  // deterministic across requests.
+  // deterministic across requests. Cast to access user_id - Supabase
+  // generated types are stale relative to migration 0063 (column
+  // exists in DB, types haven't been regenerated yet).
   return [...rows].sort((a, b) => {
-    const aOwn = userId && a.user_id === userId ? 0 : a.user_id === null ? 2 : 1;
-    const bOwn = userId && b.user_id === userId ? 0 : b.user_id === null ? 2 : 1;
+    const au = (a as unknown as { user_id: string | null }).user_id;
+    const bu = (b as unknown as { user_id: string | null }).user_id;
+    const aOwn = userId && au === userId ? 0 : au === null ? 2 : 1;
+    const bOwn = userId && bu === userId ? 0 : bu === null ? 2 : 1;
     if (aOwn !== bOwn) return aOwn - bOwn;
     return a.id.localeCompare(b.id);
   });

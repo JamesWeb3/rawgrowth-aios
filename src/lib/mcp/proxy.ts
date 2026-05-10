@@ -25,14 +25,19 @@ export type ProxyOpts = {
  * Compose a Composio action call from the (orgId, appKey, action, input)
  * tuple. Inputs are passed straight through; per-action shape lives in
  * Composio's catalog docs.
+ *
+ * `userId` (PR 1, migration 0063 plumbing) selects the caller's per-user
+ * Composio bucket when available, falling back to the org-wide row.
+ * Mirrors chatCompleteOAuthFirst's per-user thread.
  */
 export async function composioAction<T = unknown>(
   organizationId: string,
   appKey: string,
   action: string,
   input: Record<string, unknown>,
+  userId?: string | null,
 ): Promise<T> {
-  return composioCall<T>(organizationId, { appKey, action, input });
+  return composioCall<T>(organizationId, { appKey, action, input }, userId);
 }
 
 /**

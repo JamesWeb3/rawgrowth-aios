@@ -57,6 +57,7 @@ registerTool({
       "gmail",
       "GMAIL_FETCH_MAILS",
       { query, max_results: limit },
+      ctx.userId,
     );
     const hits = resp.messages ?? [];
     if (hits.length === 0) return text(`No Gmail results for "${query}".`);
@@ -118,6 +119,7 @@ registerTool({
       "gmail",
       "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
       { message_id: id, format: "full" },
+      ctx.userId,
     );
     const headers = msg.payload?.headers ?? [];
     const find = (name: string) =>
@@ -191,6 +193,7 @@ registerTool({
         body: bodyFiltered.text,
         is_html: false,
       },
+      ctx.userId,
     );
 
     const composeUrl = `https://mail.google.com/mail/u/0/#drafts?compose=${resp.message.id}`;

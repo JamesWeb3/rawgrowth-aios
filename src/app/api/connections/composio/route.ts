@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { currentOrganizationId } from "@/lib/supabase/constants";
+import { getOrgContext } from "@/lib/auth/admin";
 import { getCatalogEntry, composioAppNameFor } from "@/lib/connections/catalog";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
@@ -12,10 +12,20 @@ export const runtime = "nodejs";
  *      the auth dance + returns the redirect URL for the operator.
  *   2. No env: log interest + persist a pending connection row so the queue
  *      can be replayed when keys land.
+ *
+ * PR 1 (per-user OAuth, migration 0063): entityId scopes the Composio
+ * grant to the calling member's userId so two members of the same org
+ * each get their own Gmail / HubSpot / etc bucket. Pending row also
+ * stamps user_id so the callback only flips that member's row.
  */
 export async function POST(req: Request) {
   try {
-    const organizationId = await currentOrganizationId();
+    const ctx = await getOrgContext();
+    if (!ctx || !ctx.activeOrgId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
+    const organizationId = ctx.activeOrgId;
+    const userId = ctx.userId;
     const body = (await req.json().catch(() => ({}))) as { key?: string };
     const key = typeof body.key === "string" ? body.key : null;
     if (!key) {
@@ -38,7 +48,11 @@ export async function POST(req: Request) {
           },
           body: JSON.stringify({
             appName: composioAppNameFor(entry.key),
-            entityId: organizationId,
+            // entityId scopes the Composio grant per member so two
+            // users in the same org each get their own bucket. Falls
+            // back to org-wide if no session (shouldn't happen post
+            // getOrgContext gate above, defensive).
+            entityId: userId ?? organizationId,
             redirectUri: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/connections/composio/callback`,
           }),
         });
@@ -52,6 +66,7 @@ export async function POST(req: Request) {
             .from("rgaios_connections")
             .insert({
               organization_id: organizationId,
+              user_id: userId ?? null,
               provider_config_key: `composio:${entry.key}`,
               nango_connection_id: data.connectionId ?? `pending-${Date.now()}`,
               display_name: entry.name,
