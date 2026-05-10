@@ -34,11 +34,26 @@ export async function POST(
   // Authorization: Bearer ${CRON_SECRET}. The drain server + Vercel
   // cron set this. If CRON_SECRET isn't set in the env, this gate
   // never matches and we fall back to session-based ownership check.
+  //
+  // Cross-org gate: a leaked CRON_SECRET (Vercel logs, env snapshot)
+  // would otherwise let anyone POST /api/runs/<any uuid>/execute and
+  // dispatch a run for ANY org. Require an `x-org-id` header binding
+  // the call to a specific tenant and verify it matches the run's org
+  // before dispatch. Drain server + cron callers set this header; both
+  // already have org context when they fan out per-tenant.
   const cronSecret = process.env.CRON_SECRET;
   const cronAuthorized =
     !!cronSecret && req.headers.get("authorization") === `Bearer ${cronSecret}`;
 
-  if (!cronAuthorized) {
+  if (cronAuthorized) {
+    const headerOrg = req.headers.get("x-org-id");
+    if (!headerOrg || headerOrg !== run.organization_id) {
+      return NextResponse.json(
+        { error: "x-org-id header missing or does not match run org" },
+        { status: 403 },
+      );
+    }
+  } else {
     const ctx = await getOrgContext();
     if (!ctx?.activeOrgId || ctx.activeOrgId !== run.organization_id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

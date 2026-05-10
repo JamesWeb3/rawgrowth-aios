@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { currentOrganizationId } from "@/lib/supabase/constants";
+import { getOrgContext } from "@/lib/auth/admin";
+import { getAllowedDepartments } from "@/lib/auth/dept-acl";
 import { RUN_STATUSES, type RunStatus } from "@/lib/runs/constants";
 import { isUuid } from "@/lib/utils";
 
@@ -17,10 +18,18 @@ const VALID_RUN_STATUSES = new Set<string>(RUN_STATUSES);
  *
  * Returns runs enriched with their routine title + assigned agent name,
  * joined in-process (small tenant count; one extra round-trip is cheap).
+ *
+ * Per-dept ACL: invitees with allowed_departments only see runs whose
+ * routine's assignee_agent.department is in their allowed set. Admin
+ * + unrestricted members see all. Mirrors /api/approvals.
  */
 export async function GET(req: NextRequest) {
   try {
-    const organizationId = await currentOrganizationId();
+    const ctx = await getOrgContext();
+    if (!ctx?.activeOrgId || !ctx.userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const organizationId = ctx.activeOrgId;
     const url = new URL(req.url);
     // Clamp to [1, 200]. Without the lower bound a "limit=-10" query
     // string makes Postgres throw "LIMIT must not be negative".
@@ -71,26 +80,48 @@ export async function GET(req: NextRequest) {
     const { data: agents } = agentIds.length
       ? await db
           .from("rgaios_agents")
-          .select("id, name, role, title")
+          .select("id, name, role, title, department")
           .in("id", agentIds)
       : { data: [] };
     const agentById = new Map((agents ?? []).map((a) => [a.id, a]));
 
-    const enriched = runs.map((run) => {
-      const routine = routineById.get(run.routine_id);
-      const agent = routine?.assignee_agent_id
-        ? agentById.get(routine.assignee_agent_id)
-        : null;
-      return {
-        ...run,
-        routine: routine
-          ? { id: routine.id, title: routine.title }
-          : null,
-        agent: agent
-          ? { id: agent.id, name: agent.name, role: agent.role, title: agent.title }
-          : null,
-      };
+    // Per-dept ACL filter (mirrors /api/approvals). Resolve allowed
+    // departments once; null means unrestricted (admin or no membership
+    // restriction). Runs whose routine has no assignee or whose agent
+    // department isn't in the allowed set get dropped.
+    const allowedDepts = await getAllowedDepartments({
+      userId: ctx.userId,
+      organizationId,
+      isAdmin: ctx.isAdmin,
     });
+
+    const enriched = runs
+      .map((run) => {
+        const routine = routineById.get(run.routine_id);
+        const agent = routine?.assignee_agent_id
+          ? agentById.get(routine.assignee_agent_id)
+          : null;
+        return {
+          ...run,
+          routine: routine
+            ? { id: routine.id, title: routine.title }
+            : null,
+          agent: agent
+            ? {
+                id: agent.id,
+                name: agent.name,
+                role: agent.role,
+                title: agent.title,
+              }
+            : null,
+          _agentDept: agent?.department ?? null,
+        };
+      })
+      .filter((row) => {
+        if (allowedDepts === null) return true;
+        return row._agentDept ? allowedDepts.includes(row._agentDept) : false;
+      })
+      .map(({ _agentDept: _drop, ...rest }) => rest);
 
     return NextResponse.json({ runs: enriched });
   } catch (err) {

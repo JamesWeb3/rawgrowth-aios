@@ -16,6 +16,7 @@ import {
 import { upsertA, isCloudflareEnabled } from "@/lib/provision/cloudflare";
 import { sendWelcomeEmail } from "@/lib/auth/email";
 import { requireCronAuth } from "@/lib/cron/auth";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/supabase/constants";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -315,12 +316,22 @@ export async function GET(req: NextRequest) {
           }
         }
 
+        // Pin to DEFAULT_ORGANIZATION_ID when the queue row hasn't been
+        // bound to a tenant yet (mirrors schedule-tick:286-290). RLS
+        // policies of the form `organization_id = rgaios_current_org_id()`
+        // exclude null rows, so a null-tenanted audit row would be
+        // invisible to every legitimate admin reader.
         await db.from("rgaios_audit_log").insert({
-          organization_id: row.organization_id,
+          organization_id: row.organization_id ?? DEFAULT_ORGANIZATION_ID,
           kind: "vps_provisioned",
           actor_type: "system",
           actor_id: "provision-tick",
-          detail: { domain: meta.domain, droplet_id: meta.droplet_id },
+          detail: {
+            domain: meta.domain,
+            droplet_id: meta.droplet_id,
+            queue_row_id: row.id,
+            unbound: row.organization_id === null,
+          },
         } as never);
 
         results.push({

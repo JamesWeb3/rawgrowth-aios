@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { currentOrganizationId } from "@/lib/supabase/constants";
+import { getOrgContext } from "@/lib/auth/admin";
+import { getAllowedDepartments } from "@/lib/auth/dept-acl";
 import { badUuidResponse } from "@/lib/utils";
 
 export const runtime = "nodejs";
@@ -11,6 +12,12 @@ export const runtime = "nodejs";
  * Returns the run + routine + agent + a full timeline of audit events
  * where detail->>run_id == this run. Ordered by timestamp ascending so
  * the UI can render the tool-call chain as it happened.
+ *
+ * Per-dept ACL: invitees with allowed_departments only see a run whose
+ * routine's assignee_agent.department is in their allowed set. UUIDs
+ * aren't secrets - runs link out via dashboards / Slack / Telegram, so
+ * org-scope alone leaks across departments. Returns 404 (not 403) so a
+ * marketing invitee can't probe finance run ids by status code.
  */
 export async function GET(
   _req: NextRequest,
@@ -20,7 +27,11 @@ export async function GET(
     const { id } = await params;
     const bad = badUuidResponse(id);
     if (bad) return bad;
-    const organizationId = await currentOrganizationId();
+    const ctx = await getOrgContext();
+    if (!ctx?.activeOrgId || !ctx.userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const organizationId = ctx.activeOrgId;
     const db = supabaseAdmin();
 
     const { data: run, error: runErr } = await db
@@ -46,14 +57,28 @@ export async function GET(
       name: string;
       role: string;
       title: string | null;
+      department: string | null;
     } | null = null;
     if (routine?.assignee_agent_id) {
       const { data } = await db
         .from("rgaios_agents")
-        .select("id, name, role, title")
+        .select("id, name, role, title, department")
         .eq("id", routine.assignee_agent_id)
         .maybeSingle();
       agent = data;
+    }
+
+    // Dept-ACL gate. Resolve once. allowed=null means unrestricted.
+    const allowedDepts = await getAllowedDepartments({
+      userId: ctx.userId,
+      organizationId,
+      isAdmin: ctx.isAdmin,
+    });
+    if (allowedDepts !== null) {
+      const dept = agent?.department ?? null;
+      if (!dept || !allowedDepts.includes(dept)) {
+        return NextResponse.json({ error: "run not found" }, { status: 404 });
+      }
     }
 
     // Timeline from audit_log
