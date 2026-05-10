@@ -240,10 +240,16 @@ export default function AgentChatTab({
   // SSR seeds initialMessages on first paint. Skip the client GET when
   // we already have rows, otherwise we'd burn a round-trip and overwrite
   // the SSR-seeded state with the same data.
+  // AbortController on cleanup so fast page navigations (chat picker,
+  // /agents/tree) actually CANCEL the in-flight history fetch instead
+  // of letting it leak a stale 404 toast after unmount. Without abort,
+  // navigating off mid-flight surfaces the prior page's 404 in console
+  // (bug W8 #9).
   useEffect(() => {
     if (initialMessages.length > 0) return;
+    const ctrl = new AbortController();
     let cancelled = false;
-    fetch(`/api/agents/${agentId}/chat`)
+    fetch(`/api/agents/${agentId}/chat`, { signal: ctrl.signal })
       .then(async (r) => {
         if (r.ok) {
           return r.json().catch(() => ({ messages: [] }));
@@ -265,12 +271,15 @@ export default function AgentChatTab({
         );
         setHydrated(true);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // AbortError on unmount is expected, never log/toast.
         if (cancelled) return;
+        if ((err as { name?: string })?.name === "AbortError") return;
         setHydrated(true);
       });
     return () => {
       cancelled = true;
+      ctrl.abort();
     };
     // initialMessages reference is stable per agent (set from SSR prop).
     // eslint-disable-next-line react-hooks/exhaustive-deps

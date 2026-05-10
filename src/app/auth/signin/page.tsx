@@ -10,9 +10,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 
+// Routes that should NEVER be the post-signin landing. /agents/<id>
+// drops the user straight into a chat surface when they probably
+// just wanted the dashboard. /auth/* is a redirect loop. Anything
+// off-domain is XSS-bait. Everything else is fine.
+const CALLBACK_BLOCKLIST = [/^\/agents\//, /^\/auth\//];
+
+function isSafeCallback(url: string | null): boolean {
+  if (!url) return false;
+  // Reject absolute URLs; only same-origin paths.
+  if (!url.startsWith("/")) return false;
+  if (url.startsWith("//")) return false;
+  for (const re of CALLBACK_BLOCKLIST) {
+    if (re.test(url)) return false;
+  }
+  return true;
+}
+
 export default function SignInPage() {
   const search = useSearchParams();
-  const callbackUrl = search.get("callbackUrl") ?? "/";
+  // Default post-signin landing is the dashboard. NextAuth's automatic
+  // callbackUrl propagation can park the user on whatever route forced
+  // the redirect (e.g. /agents/<atlas-id> from a stale session-expired
+  // tab), which lands them on Atlas chat instead of the dashboard
+  // overview. Whitelist only "safe" callback paths; anything else
+  // collapses to "/" so first-after-login is always the Dashboard
+  // (bug W8 #10).
+  const rawCallback = search.get("callbackUrl");
+  const callbackUrl = isSafeCallback(rawCallback) ? rawCallback! : "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

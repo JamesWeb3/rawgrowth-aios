@@ -22,6 +22,8 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { ClientTime } from "@/components/client-time";
+
 export type Bucket =
   | "brand"
   | "content"
@@ -402,7 +404,7 @@ function FileCard({
             {file.title}
           </div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span>{new Date(file.uploaded_at).toLocaleDateString()}</span>
+            <ClientTime iso={file.uploaded_at} mode="date" />
             {file.size_bytes != null && (
               <>
                 <span>·</span>
@@ -433,8 +435,8 @@ function FileCard({
 }
 
 function BrandProfileVirtualRow({ profile }: { profile: BrandProfileRow }) {
-  const approved = profile.approved_at
-    ? new Date(Number(profile.approved_at)).toLocaleDateString()
+  const approvedIso = profile.approved_at
+    ? new Date(Number(profile.approved_at)).toISOString()
     : null;
   return (
     <Link
@@ -453,10 +455,10 @@ function BrandProfileVirtualRow({ profile }: { profile: BrandProfileRow }) {
             <span>Generated</span>
             <span>·</span>
             <span>{profile.status}</span>
-            {approved && (
+            {approvedIso && (
               <>
                 <span>·</span>
-                <span>approved {approved}</span>
+                <span>approved <ClientTime iso={approvedIso} mode="date" /></span>
               </>
             )}
           </div>
