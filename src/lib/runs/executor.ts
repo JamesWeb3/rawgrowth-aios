@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { anthropic } from "@ai-sdk/anthropic";
+import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import {
   generateText,
   stepCountIs,
@@ -9,6 +9,7 @@ import {
 } from "ai";
 
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { tryDecryptSecret } from "@/lib/crypto";
 import {
   callTool,
   listTools,
@@ -100,8 +101,12 @@ export async function executeRun(runId: string): Promise<void> {
       //     operator's Max OAuth token in ~/.claude. No ANTHROPIC_API_KEY
       //     needed. MCP tool use only fires if the operator has registered
       //     this v3 MCP server in claude_desktop_config (operational).
-      //   Path B (default): @ai-sdk/anthropic + Commercial API key. Full
-      //     in-process tool use via the AI SDK toolset.
+      //   Path B (default): @ai-sdk/anthropic with auth resolution order:
+      //     1. Org's Claude Max OAuth token pool (mirrors chat.ts +
+      //        oauth-first.ts behaviour - no API key required).
+      //     2. ANTHROPIC_API_KEY env (commercial API fallback).
+      //     Either way the AI SDK runs the in-process tool loop with the
+      //     same toolset / systemPrompt.
       // One env var flips per-VPS. Both paths build from the same systemPrompt
       // + userMessage so prompt drift can't sneak between them.
       if (process.env.RUNTIME_PATH === "cli") {
@@ -112,12 +117,12 @@ export async function executeRun(runId: string): Promise<void> {
         );
         result = { text, steps: [] as unknown[] };
       } else {
-        result = await generateText({
-          model: anthropic(runtimeToModel(agent?.runtime)),
-          system: systemPrompt,
-          prompt: userMessage,
+        result = await generateWithOauthOrApiKey({
+          organizationId: run.organization_id,
+          model: runtimeToModel(agent?.runtime),
+          systemPrompt,
+          userMessage,
           tools,
-          stopWhen: stepCountIs(MAX_STEPS),
           abortSignal: abortCtl.signal,
         });
       }
@@ -221,6 +226,198 @@ function generateViaClaudeCli(
     child.stdin.write(`${systemPrompt}\n\n---\n\n${userMessage}`);
     child.stdin.end();
   });
+}
+
+// ─── Path B dispatcher: OAuth pool first, API key fallback ─────────
+
+/**
+ * Anthropic's OAuth gate for /v1/messages requires the system prompt to
+ * START with this exact identity line - any other content in `system`
+ * before this line returns 401 "OAuth authentication is currently not
+ * supported." Same constant used by lib/agent/chat.ts and lib/llm/provider.ts;
+ * duplicated here to keep the executor self-contained.
+ */
+const CLAUDE_CODE_PREFIX =
+  "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/**
+ * Beta header that flips /v1/messages into OAuth-token mode. Same value
+ * the chat.ts + provider.ts paths send; required alongside the Bearer
+ * auth token to accept sk-ant-oat01-* tokens.
+ */
+const OAUTH_BETA_HEADER = "oauth-2025-04-20";
+
+type ClaudeMaxRow = {
+  id: string;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+/**
+ * Load every connected claude-max OAuth token for this org, decrypted.
+ * Mirrors the rotation order in lib/llm/oauth-first.ts: Fisher-Yates the
+ * pool so concurrent runs don't stampede the same token. We don't have a
+ * caller user id at the executor layer (runs are headless) so the whole
+ * pool is treated as borrowed and shuffled uniformly.
+ */
+async function loadOauthTokenPool(orgId: string): Promise<string[]> {
+  const { data, error } = await supabaseAdmin()
+    .from("rgaios_connections")
+    .select("id, user_id, metadata")
+    .eq("organization_id", orgId)
+    .eq("provider_config_key", "claude-max")
+    .eq("status", "connected");
+  if (error || !data) return [];
+  const rows = [...(data as unknown as ClaudeMaxRow[])];
+  // Fisher-Yates shuffle so multiple in-flight runs don't all start with
+  // the same token and immediately stampede its bucket.
+  for (let i = rows.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+  }
+  const tokens: string[] = [];
+  for (const row of rows) {
+    const meta = (row.metadata ?? {}) as { access_token?: string };
+    if (!meta.access_token) continue;
+    const tok = tryDecryptSecret(meta.access_token);
+    if (tok) tokens.push(tok);
+  }
+  return tokens;
+}
+
+/**
+ * In-process cooldown for tokens we just saw 429 / 401 on. Same 60s
+ * window as chat.ts / oauth-first.ts so all three callers treat
+ * Anthropic's per-account buckets consistently.
+ */
+const EXEC_TOKEN_COOLDOWN: Map<string, number> = new Map();
+const EXEC_COOLDOWN_MS = 60_000;
+
+function isExecTokenCold(token: string): boolean {
+  const until = EXEC_TOKEN_COOLDOWN.get(token);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    EXEC_TOKEN_COOLDOWN.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function markExecTokenCold(token: string): void {
+  EXEC_TOKEN_COOLDOWN.set(token, Date.now() + EXEC_COOLDOWN_MS);
+}
+
+function isOauthRotateError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /\b429\b/.test(msg) ||
+    /\b401\b/.test(msg) ||
+    /rate_limit_error/i.test(msg) ||
+    /authentication_error/i.test(msg) ||
+    /Too Many Requests/i.test(msg) ||
+    /Invalid authentication credentials/i.test(msg)
+  );
+}
+
+type GenerateOptions = {
+  organizationId: string;
+  model: string;
+  systemPrompt: string;
+  userMessage: string;
+  tools: ToolSet;
+  abortSignal: AbortSignal;
+};
+
+/**
+ * Resolve auth and call generateText with full toolset support. Order:
+ *   1. Walk the org's Claude Max OAuth pool (caller-paid via Pedro's
+ *      existing connections). Builds a per-call createAnthropic instance
+ *      with `authToken` (sends Authorization: Bearer) + the OAuth beta
+ *      header, prepending the Claude Code identity line to systemPrompt
+ *      so the gate doesn't 401. Two-pass walk like the chat path:
+ *      cold-skipping pass first, then everything.
+ *   2. Fallback to ANTHROPIC_API_KEY (default anthropic() instance).
+ *   3. Throw the last OAuth error if neither path is available, so the
+ *      run row's error column shows a concrete reason instead of
+ *      "executor offline".
+ *
+ * Tool execute side-effects always fire (unlike provider.ts where they're
+ * captured no-ops) - this is the manager-runs critical path.
+ */
+async function generateWithOauthOrApiKey(opts: GenerateOptions) {
+  const tokens = await loadOauthTokenPool(opts.organizationId);
+
+  // Build the OAuth-gated system prompt once. Identity line MUST be the
+  // first chars of `system`; the rest of the prompt comes after a blank
+  // line so the model still sees the agent persona / routine instructions.
+  const oauthSystem = opts.systemPrompt.startsWith(CLAUDE_CODE_PREFIX)
+    ? opts.systemPrompt
+    : `${CLAUDE_CODE_PREFIX}\n\n${opts.systemPrompt}`;
+
+  const passes: Array<(t: string) => boolean> = [
+    (t) => !isExecTokenCold(t),
+    () => true,
+  ];
+
+  let lastOauthErr: unknown = null;
+  for (const filter of passes) {
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (!filter(tok)) continue;
+      try {
+        const provider = createAnthropic({
+          // apiKey omitted: when authToken is set the SDK sends
+          // Authorization: Bearer <token> instead of x-api-key, which
+          // is what /v1/messages expects for sk-ant-oat01-* tokens.
+          authToken: tok,
+          headers: {
+            "anthropic-beta": OAUTH_BETA_HEADER,
+          },
+        });
+        return await generateText({
+          model: provider(opts.model),
+          system: oauthSystem,
+          prompt: opts.userMessage,
+          tools: opts.tools,
+          stopWhen: stepCountIs(MAX_STEPS),
+          abortSignal: opts.abortSignal,
+        });
+      } catch (err) {
+        lastOauthErr = err;
+        if (!isOauthRotateError(err)) throw err;
+        markExecTokenCold(tok);
+        console.warn(
+          `[executor.oauth] token ${i + 1}/${tokens.length} failed (${
+            (err as Error).message?.slice(0, 120) ?? ""
+          }), cooling 60s, trying next`,
+        );
+      }
+    }
+  }
+
+  // OAuth pool exhausted (or empty). Fall through to the commercial
+  // API key path so anyone running this on a VPS with ANTHROPIC_API_KEY
+  // still gets a working executor.
+  if (process.env.ANTHROPIC_API_KEY) {
+    if (tokens.length > 0) {
+      console.warn(
+        "[executor.oauth] all OAuth tokens exhausted, falling back to ANTHROPIC_API_KEY",
+      );
+    }
+    return generateText({
+      model: anthropic(opts.model),
+      system: opts.systemPrompt,
+      prompt: opts.userMessage,
+      tools: opts.tools,
+      stopWhen: stepCountIs(MAX_STEPS),
+      abortSignal: opts.abortSignal,
+    });
+  }
+
+  if (lastOauthErr) throw lastOauthErr;
+  throw new Error(
+    "No LLM auth available: no Claude Max OAuth token connected for this org and ANTHROPIC_API_KEY is unset. Connect Claude Max at /connections.",
+  );
 }
 
 // ─── System prompt ──────────────────────────────────────────────────
