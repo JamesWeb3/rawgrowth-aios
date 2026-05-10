@@ -322,7 +322,7 @@ export async function executeChatTask(input: {
       agent_id: input.assigneeAgentId,
       user_id: null,
       role: "assistant",
-      content: `📋 ${input.title}\n\n${result.reply}`,
+      content: `${input.title}\n\n${result.reply}`,
       metadata: {
         kind: "chat_task_output",
         run_id: input.runId,

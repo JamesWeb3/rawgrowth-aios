@@ -55,11 +55,17 @@ type ClaudeMaxRow = {
  * in lib/llm/oauth-first.ts so both code paths drain the same pool the
  * same way - no surprise re-orderings between onboarding chat and agent
  * chat. Returns an empty array if no tokens exist or all decrypt-fail.
+ *
+ * Each entry pairs the decrypted access_token with the source row's
+ * uuid PK so a 401-triggered refresh can scope its UPDATE to that one
+ * row instead of clobbering every member's token in the org.
  */
+type ClaudeMaxPoolEntry = { rowId: string; token: string };
+
 async function loadClaudeMaxTokenPool(
   organizationId: string,
   callerUserId?: string | null,
-): Promise<string[]> {
+): Promise<ClaudeMaxPoolEntry[]> {
   const { data, error } = await supabaseAdmin()
     .from("rgaios_connections")
     .select("id, user_id, metadata")
@@ -77,14 +83,14 @@ async function loadClaudeMaxTokenPool(
     if (aOwn !== bOwn) return aOwn - bOwn;
     return a.id.localeCompare(b.id);
   });
-  const tokens: string[] = [];
+  const entries: ClaudeMaxPoolEntry[] = [];
   for (const row of ordered) {
     const meta = (row.metadata ?? {}) as { access_token?: string };
     if (!meta.access_token) continue;
     const tok = tryDecryptSecret(meta.access_token);
-    if (tok) tokens.push(tok);
+    if (tok) entries.push({ rowId: row.id, token: tok });
   }
-  return tokens;
+  return entries;
 }
 
 /**
@@ -115,25 +121,26 @@ function markChatTokenCold(token: string): void {
  * using the stored refresh_token. Returns the new access_token on
  * success or null if refresh fails (no refresh_token, refresh
  * endpoint rejected, etc).
+ *
+ * Scoped to the SPECIFIC row whose token just 401'd. After migration
+ * 0063 there can be multiple claude-max rows per org (one per member);
+ * an org-wide UPDATE here would clobber every other member's
+ * access_token with the freshly-refreshed one - blowing away their
+ * own valid sessions mid-request. Caller passes the row id from the
+ * pool entry that triggered the 401.
  */
 async function tryRefreshClaudeMaxToken(
   organizationId: string,
+  rowId: string,
 ): Promise<string | null> {
   const { encryptSecret } = await import("@/lib/crypto");
   const { refreshClaudeMaxAccessToken } = await import("@/lib/agent/oauth");
-  // After migration 0063 there can be multiple claude-max rows per org
-  // (one per member). Without order+limit, maybeSingle() throws. We
-  // always refresh against the oldest row - that one is the legacy /
-  // org-level grant most likely to still have a valid refresh_token.
-  // Per-user 401s on a different row will eventually drain through the
-  // pool's cooldown rather than refresh from here.
   const { data } = await supabaseAdmin()
     .from("rgaios_connections")
     .select("metadata")
+    .eq("id", rowId)
     .eq("organization_id", organizationId)
     .eq("provider_config_key", "claude-max")
-    .order("created_at", { ascending: true })
-    .limit(1)
     .maybeSingle();
   if (!data) return null;
   const meta = (data.metadata ?? {}) as {
@@ -152,6 +159,8 @@ async function tryRefreshClaudeMaxToken(
   }
   // Persist new tokens. refresh_token may rotate; if Anthropic
   // returns a fresh one, store it - else keep the previous one.
+  // Filtered by row id so only the failing member's row rotates -
+  // the other members keep their own (still-valid) access tokens.
   const installedAt = new Date().toISOString();
   await supabaseAdmin()
     .from("rgaios_connections")
@@ -166,6 +175,7 @@ async function tryRefreshClaudeMaxToken(
         installed_at: installedAt,
       },
     } as never)
+    .eq("id", rowId)
     .eq("organization_id", organizationId)
     .eq("provider_config_key", "claude-max");
   await supabaseAdmin()
@@ -175,7 +185,7 @@ async function tryRefreshClaudeMaxToken(
       kind: "claude_max_token_refreshed",
       actor_type: "system",
       actor_id: "auto-refresh",
-      detail: { expires_in: r.expires_in ?? null },
+      detail: { row_id: rowId, expires_in: r.expires_in ?? null },
     } as never);
   return r.access_token;
 }
@@ -461,11 +471,11 @@ export async function chatReply(input: {
     callerUserId,
   } = input;
 
-  const claudeTokens = await loadClaudeMaxTokenPool(
+  const claudeEntries = await loadClaudeMaxTokenPool(
     organizationId,
     callerUserId,
   );
-  if (claudeTokens.length === 0) {
+  if (claudeEntries.length === 0) {
     return {
       ok: false,
       error:
@@ -551,8 +561,9 @@ export async function chatReply(input: {
     (t: string) => !isChatTokenCold(t),
     () => true,
   ]) {
-    for (let i = 0; i < claudeTokens.length; i++) {
-      const tok = claudeTokens[i];
+    for (let i = 0; i < claudeEntries.length; i++) {
+      const entry = claudeEntries[i];
+      const tok = entry.token;
       if (!filter(tok)) continue;
       let r: Response;
       try {
@@ -561,11 +572,15 @@ export async function chatReply(input: {
         networkErr = err as Error;
         continue;
       }
-      // 401: silent refresh + retry on the SAME token slot. If the
-      // refresh helper updates the row's metadata, subsequent rotations
-      // will pick up the fresh access_token from DB on the next call.
+      // 401: silent refresh + retry on the SAME token slot. The
+      // refresh updates ONLY this row's metadata (scoped by rowId)
+      // so other members' tokens stay intact. Subsequent rotations
+      // pick up the fresh access_token from DB on the next call.
       if (r.status === 401) {
-        const fresh = await tryRefreshClaudeMaxToken(organizationId);
+        const fresh = await tryRefreshClaudeMaxToken(
+          organizationId,
+          entry.rowId,
+        );
         if (fresh) {
           try {
             r = await callAnthropic(fresh);
@@ -587,11 +602,11 @@ export async function chatReply(input: {
       if (r.status === 429 || r.status === 401) {
         markChatTokenCold(tok);
         console.warn(
-          `[chat] Claude Max token ${i + 1}/${claudeTokens.length} ${r.status}, cooling ${CHAT_COOLDOWN_MS / 1000}s, rotating`,
+          `[chat] Claude Max token ${i + 1}/${claudeEntries.length} ${r.status}, cooling ${CHAT_COOLDOWN_MS / 1000}s, rotating`,
         );
       } else {
         console.warn(
-          `[chat] Claude Max token ${i + 1}/${claudeTokens.length} returned ${r.status}, rotating`,
+          `[chat] Claude Max token ${i + 1}/${claudeEntries.length} returned ${r.status}, rotating`,
         );
       }
     }
