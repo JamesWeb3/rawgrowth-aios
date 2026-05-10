@@ -83,7 +83,13 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
     volumes:
-      - fastembed-cache:/var/lib/rawclaw/fastembed
+      # v2 suffix forces a fresh named volume so it inherits the
+      # nextjs:nodejs ownership the runner stage now sets on
+      # /var/lib/rawclaw/fastembed. The original `fastembed-cache`
+      # volume was created when the image briefly ran as root and
+      # stayed root-owned, blocking the model download once the
+      # container correctly drops to uid 1001.
+      - fastembed-cache-v2:/var/lib/rawclaw/fastembed
 
   caddy:
     image: caddy:2-alpine
@@ -103,4 +109,4 @@ services:
 volumes:
   caddy-data:
   caddy-config:
-  fastembed-cache:
+  fastembed-cache-v2:

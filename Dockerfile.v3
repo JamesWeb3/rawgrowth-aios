@@ -58,6 +58,17 @@ RUN apt-get update && \
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 --ingroup nodejs nextjs
 
+# fastembed model cache directory. The compose volume mount sits on top
+# of this path; Docker preserves image-defined ownership for empty
+# named volumes on first attach, so a fresh `fastembed-cache-v2`
+# volume comes up owned by nextjs:nodejs and the model download
+# (~33MB) succeeds on first call. The previous `fastembed-cache`
+# volume was created in a build that ran the image as root, so it
+# stayed root-owned even after we dropped to nextjs. Renaming forces
+# a clean volume.
+RUN mkdir -p /var/lib/rawclaw/fastembed && \
+    chown -R nextjs:nodejs /var/lib/rawclaw
+
 # Next.js standalone
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
