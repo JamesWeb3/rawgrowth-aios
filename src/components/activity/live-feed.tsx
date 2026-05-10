@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
 
+import { ClientTime } from "@/components/client-time";
+
 type AuditRow = {
   id: string;
   ts: string;
@@ -88,7 +90,7 @@ export function LiveActivityFeed({
           className="flex items-baseline gap-3 border-b border-[var(--line)] py-2 text-sm"
         >
           <time className="w-24 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
-            {new Date(r.ts).toLocaleTimeString()}
+            <ClientTime iso={r.ts} mode="time" />
           </time>
           <span
             className={

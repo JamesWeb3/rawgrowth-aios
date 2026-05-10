@@ -14,6 +14,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { OrgOverview } from "@/lib/organizations/overview";
+import { ClientTime } from "@/components/client-time";
 
 export function CompanyGeneralView({
   org,
@@ -33,13 +34,6 @@ export function CompanyGeneralView({
 }
 
 function IdentityCard({ org }: { org: OrgOverview }) {
-  const created = new Date(org.createdAt);
-  const createdLabel = created.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-
   return (
     <section className="rounded-2xl border border-border bg-card/40 p-6">
       <div className="mb-5 flex items-center gap-2">
@@ -58,7 +52,11 @@ function IdentityCard({ org }: { org: OrgOverview }) {
           </code>
         </Row>
         <Row icon={Calendar} label="Created">
-          <span className="text-foreground">{createdLabel}</span>
+          <ClientTime
+            iso={org.createdAt}
+            mode="date"
+            className="text-foreground"
+          />
         </Row>
         {org.owner && (
           <Row icon={User} label="Owner">

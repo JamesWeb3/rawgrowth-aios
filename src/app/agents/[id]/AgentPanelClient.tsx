@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ClientTime } from "@/components/client-time";
 import { TgProvisionModal } from "@/components/tg-provision-modal";
 import AgentChatTab from "@/components/agents/AgentChatTab";
 import { AGENT_RUNTIMES, AGENT_ROLES } from "@/lib/agents/constants";
@@ -311,9 +312,6 @@ export function AgentPanelClient({
   const dept = deptStyle(agent.department);
   const status = STATUS_STYLE[(agent.status ?? "idle") as AgentStatus];
   const isCeo = agent.role === "ceo";
-  const lastActivity = agent.updated_at
-    ? new Date(agent.updated_at).toLocaleString()
-    : "no activity yet";
   const reportsToLabel = agent.reports_to ? "reports up the org" : "top of org";
 
   const tabMeta: Record<Tab, { label: string; Icon: LucideIcon }> = {
@@ -383,7 +381,13 @@ export function AgentPanelClient({
               <span className="mx-1.5 text-border">·</span>
               <span>{reportsToLabel}</span>
               <span className="mx-1.5 text-border">·</span>
-              <span>last activity {lastActivity}</span>
+              <span>
+                last activity{" "}
+                <ClientTime
+                  iso={agent.updated_at}
+                  fallback="no activity yet"
+                />
+              </span>
             </p>
           </div>
         </div>
@@ -673,7 +677,7 @@ export function AgentPanelClient({
                     {m.kind}
                   </span>
                   <time className="text-[11px] text-[var(--text-muted)]">
-                    {new Date(m.ts).toLocaleString()}
+                    <ClientTime iso={m.ts} />
                   </time>
                 </div>
                 <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-[var(--text-body)]">
@@ -761,7 +765,7 @@ export function AgentPanelClient({
                       </p>
                     </div>
                     <time className="ml-3 shrink-0 text-[11px] text-[var(--text-muted)]">
-                      {new Date(f.uploaded_at).toLocaleString()}
+                      <ClientTime iso={f.uploaded_at} />
                     </time>
                   </li>
                 ))}
@@ -817,9 +821,7 @@ export function AgentPanelClient({
                   </div>
                 </div>
                 <time className="ml-3 shrink-0 text-[11px] text-[var(--text-muted)]">
-                  {t.started_at
-                    ? new Date(t.started_at).toLocaleString()
-                    : "Never run"}
+                  <ClientTime iso={t.started_at} fallback="Never run" />
                 </time>
               </li>
             ))}

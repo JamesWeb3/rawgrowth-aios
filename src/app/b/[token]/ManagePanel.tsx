@@ -44,16 +44,36 @@ export function ManagePanel({ token, justConfirmed }: { token: string; justConfi
   }
 
   if (error) {
-    const isNotFound = /not_found|404/i.test(error);
+    // Treat anything that smells like a missing / malformed token as a
+    // friendly "couldn't find it" empty state, mirroring the copy
+    // /book/[orgSlug]/not-found.tsx ships. Falling through to the raw
+    // error string ("invalid_token", "Something went wrong") read as
+    // broken in the demo tab sweep.
+    const isFriendly = /not_found|404|invalid_token|invalid token|400/i.test(error);
+    if (isFriendly) {
+      return (
+        <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center">
+          <p className="text-[10px] uppercase tracking-[1.5px] text-muted-foreground">
+            Booking link
+          </p>
+          <h2 className="mt-3 font-serif text-2xl tracking-tight text-foreground">
+            We couldn&apos;t find that booking page
+          </h2>
+          <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
+            The link may have expired, been cancelled, or already rescheduled.
+            Check your latest calendar invite for an updated link, or ask
+            the person who shared it for a fresh one.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-dashed border-border bg-card/30 p-10 text-center">
         <p className="font-serif text-2xl tracking-tight text-foreground">
-          {isNotFound ? "We couldn't find that booking" : "Something went wrong"}
+          Something went wrong
         </p>
         <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-          {isNotFound
-            ? "The link may have expired, been cancelled, or already rescheduled. Check your latest calendar invite for an updated link."
-            : error}
+          {error}
         </p>
       </div>
     );
