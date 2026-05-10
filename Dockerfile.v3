@@ -8,12 +8,12 @@
 #   - (no local postgres/postgrest deps; Supabase is remote)
 # ─────────────────────────────────────────────────────────────
 
-FROM node:24-alpine AS deps
+FROM node:24-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-FROM node:24-alpine AS builder
+FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -26,8 +26,10 @@ RUN npm run build
 # ANTHROPIC_API_KEY is missing / Path-A call fails. base.en is ~150MB
 # and hits good-enough accuracy for short Telegram voice notes in
 # English. Swap WHISPER_MODEL to small.en if a client needs more.
-FROM alpine:3.19 AS whisper
-RUN apk add --no-cache build-base cmake git curl
+FROM debian:bookworm-slim AS whisper
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential cmake git curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git . && \
     cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF && \
@@ -37,7 +39,7 @@ RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git . && \
     curl -fsSL -o /out/model/ggml-base.en.bin \
       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
-FROM node:24-alpine AS runner
+FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \
@@ -48,11 +50,13 @@ ENV NODE_ENV=production \
     WHISPER_BIN=/usr/local/bin/whisper-cli \
     WHISPER_MODEL=/usr/local/share/whisper/ggml-base.en.bin
 
-RUN apk add --no-cache libstdc++ libgcc
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libstdc++6 libgcc-s1 && \
+    rm -rf /var/lib/apt/lists/*
 
 # Drop root
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 --ingroup nodejs nextjs
 
 # Next.js standalone
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
