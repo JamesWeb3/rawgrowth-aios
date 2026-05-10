@@ -72,6 +72,26 @@ COPY --from=builder --chown=nextjs:nodejs /app/docker/entrypoint.sh /usr/local/b
 COPY --from=whisper /out/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=whisper /out/model/ggml-base.en.bin /usr/local/share/whisper/ggml-base.en.bin
 
+# fastembed + onnxruntime-node native binaries.
+# next.config.ts marks fastembed/onnxruntime-node/@anush008/tokenizers/tar/
+# @huggingface/hub/progress as serverExternalPackages so Next.js standalone
+# loads them from node_modules at runtime instead of bundling. nft (the
+# tracer behind `output: standalone`) reliably copies the .js + .node
+# files, but the companion libonnxruntime.so.1 / libonnxruntime_providers_*.so
+# siblings of onnxruntime_binding.node frequently get dropped, leaving
+# the .node binding to dlopen against a missing libonnxruntime.so.1 at
+# runtime (`cannot open shared object file`). The embedder catches the
+# throw and falls back to stub embeddings, so RAG silently degrades to
+# noise. Re-copy the full package trees from the builder so every .so
+# travels with its .node binding. ONNX runpath is $ORIGIN/ so libs are
+# found beside the binding; no LD_LIBRARY_PATH needed. Adds ~40MB.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-node ./node_modules/onnxruntime-node
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/fastembed ./node_modules/fastembed
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@anush008 ./node_modules/@anush008
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@huggingface ./node_modules/@huggingface
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tar ./node_modules/tar
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/progress ./node_modules/progress
+
 # Runtime Node deps (pg/jwt/bcrypt pulled with full transitives)
 RUN npm install --omit=dev --no-save --no-package-lock \
       pg@^8 jsonwebtoken@^9 bcryptjs@^3
