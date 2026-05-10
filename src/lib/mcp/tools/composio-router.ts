@@ -179,14 +179,26 @@ registerTool({
 // Patterns deliberately broad: better to false-positive on a benign
 // "REMOVE_LABEL" and force the model to pick a more specific safe
 // action than to ship DELETE_REPOSITORY by accident.
+//
+// IMPORTANT: do NOT use `\b` word boundaries here. In JS regex `_` is
+// a word character, so `\bDELETE\b` does NOT match `GMAIL_DELETE_MESSAGE`
+// (the boundary between `_` and `D` is between two word chars and
+// therefore not a boundary at all). Real Composio action enums are
+// SCREAMING_SNAKE_CASE separated by `_`, occasionally `-`. We anchor
+// the verb on `_`, `-`, start-of-string, or end-of-string so the
+// denylist actually catches `GMAIL_DELETE_MESSAGE`, `HUBSPOT_DROP_LIST`,
+// `GITHUB_REMOVE_REPO`, `DB_TRUNCATE_TABLE`, etc. The trailing
+// `(?:[_\-]|$)` is what keeps `GITHUB_DELETED_REPO_LIST` (verb is
+// `DELETED`, not `DELETE`) from false-positive: after `DELETE` comes
+// `D`, which is not `_`/`-`/end, so the pattern fails as intended.
 const DESTRUCTIVE_ACTION_PATTERNS: RegExp[] = [
-  /\bDELETE\b/i,
-  /\bDROP\b/i,
-  /\bDESTROY\b/i,
-  /\bPURGE\b/i,
-  /\bREMOVE\b/i,
-  /\bWIPE\b/i,
-  /\bTRUNCATE\b/i,
+  /(?:^|[_\-])DELETE(?:[_\-]|$)/i,
+  /(?:^|[_\-])DROP(?:[_\-]|$)/i,
+  /(?:^|[_\-])DESTROY(?:[_\-]|$)/i,
+  /(?:^|[_\-])PURGE(?:[_\-]|$)/i,
+  /(?:^|[_\-])REMOVE(?:[_\-]|$)/i,
+  /(?:^|[_\-])WIPE(?:[_\-]|$)/i,
+  /(?:^|[_\-])TRUNCATE(?:[_\-]|$)/i,
 ];
 
 // ─── Tool: composio_use_tool (invoke) ───────────────────────────────

@@ -510,34 +510,39 @@ test("composio_use_tool: invalid app slug (no rows) surfaces 'isn't connected'",
   assert.match(result.content[0].text, /isn't connected/);
 });
 
-test("composio_use_tool: destructive action denylist refuses verbs at word boundaries", async () => {
+test("composio_use_tool: destructive action denylist refuses verbs at _/- boundaries", async () => {
   // Defense-in-depth gate added post-PR4 (commit 429389d). Until an
   // approval-prompt UI ships, the router refuses destructive verbs by
-  // regex match before the call ever leaves Node. Source patterns use
-  // \b boundaries: DELETE, DROP, DESTROY, PURGE, REMOVE, WIPE, TRUNCATE.
+  // regex match before the call ever leaves Node. Verbs:
+  // DELETE, DROP, DESTROY, PURGE, REMOVE, WIPE, TRUNCATE.
   //
-  // SUT BUG (reported in commit message, NOT fixed here per test-PR
-  // policy): \b matches between word and non-word chars. `_` IS a
-  // word char in JS regex, so `GMAIL_DELETE_MESSAGE` does NOT match
-  // /\bDELETE\b/. The denylist as shipped only blocks actions where
-  // the verb is bounded by non-word chars (space, hyphen, slash,
-  // start/end of string). Real-world Composio actions like
-  // GMAIL_DELETE_MESSAGE, HUBSPOT_DROP_LIST, etc bypass the gate.
-  // This test asserts the boundary-respecting behavior so the bug is
-  // visible in CI, and docs the cases that actually trip the gate.
+  // The patterns originally used `\b` boundaries which silently failed
+  // on real Composio action enums: `_` is a word character in JS regex,
+  // so `\bDELETE\b` does NOT match `GMAIL_DELETE_MESSAGE`. Fixed by
+  // anchoring on `(?:^|[_\-])VERB(?:[_\-]|$)` so the denylist actually
+  // catches the SCREAMING_SNAKE_CASE enums Composio publishes. This
+  // test pins the fix.
   installFetchRouter(() => {
     throw new Error("destructive action must short-circuit before any HTTP");
   });
   const { callTool } = await import("@/lib/mcp/registry");
-  // These DO match the current \b-bounded patterns (verb is separated
-  // by non-word chars or is at start/end).
-  const matchedByCurrentPatterns = [
+  // Real-world Composio action enums that the original \b-pattern
+  // BYPASSED. These MUST now be denied.
+  const mustBeDenied = [
     "DELETE",
     "DROP-LIST",
-    "do/REMOVE/now",
-    "TRUNCATE this",
+    "GMAIL_DELETE_MESSAGE",
+    "HUBSPOT_DROP_LIST",
+    "GITHUB_REMOVE_REPO",
+    "DB_TRUNCATE_TABLE",
+    "NOTION_DELETE_PAGE",
+    "SLACK_REMOVE_USER",
+    "LINKEDIN_DELETE_POST",
+    "DESTROY_RECORD",
+    "PURGE_CACHE",
+    "WIPE_DATA",
   ];
-  for (const action of matchedByCurrentPatterns) {
+  for (const action of mustBeDenied) {
     const result = await callTool(
       "composio_use_tool",
       { app: "x", action, input: {} },
@@ -548,6 +553,53 @@ test("composio_use_tool: destructive action denylist refuses verbs at word bound
       result.content[0].text,
       /denylist/,
       `${action} should hit the denylist text path`,
+    );
+  }
+});
+
+test("composio_use_tool: denylist allows safe actions whose names share a substring", async () => {
+  // Anchoring on (?:[_\-]|$) after the verb is what keeps the denylist
+  // from false-positive on enums where the verb appears as a substring
+  // of a longer word. Pin the safe names so a future regex tightening
+  // doesn't quietly break legitimate flows.
+  const safeActionsThatRouteToComposio = [
+    "GITHUB_DELETED_REPO_LIST", // DELETED, not DELETE
+    "GMAIL_SEND_EMAIL",
+    "GMAIL_UPDATE_DRAFT",
+    "EMAIL_DRAFT_SEND",
+    "SLACK_SEND_MESSAGE",
+    "HUBSPOT_LIST_CONTACTS",
+  ];
+  for (const action of safeActionsThatRouteToComposio) {
+    let composioHit = false;
+    installFetchRouter((req) => {
+      if (req.url.includes("backend.composio.dev/api/v1/actions/")) {
+        composioHit = true;
+        return jsonResponse({ ok: true });
+      }
+      if (req.url.includes("/rest/v1/rgaios_connections")) {
+        return jsonResponse([
+          fakeRow({
+            id: `row-allow-${action}`,
+            nangoConnectionId: `n-${action}`,
+            userId: "user-allow",
+          }),
+        ]);
+      }
+      return jsonResponse(null);
+    });
+    const { callTool } = await import("@/lib/mcp/registry");
+    const result = await callTool(
+      "composio_use_tool",
+      { app: "gmail", action, input: {} },
+      { organizationId: "org-allow", userId: "user-allow" },
+    );
+    assert.equal(result.isError, undefined, `${action} must NOT be denied`);
+    assert.ok(composioHit, `${action} should have routed through to Composio`);
+    assert.doesNotMatch(
+      result.content[0].text,
+      /denylist/,
+      `${action} must not hit the denylist text path`,
     );
   }
 });
