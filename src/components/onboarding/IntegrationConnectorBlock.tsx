@@ -87,6 +87,11 @@ export function IntegrationConnectorBlock({
   const [polling, setPolling] = useState(false);
   const [done, setDone] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks whether the component is still mounted so the in-flight poll
+  // fetch can short-circuit setState calls after unmount (avoids the
+  // React "set state on unmounted component" warning when the chat
+  // re-renders mid-poll).
+  const aliveRef = useRef(true);
 
   // Idempotency guard. Without this, a second mount (StrictMode in dev,
   // or chat re-render) would kick a new poll loop every time. Once we
@@ -119,7 +124,9 @@ export function IntegrationConnectorBlock({
 
   // Cleanup any in-flight poller when the block unmounts.
   useEffect(() => {
+    aliveRef.current = true;
     return () => {
+      aliveRef.current = false;
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -132,10 +139,11 @@ export function IntegrationConnectorBlock({
     setPolling(true);
     const start = Date.now();
     pollTimerRef.current = setInterval(async () => {
+      if (!aliveRef.current) return;
       if (Date.now() - start > POLL_MAX_MS) {
         if (pollTimerRef.current) clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
-        setPolling(false);
+        if (aliveRef.current) setPolling(false);
         return;
       }
       try {
@@ -143,8 +151,10 @@ export function IntegrationConnectorBlock({
           `/api/onboarding/integration-status/${provider}`,
           { cache: "no-store" },
         );
+        if (!aliveRef.current) return;
         if (!r.ok) return;
         const data = (await r.json()) as StatusResponse;
+        if (!aliveRef.current) return;
         if (data.connected) {
           if (pollTimerRef.current) clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;

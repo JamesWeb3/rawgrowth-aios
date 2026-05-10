@@ -16,7 +16,10 @@ export async function GET(req: NextRequest) {
   if (!ctx?.activeOrgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const limit = Math.min(50, Number(req.nextUrl.searchParams.get("limit") ?? 20));
+  // Coerce ?limit=foo (NaN) and missing param back to the 20 default;
+  // PostgREST rejects .limit(NaN) with a 400 otherwise.
+  const rawLimit = Number(req.nextUrl.searchParams.get("limit") ?? 20);
+  const limit = Math.min(50, Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20);
 
   const { data, error } = await supabaseAdmin()
     .from("rgaios_audit_log")

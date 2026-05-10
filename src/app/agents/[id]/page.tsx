@@ -131,13 +131,28 @@ export default async function AgentDetailPage({
   for (const r of (assignedRoutines ?? []) as Array<{ id: string; title: string }>) {
     titleById.set(r.id, r.title);
   }
-  const { data: runs } = await db
-    .from("rgaios_routine_runs")
-    .select("id, status, source, started_at, completed_at, error, routine_id")
-    .eq("organization_id", orgId)
-    .in("routine_id", routineIds.length > 0 ? routineIds : ["00000000-0000-0000-0000-000000000000"])
-    .order("started_at", { ascending: false, nullsFirst: false })
-    .limit(50);
+  // Skip the runs query entirely when the agent has no routines - PostgREST
+  // treats `.in("col", [])` as no-filter (returns the whole table), so the
+  // older code used an all-zeros UUID sentinel. Conditional skip is cleaner
+  // and survives the (very unlikely) day a real run lands with that id.
+  const { data: runs } =
+    routineIds.length > 0
+      ? await db
+          .from("rgaios_routine_runs")
+          .select("id, status, source, started_at, completed_at, error, routine_id")
+          .eq("organization_id", orgId)
+          .in("routine_id", routineIds)
+          .order("started_at", { ascending: false, nullsFirst: false })
+          .limit(50)
+      : { data: [] as Array<{
+          id: string;
+          status: string;
+          source: string;
+          started_at: string | null;
+          completed_at: string | null;
+          error: string | null;
+          routine_id: string;
+        }> };
   // Tag each run with its routine title; surface unfired routines as
   // synthetic placeholder rows so the panel renders something.
   const taggedRuns = (runs ?? []).map((r) => ({

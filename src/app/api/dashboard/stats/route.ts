@@ -143,7 +143,14 @@ export async function GET(req: NextRequest) {
     ]);
 
   const agents = ("data" in agentsRes ? agentsRes.data : null) ?? [];
-  const totalAgents = agents.length;
+  // PostgREST caps a single page at 1000 rows by default, so `agents.length`
+  // would silently undercount past that. Use the exact-count header for
+  // total; status counts still iterate the page (acceptable until a single
+  // org grows past ~1000 agents).
+  const totalAgents =
+    "count" in agentsRes && typeof agentsRes.count === "number"
+      ? agentsRes.count
+      : agents.length;
   const runningAgents = agents.filter(
     (a) => a.status === "running" || a.status === "idle",
   ).length;
