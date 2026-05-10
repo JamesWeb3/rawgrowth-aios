@@ -1,6 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { tryDecryptSecret } from "@/lib/crypto";
-import { needsToolPath, chatReplyWithTools } from "@/lib/agent/chat-tools";
 
 /**
  * Direct Anthropic Messages API call using the org's stored Claude Max
@@ -510,32 +509,6 @@ export async function chatReply(input: {
     : basePreamble;
   const firstUserContent =
     `<persona-and-instructions>\n${preamble}\n</persona-and-instructions>\n\n${userMessage}`;
-
-  // Tool-path short-circuit (Chris demo). The OAuth gate above can't
-  // stack the MCP tool beta - the dashboard chat surface (noHandoff)
-  // would otherwise have to fall back to the static "I can't do that"
-  // copy. When the user message clearly wants tools AND the API key
-  // is configured, we route THIS turn through the API-key path which
-  // CAN stack mcp-client-2025-04-04 + native tool execution. Any
-  // failure (no key, API error) falls through to the OAuth path so
-  // existing behaviour is preserved as a graceful fallback.
-  if (noHandoff && needsToolPath(userMessage) && process.env.ANTHROPIC_API_KEY) {
-    const toolRes = await chatReplyWithTools({
-      organizationId,
-      userId: callerUserId ?? null,
-      systemPrompt: CLAUDE_CODE_PREFIX,
-      preamble,
-      history,
-      userMessage,
-      maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS,
-    });
-    if (toolRes.ok) {
-      return { ok: true, reply: toolRes.reply };
-    }
-    console.warn(
-      `[chat] tool path failed (${toolRes.reason}): ${toolRes.error.slice(0, 200)} - falling back to OAuth path`,
-    );
-  }
 
   // History stays as-is; preamble only goes on the freshest user turn.
   const messages = [
