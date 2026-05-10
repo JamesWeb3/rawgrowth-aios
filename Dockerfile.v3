@@ -86,11 +86,15 @@ COPY --from=whisper /out/model/ggml-base.en.bin /usr/local/share/whisper/ggml-ba
 # travels with its .node binding. ONNX runpath is $ORIGIN/ so libs are
 # found beside the binding; no LD_LIBRARY_PATH needed. Adds ~40MB.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-node ./node_modules/onnxruntime-node
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-common ./node_modules/onnxruntime-common
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/fastembed ./node_modules/fastembed
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@anush008 ./node_modules/@anush008
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@huggingface ./node_modules/@huggingface
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tar ./node_modules/tar
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/progress ./node_modules/progress
+# tar lives only under fastembed/node_modules/tar (nested install via
+# package-lock); a top-level COPY of node_modules/tar would break the
+# build because npm hoisting put it deeper. fastembed resolves via
+# node's nearest-node_modules walk, so the nested copy is enough.
 
 # Runtime Node deps (pg/jwt/bcrypt pulled with full transitives)
 RUN npm install --omit=dev --no-save --no-package-lock \
