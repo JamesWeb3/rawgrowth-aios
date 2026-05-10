@@ -44,6 +44,10 @@ done
 echo "[entrypoint] running migrations"
 node --experimental-strip-types scripts/migrate.ts
 
+echo "[entrypoint] seed onboarding knowledge (idempotent)"
+node --experimental-strip-types scripts/seed-onboarding-knowledge.ts || \
+  echo "[entrypoint] WARN: onboarding knowledge seed failed (RAG will degrade)"
+
 echo "[entrypoint] running self-hosted seed (no-op if org already exists)"
 node --experimental-strip-types scripts/seed-self-hosted.ts || true
 

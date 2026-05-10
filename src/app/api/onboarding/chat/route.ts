@@ -1066,6 +1066,20 @@ export async function POST(req: NextRequest) {
         ? `${activeSectionId}: ${lastUserText}`.slice(0, 1000)
         : lastUserText.slice(0, 1000);
       if (queryText.trim().length > 0) {
+        // Guard rail: if the knowledge table is empty (entrypoint seed
+        // never ran or errored - e.g. embedder model download failed),
+        // log loud and bypass RAG so we don't waste an embedder call +
+        // RPC roundtrip. The slim SYSTEM_PROMPT alone keeps the chat
+        // functional, just without the per-section playbook depth.
+        const tableCount = await supabaseAdmin()
+          .from("rgaios_onboarding_knowledge")
+          .select("*", { count: "exact", head: true });
+        if ((tableCount.count ?? 0) === 0) {
+          console.warn(
+            "[onboarding-rag] EMPTY TABLE - run seed-onboarding-knowledge.ts (bypassing RAG, system prompt only)",
+          );
+          throw new Error("rag-table-empty-bypass");
+        }
         const queryEmbedding = await embedOne(queryText);
         // The fastembed path zero-pads to 1536d; the migration column is
         // vector(384) native. Slice back to the native head before
@@ -1108,9 +1122,13 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (err) {
-      console.warn(
-        `[onboarding-chat] RAG retrieval threw: ${(err as Error).message}`,
-      );
+      const msg = (err as Error).message;
+      // The empty-table guard above throws "rag-table-empty-bypass" as a
+      // fast exit. It already logged its own loud warning - don't double
+      // up with a second confusing "RAG retrieval threw" line.
+      if (msg !== "rag-table-empty-bypass") {
+        console.warn(`[onboarding-chat] RAG retrieval threw: ${msg}`);
+      }
     }
 
     const systemBlock = SYSTEM_PROMPT + playbookBlock + contextPrompt;
