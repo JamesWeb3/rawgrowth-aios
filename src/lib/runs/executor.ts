@@ -309,13 +309,20 @@ function markExecTokenCold(token: string): void {
 
 function isOauthRotateError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
+  // AI SDK rebrands upstream 4xx as "Failed after N attempts. Last error: Error"
+  // - by the time we see it the original 401/429 detail is gone. Treat that
+  // wrapper as a rotation signal too: a different token in the pool might
+  // have a fresh bucket / unrevoked credential and avoid the same fate.
+  // False positives (e.g. a transient network blip surviving 3 retries) cost
+  // us at most one extra round-trip on the next pool member.
   return (
     /\b429\b/.test(msg) ||
     /\b401\b/.test(msg) ||
     /rate_limit_error/i.test(msg) ||
     /authentication_error/i.test(msg) ||
     /Too Many Requests/i.test(msg) ||
-    /Invalid authentication credentials/i.test(msg)
+    /Invalid authentication credentials/i.test(msg) ||
+    /Failed after \d+ attempts/i.test(msg)
   );
 }
 
@@ -381,6 +388,11 @@ async function generateWithOauthOrApiKey(opts: GenerateOptions) {
           tools: opts.tools,
           stopWhen: stepCountIs(MAX_STEPS),
           abortSignal: opts.abortSignal,
+          // Disable AI SDK's per-call retry - we're managing retries
+          // ourselves via the OAuth pool walk. Without this, a 401 on one
+          // token burns 3 internal retries before we even rotate to the
+          // next pool member.
+          maxRetries: 0,
         });
       } catch (err) {
         lastOauthErr = err;
