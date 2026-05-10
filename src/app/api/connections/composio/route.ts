@@ -59,9 +59,11 @@ export async function POST(req: Request) {
         if (r.ok) {
           const data = (await r.json()) as { redirectUrl?: string; connectionId?: string };
           // Persist pending row so the OAuth callback can find it and
-          // upgrade to 'connected'. If this insert silently fails the
-          // user gets a redirect URL but the callback later 404s the
-          // row - log the cause so we can debug instead of guessing.
+          // upgrade to 'connected'. If this insert fails we MUST refuse
+          // the redirect - otherwise the user OAuths upstream, the
+          // callback can't find the row to flip to 'connected', and the
+          // connection silently rots in pending forever. Surface the
+          // cause so the operator sees a clear toast.
           const ins = await supabaseAdmin()
             .from("rgaios_connections")
             .insert({
@@ -77,6 +79,10 @@ export async function POST(req: Request) {
             console.error(
               `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
               ins.error.message,
+            );
+            return NextResponse.json(
+              { error: "could not stage connection: " + ins.error.message },
+              { status: 500 },
             );
           }
           return NextResponse.json({

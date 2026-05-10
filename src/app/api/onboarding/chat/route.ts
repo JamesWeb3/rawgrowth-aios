@@ -23,6 +23,19 @@ import {
   computeOnboardingProgress,
 } from "@/lib/onboarding";
 
+// Module-level cache for the RAG empty-table guard.
+//
+// The original guard ran a `count: "exact", head: true` against
+// rgaios_onboarding_knowledge on every chat turn forever. Even with a
+// 26-row table that's a full table scan + roundtrip per turn, just to
+// re-confirm something that flips at most once (entrypoint seed). Once
+// we've seen a non-empty table we skip the check forever; if we see
+// empty we re-check at most every 5 minutes (so a manual re-seed
+// flips the guard without restarting the process).
+let onboardingKnowledgeNonEmpty = false;
+let onboardingKnowledgeLastEmptyCheck = 0;
+const ONBOARDING_EMPTY_CHECK_TTL_MS = 300_000;
+
 // Slim system prompt (~2kb). Identity + tone + meta-rules only. Section
 // playbooks and per-tool long descriptions used to live inline here
 // (88kb total) and shipped on EVERY Anthropic call, which 429'd the
@@ -1071,14 +1084,33 @@ export async function POST(req: NextRequest) {
         // log loud and bypass RAG so we don't waste an embedder call +
         // RPC roundtrip. The slim SYSTEM_PROMPT alone keeps the chat
         // functional, just without the per-section playbook depth.
-        const tableCount = await supabaseAdmin()
-          .from("rgaios_onboarding_knowledge")
-          .select("*", { count: "exact", head: true });
-        if ((tableCount.count ?? 0) === 0) {
-          console.warn(
-            "[onboarding-rag] EMPTY TABLE - run seed-onboarding-knowledge.ts (bypassing RAG, system prompt only)",
-          );
-          throw new Error("rag-table-empty-bypass");
+        //
+        // Cache: once we've confirmed non-empty we skip the check
+        // forever (table only grows). When still empty, recheck at
+        // most every 5 minutes so a manual re-seed flips the guard.
+        // Use .select("id").limit(1) instead of count:exact so the
+        // probe is constant-time even on a large table.
+        if (!onboardingKnowledgeNonEmpty) {
+          const now = Date.now();
+          if (now - onboardingKnowledgeLastEmptyCheck >= ONBOARDING_EMPTY_CHECK_TTL_MS) {
+            onboardingKnowledgeLastEmptyCheck = now;
+            const probe = await supabaseAdmin()
+              .from("rgaios_onboarding_knowledge")
+              .select("id")
+              .limit(1);
+            if (probe.data && probe.data.length > 0) {
+              onboardingKnowledgeNonEmpty = true;
+            } else {
+              console.warn(
+                "[onboarding-rag] EMPTY TABLE - run seed-onboarding-knowledge.ts (bypassing RAG, system prompt only)",
+              );
+              throw new Error("rag-table-empty-bypass");
+            }
+          } else {
+            // Within TTL of a prior empty check - still empty, bypass
+            // without another roundtrip.
+            throw new Error("rag-table-empty-bypass");
+          }
         }
         const queryEmbedding = await embedOne(queryText);
         // The fastembed path zero-pads to 1536d; the migration column is

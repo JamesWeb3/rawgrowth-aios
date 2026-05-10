@@ -38,6 +38,13 @@ export const maxDuration = 30;
  */
 
 type ComposioEvent = {
+  /**
+   * Composio event id used for idempotency. Composio retries on
+   * timeout / non-2xx delivery; without a dedup key the same event
+   * can flip status + insert an audit row twice. Older API shapes
+   * may omit this - in which case we proceed without dedup.
+   */
+  id?: string;
   type?: string;
   /** Top-level connection id Composio assigns (matches our nango_connection_id column). */
   connectionId?: string;
@@ -137,6 +144,24 @@ export async function POST(req: NextRequest) {
 
   const type = (event.type ?? "").toString();
   const db = supabaseAdmin();
+  const eventId = typeof event.id === "string" && event.id.length > 0 ? event.id : null;
+
+  // Idempotency: Composio retries on timeout / non-2xx. Without dedup
+  // the same event can double-flip status + insert duplicate audit
+  // rows. If event.id is set, look it up in the audit log first; if
+  // we've already processed it, ack immediately. Older Composio API
+  // shapes don't include an id - in that case we proceed as before.
+  if (eventId) {
+    const { data: prior } = await db
+      .from("rgaios_audit_log")
+      .select("id")
+      .eq("detail->>composio_event_id", eventId)
+      .limit(1)
+      .maybeSingle();
+    if (prior?.id) {
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
+  }
 
   try {
     if (type === "connection.revoked") {
@@ -145,20 +170,42 @@ export async function POST(req: NextRequest) {
         console.warn("[composio-webhook] revoked event missing connectionId");
         return NextResponse.json({ ok: true, ignored: "no connectionId" });
       }
+      // Two-step: (1) lookup the row by connectionId so we know its
+      // primary key + organization_id, (2) update keyed on the primary
+      // key. Updating directly on nango_connection_id alone would
+      // cross tenants if Composio ever delivered an event for org A's
+      // connection to org B's webhook (or if connection ids ever
+      // collided across tenants).
       const { data: row } = await db
         .from("rgaios_connections")
-        .update({ status: "error" })
-        .eq("nango_connection_id", connId)
         .select("id, organization_id")
+        .eq("nango_connection_id", connId)
         .maybeSingle();
+      if (!row?.id) {
+        console.warn(
+          `[composio-webhook] revoked event for unknown connectionId=${connId}`,
+        );
+        await db.from("rgaios_audit_log").insert({
+          organization_id: null,
+          kind: "composio_connection_revoked_unknown_id",
+          actor_type: "system",
+          actor_id: "composio-webhook",
+          detail: { connection_id: connId, composio_event_id: eventId },
+        });
+        return NextResponse.json({ ok: true, type, row_id: null });
+      }
+      await db
+        .from("rgaios_connections")
+        .update({ status: "error" })
+        .eq("id", row.id);
       await db.from("rgaios_audit_log").insert({
-        organization_id: row?.organization_id ?? null,
+        organization_id: row.organization_id ?? null,
         kind: "composio_connection_revoked",
         actor_type: "system",
         actor_id: "composio-webhook",
-        detail: { connection_id: connId, row_id: row?.id ?? null },
+        detail: { connection_id: connId, row_id: row.id, composio_event_id: eventId },
       });
-      return NextResponse.json({ ok: true, type, row_id: row?.id ?? null });
+      return NextResponse.json({ ok: true, type, row_id: row.id });
     }
 
     if (type === "connection.refreshed") {
@@ -204,6 +251,7 @@ export async function POST(req: NextRequest) {
           connection_id: connId,
           row_id: existing?.id ?? null,
           rotated_refresh_token: refreshToken !== null,
+          composio_event_id: eventId,
         },
       });
       return NextResponse.json({ ok: true, type, row_id: existing?.id ?? null });
@@ -225,7 +273,7 @@ export async function POST(req: NextRequest) {
         kind: "composio_action_failed",
         actor_type: "system",
         actor_id: "composio-webhook",
-        detail: { event },
+        detail: { event, composio_event_id: eventId },
       });
       return NextResponse.json({ ok: true, type });
     }

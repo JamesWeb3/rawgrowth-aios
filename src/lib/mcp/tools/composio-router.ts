@@ -49,6 +49,18 @@ type ComposioActionListResponse = {
   actions?: ComposioActionListItem[];
 };
 
+// ─── 5-min cache for composio_list_tools ────────────────────────────
+//
+// Discovery is read-only and the catalog only changes when Composio
+// adds an action upstream. Without a cache every model turn fetches
+// + serializes ~200 actions (~15k tokens) and burns Composio rate
+// limit headroom. Cache keyed on (orgId, app filter) so per-org
+// scoping (when Composio adds it) still works; today it's effectively
+// a global cache.
+type ListCacheEntry = { actions: ComposioActionListItem[]; until: number };
+const LIST_CACHE_TTL_MS = 300_000;
+const composioListCache = new Map<string, ListCacheEntry>();
+
 // ─── Tool: composio_list_tools (discovery) ──────────────────────────
 
 registerTool({
@@ -65,7 +77,7 @@ registerTool({
       },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const apiKey = process.env.COMPOSIO_API_KEY;
     if (!apiKey) {
       return textError(
@@ -75,35 +87,49 @@ registerTool({
     const rawApp = String(args.app ?? "").trim().toLowerCase();
     const filter = rawApp && rawApp !== "all" ? rawApp : "";
 
-    const url = filter
-      ? `https://backend.composio.dev/api/v1/actions?appNames=${encodeURIComponent(filter)}`
-      : "https://backend.composio.dev/api/v1/actions";
+    const cacheKey = `${ctx.organizationId}:${filter || "*"}`;
+    const cached = composioListCache.get(cacheKey);
+    let items: ComposioActionListItem[];
+    if (cached && Date.now() < cached.until) {
+      console.info(
+        `[composio_list_tools] cache hit org=${ctx.organizationId} filter=${filter || "*"} (${cached.actions.length} actions)`,
+      );
+      items = cached.actions;
+    } else {
+      const url = filter
+        ? `https://backend.composio.dev/api/v1/actions?appNames=${encodeURIComponent(filter)}`
+        : "https://backend.composio.dev/api/v1/actions";
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "x-api-key": apiKey,
-          "content-type": "application/json",
-        },
-        signal: AbortSignal.timeout(20_000),
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "GET",
+          headers: {
+            "x-api-key": apiKey,
+            "content-type": "application/json",
+          },
+          signal: AbortSignal.timeout(20_000),
+        });
+      } catch (err) {
+        return textError(
+          `composio_list_tools fetch failed: ${(err as Error).message}`,
+        );
+      }
+
+      if (!res.ok) {
+        const body = await res.text();
+        return textError(
+          `composio_list_tools ${res.status}: ${body.slice(0, 300)}`,
+        );
+      }
+
+      const json = (await res.json()) as ComposioActionListResponse;
+      items = json.items ?? json.actions ?? [];
+      composioListCache.set(cacheKey, {
+        actions: items,
+        until: Date.now() + LIST_CACHE_TTL_MS,
       });
-    } catch (err) {
-      return textError(
-        `composio_list_tools fetch failed: ${(err as Error).message}`,
-      );
     }
-
-    if (!res.ok) {
-      const body = await res.text();
-      return textError(
-        `composio_list_tools ${res.status}: ${body.slice(0, 300)}`,
-      );
-    }
-
-    const json = (await res.json()) as ComposioActionListResponse;
-    const items = json.items ?? json.actions ?? [];
     if (items.length === 0) {
       return text(
         filter
@@ -141,6 +167,27 @@ registerTool({
     );
   },
 });
+
+// ─── Defense-in-depth: destructive action denylist ──────────────────
+//
+// composio_use_tool exposes ~1000 actions to the model. isWrite=true is
+// metadata only - /api/mcp does NOT enforce an approval-prompt flow
+// today. Until that ships (multi-day item: needs UI, queue, audit), we
+// gate by name. Anything matching a destructive keyword is refused;
+// agents must request a safe alternative (UPDATE, ARCHIVE, etc).
+//
+// Patterns deliberately broad: better to false-positive on a benign
+// "REMOVE_LABEL" and force the model to pick a more specific safe
+// action than to ship DELETE_REPOSITORY by accident.
+const DESTRUCTIVE_ACTION_PATTERNS: RegExp[] = [
+  /\bDELETE\b/i,
+  /\bDROP\b/i,
+  /\bDESTROY\b/i,
+  /\bPURGE\b/i,
+  /\bREMOVE\b/i,
+  /\bWIPE\b/i,
+  /\bTRUNCATE\b/i,
+];
 
 // ─── Tool: composio_use_tool (invoke) ───────────────────────────────
 
@@ -180,23 +227,27 @@ registerTool({
       return textError("input must be an object matching the action's schema");
     }
 
+    // Defense-in-depth gate (see DESTRUCTIVE_ACTION_PATTERNS above):
+    // refuse destructive actions by name until an approval-prompt flow
+    // ships. Agents can request UPDATE / ARCHIVE / etc as safe
+    // alternatives.
+    const destructiveMatch = DESTRUCTIVE_ACTION_PATTERNS.find((p) =>
+      p.test(action),
+    );
+    if (destructiveMatch) {
+      return textError(
+        `composio_use_tool: action ${action} matches denylist ${destructiveMatch.source}; use a more specific safe action or invoke via the dedicated tool`,
+      );
+    }
+
     // Per-user OAuth (migration 0063): hit the caller's own connection
-    // row first when ToolContext + composioAction expose a userId arg.
-    // Worker 1 / PR 1 threads ctx.userId through; until that lands the
-    // 4-arg signature falls back to the org-wide row.
-    const callerUserId =
-      (ctx as { userId?: string | null }).userId ?? null;
+    // row first. ToolContext.userId is threaded by the MCP runtime
+    // since PR 1 (commit 0149bb9).
+    const callerUserId = ctx.userId ?? null;
 
     let result: unknown;
     try {
-      const composioActionAny = composioAction as unknown as (
-        organizationId: string,
-        appKey: string,
-        action: string,
-        input: Record<string, unknown>,
-        userId?: string | null,
-      ) => Promise<unknown>;
-      result = await composioActionAny(
+      result = await composioAction(
         ctx.organizationId,
         app,
         action,
