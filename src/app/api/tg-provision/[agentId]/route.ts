@@ -105,7 +105,8 @@ export async function POST(
     bot_id: me.id,
     bot_username: me.username ?? null,
     bot_token: encryptSecret(botToken),
-    webhook_secret: webhookSecret,
+    // Encrypted at rest; webhook handler decrypts + timingSafeEquals.
+    webhook_secret: encryptSecret(webhookSecret),
   };
 
   let connectionId: string;

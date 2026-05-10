@@ -106,7 +106,8 @@ export async function POST(req: NextRequest) {
           bot_username: me.username ?? null,
           bot_first_name: me.first_name,
           bot_token: encryptSecret(token),
-          webhook_secret: webhookSecret,
+          // Encrypted at rest; webhook handler decrypts + timingSafeEquals.
+          webhook_secret: encryptSecret(webhookSecret),
           status: "connected",
           metadata: {},
           updated_at: new Date().toISOString(),

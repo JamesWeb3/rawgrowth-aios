@@ -45,6 +45,6 @@ export async function GET() {
 
   return NextResponse.json({
     token: tryDecryptSecret(meta.bot_token) ?? null,
-    webhook_secret: meta.webhook_secret ?? null,
+    webhook_secret: tryDecryptSecret(meta.webhook_secret) ?? null,
   });
 }

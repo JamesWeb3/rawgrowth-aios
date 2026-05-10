@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { after } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   editMessageText,
@@ -141,12 +142,22 @@ export async function POST(
   }
 
   // 2. Verify Telegram's signed secret header.
+  // Stored encrypted (enc:v1:...) since round-2 audit; tryDecryptSecret
+  // is a no-op for any legacy plaintext rows so we stay compatible until
+  // the operator rotates. timingSafeEqual avoids the length-leaking
+  // `!==` compare.
   const meta = (conn.metadata ?? {}) as {
     bot_token?: string;
     webhook_secret?: string;
   };
   const headerSecret = req.headers.get("x-telegram-bot-api-secret-token");
-  if (!meta.webhook_secret || headerSecret !== meta.webhook_secret) {
+  const storedSecret = tryDecryptSecret(meta.webhook_secret);
+  if (!headerSecret || !storedSecret) {
+    return NextResponse.json({ error: "bad signature" }, { status: 401 });
+  }
+  const aBuf = Buffer.from(headerSecret);
+  const bBuf = Buffer.from(storedSecret);
+  if (aBuf.length !== bBuf.length || !timingSafeEqual(aBuf, bBuf)) {
     return NextResponse.json({ error: "bad signature" }, { status: 401 });
   }
   const token = tryDecryptSecret(meta.bot_token);

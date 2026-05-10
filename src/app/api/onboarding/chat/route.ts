@@ -1449,6 +1449,17 @@ export async function POST(req: NextRequest) {
                         const tok = tryDecryptSecret(meta.access_token);
                         if (tok && tok !== claudeMaxOauthToken) poolTokens.push(tok);
                       }
+                      // Fisher-Yates shuffle: concurrent sessions otherwise
+                      // walk the pool in the same DB-order and amplify 429s
+                      // by stampeding the same first token. Same intent as
+                      // src/lib/llm/oauth-first.ts.
+                      for (let si = poolTokens.length - 1; si > 0; si--) {
+                        const sj = Math.floor(Math.random() * (si + 1));
+                        [poolTokens[si], poolTokens[sj]] = [
+                          poolTokens[sj],
+                          poolTokens[si],
+                        ];
+                      }
                       console.warn(
                         `[onboarding-chat] 429 on caller token, rotating through ${poolTokens.length} other org token(s)`,
                       );
@@ -1955,12 +1966,13 @@ export async function POST(req: NextRequest) {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : "Stream error";
           const stack = err instanceof Error ? err.stack : "";
+          // Stack trace stays server-side only (file paths, function names,
+          // and version info would otherwise leak to the browser via NDJSON).
           console.error(`[onboarding-chat] OUTER catch: ${message}\n${stack}`);
           try {
             emit({
               type: "error",
               message,
-              stack: stack?.slice(0, 800),
               phase: "outer-catch",
             });
           } catch {}

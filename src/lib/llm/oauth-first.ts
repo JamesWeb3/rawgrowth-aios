@@ -60,14 +60,18 @@ async function listClaudeOauthTokens(
 
   const rows = data as ClaudeTokenRow[];
   // Caller's own row first (highest priority, hits their bucket before
-  // borrowing anyone else's). Then the rest, deterministic by row id
-  // so the rotation order stays stable across requests.
-  const ordered = [...rows].sort((a, b) => {
-    const aOwn = callerUserId && a.user_id === callerUserId ? 0 : 1;
-    const bOwn = callerUserId && b.user_id === callerUserId ? 0 : 1;
-    if (aOwn !== bOwn) return aOwn - bOwn;
-    return a.id.localeCompare(b.id);
-  });
+  // borrowing anyone else's). Then the rest in a per-call random order:
+  // a deterministic order amplifies 429s when concurrent sessions all
+  // walk the same list and stampede the same pool members. Shuffling the
+  // tail spreads the load across the org's tokens.
+  const own = rows.filter((r) => callerUserId && r.user_id === callerUserId);
+  const others = rows.filter((r) => !(callerUserId && r.user_id === callerUserId));
+  // Fisher-Yates on the borrowed pool only.
+  for (let i = others.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [others[i], others[j]] = [others[j], others[i]];
+  }
+  const ordered = [...own, ...others];
 
   const tokens: string[] = [];
   for (const row of ordered) {

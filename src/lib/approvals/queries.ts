@@ -85,17 +85,40 @@ export async function decideApproval(params: {
 }): Promise<{ approval: ApprovalRow; executionResult?: string }> {
   const db = supabaseAdmin();
 
-  const { data: approval, error: fetchErr } = await db
+  // Atomic claim: conditional UPDATE on status='pending'. Mirrors the
+  // schedule-tick "raced" pattern (see src/app/api/cron/schedule-tick/
+  // route.ts:196-226). Without this, two reviewer clicks both pass a
+  // SELECT-then-UPDATE check and both fire the tool. Now: only one UPDATE
+  // returns a row; the other gets count=0 and we bail before invoking
+  // callTool. The audit log entry for the loser is suppressed on purpose -
+  // there's nothing to audit, no decision was applied.
+  const reviewedAt = new Date().toISOString();
+  const { data: claimed, error: claimErr } = await db
     .from("rgaios_approvals")
-    .select("*")
+    .update({
+      status: params.decision,
+      reviewed_by: params.reviewerId,
+      reviewed_at: reviewedAt,
+    })
     .eq("id", params.approvalId)
     .eq("organization_id", params.organizationId)
-    .maybeSingle();
-  if (fetchErr) throw new Error(`decideApproval fetch: ${fetchErr.message}`);
-  if (!approval) throw new Error("Approval not found");
-  if (approval.status !== "pending") {
-    throw new Error(`Approval already ${approval.status}`);
+    .eq("status", "pending")
+    .select("*");
+  if (claimErr) throw new Error(`decideApproval claim: ${claimErr.message}`);
+  if (!claimed || claimed.length === 0) {
+    // Either the row doesn't exist, doesn't belong to this org, or another
+    // reviewer already decided it. Distinguish so the API can return a
+    // useful error.
+    const { data: existing } = await db
+      .from("rgaios_approvals")
+      .select("status")
+      .eq("id", params.approvalId)
+      .eq("organization_id", params.organizationId)
+      .maybeSingle();
+    if (!existing) throw new Error("Approval not found");
+    throw new Error(`Approval already ${existing.status}`);
   }
+  const approval = claimed[0];
 
   let executionResult: string | undefined;
 
@@ -115,17 +138,7 @@ export async function decideApproval(params: {
     }
   }
 
-  const { data: updated, error: updErr } = await db
-    .from("rgaios_approvals")
-    .update({
-      status: params.decision,
-      reviewed_by: params.reviewerId,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", params.approvalId)
-    .select("*")
-    .single();
-  if (updErr || !updated) throw new Error(`decideApproval update: ${updErr?.message}`);
+  const updated = approval;
 
   await db.from("rgaios_audit_log").insert({
     organization_id: params.organizationId,

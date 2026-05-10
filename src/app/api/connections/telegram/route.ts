@@ -49,7 +49,10 @@ export async function POST(req: NextRequest) {
         // Encrypted at rest with AES-256-GCM (key derived from JWT_SECRET).
         // Decrypt with `tryDecryptSecret` from @/lib/crypto when reading.
         bot_token: encryptSecret(token),
-        webhook_secret: webhookSecret,
+        // Webhook secret is also encrypted; the webhook handler decrypts and
+        // does a timingSafeEqual against the inbound x-telegram-* header.
+        // Telegram itself stores the plaintext copy from setWebhook below.
+        webhook_secret: encryptSecret(webhookSecret),
       },
     });
 
