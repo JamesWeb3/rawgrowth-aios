@@ -108,6 +108,11 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-key";
   process.env.COMPOSIO_API_KEY = "test-composio-key";
+  // crypto.ts derives the encryption key from JWT_SECRET. The
+  // resolveComposioApiKey precedence test exercises encryptSecret /
+  // tryDecryptSecret round-tripping a per-org key, so we need a
+  // deterministic secret in the test process.
+  process.env.JWT_SECRET = "test-jwt-secret-for-composio-pool-spec";
 });
 
 afterEach(() => {
@@ -118,7 +123,17 @@ test("composioCall: missing COMPOSIO_API_KEY throws clear error", async () => {
   const snap = snapshotEnv();
   try {
     delete process.env.COMPOSIO_API_KEY;
-    installFetchRouter(() => jsonResponse(null));
+    // No per-org key row either - resolveComposioApiKey hits Supabase
+    // for the row, finds none, then falls through to the env (also
+    // missing), so composioCall must surface the "missing" error.
+    installFetchRouter((req) => {
+      if (req.url.includes("/rest/v1/rgaios_connections")) {
+        // Either the per-org key lookup or the pool list - return
+        // empty so resolution + pool both come up dry.
+        return jsonResponse([]);
+      }
+      return jsonResponse(null);
+    });
     const { composioCall } = await import("@/lib/composio/proxy");
     await assert.rejects(
       () =>
@@ -127,8 +142,62 @@ test("composioCall: missing COMPOSIO_API_KEY throws clear error", async () => {
           action: "GMAIL_SEND_EMAIL",
           input: {},
         }),
-      (err: Error) => /COMPOSIO_API_KEY missing/.test(err.message),
+      (err: Error) =>
+        /Composio API key missing/.test(err.message) ||
+        /COMPOSIO_API_KEY missing/.test(err.message),
     );
+  } finally {
+    restoreEnv(snap);
+  }
+});
+
+test("resolveComposioApiKey: per-org key beats env when present", async () => {
+  const snap = snapshotEnv();
+  try {
+    process.env.COMPOSIO_API_KEY = "env-fleet-key";
+    // Per-org row stores an encryptable key. We use the real
+    // encryptSecret/tryDecryptSecret pair so this round-trips.
+    const { encryptSecret } = await import("@/lib/crypto");
+    const encrypted = encryptSecret("per-org-tenant-key");
+    installFetchRouter((req) => {
+      if (req.url.includes("/rest/v1/rgaios_connections")) {
+        // Both the precedence lookup AND any subsequent pool list see
+        // a row that contains the encrypted api_key. Our resolver
+        // filters by provider_config_key='composio-key' so the same
+        // mock works across the two queries.
+        return jsonResponse([
+          {
+            metadata: { api_key: encrypted },
+          },
+        ]);
+      }
+      return jsonResponse(null);
+    });
+    const { resolveComposioApiKey } = await import("@/lib/composio/proxy");
+    const key = await resolveComposioApiKey("org-1");
+    assert.equal(
+      key,
+      "per-org-tenant-key",
+      "per-org row beats COMPOSIO_API_KEY env",
+    );
+  } finally {
+    restoreEnv(snap);
+  }
+});
+
+test("resolveComposioApiKey: falls back to env when no per-org row", async () => {
+  const snap = snapshotEnv();
+  try {
+    process.env.COMPOSIO_API_KEY = "env-fleet-key";
+    installFetchRouter((req) => {
+      if (req.url.includes("/rest/v1/rgaios_connections")) {
+        return jsonResponse([]); // no per-org row
+      }
+      return jsonResponse(null);
+    });
+    const { resolveComposioApiKey } = await import("@/lib/composio/proxy");
+    const key = await resolveComposioApiKey("org-1");
+    assert.equal(key, "env-fleet-key");
   } finally {
     restoreEnv(snap);
   }
@@ -165,9 +234,9 @@ test("single per-user row: fast path, one Composio call, no rotation", async () 
     assert.deepEqual(out, { ok: true, data: "single-row-result" });
     assert.equal(composioCalls.length, 1, "single Composio call, no rotation");
     const body = JSON.parse(composioCalls[0].body ?? "{}");
-    assert.equal(body.connectedAccountId, "nango-fast-1");
-    assert.equal(body.entityId, "user-1", "per-user entityId");
-    assert.deepEqual(body.input, { to: "x@y.z" });
+    assert.equal(body.connected_account_id, "nango-fast-1");
+    assert.equal(body.user_id, "user-1", "per-user entityId");
+    assert.deepEqual(body.arguments, { to: "x@y.z" });
   } finally {
     restoreEnv(snap);
   }
@@ -221,7 +290,7 @@ test("two per-user rows: rotates from row A to row B on 429", async () => {
     // Verify the rotation actually used different connection ids.
     const ids = composioCalls.map((c) => {
       const b = JSON.parse(c.body ?? "{}");
-      return b.connectedAccountId;
+      return b.connected_account_id;
     });
     assert.deepEqual(ids, ["nango-pool-A", "nango-pool-B"]);
   } finally {
@@ -266,11 +335,11 @@ test("1 per-user + 1 org-wide row: per-user wins on first pass", async () => {
     assert.equal(composioCalls.length, 1, "first attempt succeeds, no rotation");
     const body = JSON.parse(composioCalls[0].body ?? "{}");
     assert.equal(
-      body.connectedAccountId,
+      body.connected_account_id,
       "nango-mine",
       "per-user row beats org-wide row",
     );
-    assert.equal(body.entityId, "user-1");
+    assert.equal(body.user_id, "user-1");
   } finally {
     restoreEnv(snap);
   }
@@ -323,7 +392,7 @@ test("all rows cold + sibling fresh row -> fresh fires first", async () => {
         composioCalls.push(req);
         const b = JSON.parse(req.body ?? "{}");
         // 429 every row except the one we mark "fresh".
-        if (b.connectedAccountId === succeedingCallId) {
+        if (b.connected_account_id === succeedingCallId) {
           return jsonResponse({ ok: true, marker: "fresh-wins" });
         }
         return new Response("Too Many Requests", { status: 429 });
@@ -369,7 +438,7 @@ test("all rows cold + sibling fresh row -> fresh fires first", async () => {
       if (req.url.includes("backend.composio.dev")) {
         composioCalls.push(req);
         const b = JSON.parse(req.body ?? "{}");
-        if (b.connectedAccountId === succeedingCallId) {
+        if (b.connected_account_id === succeedingCallId) {
           return jsonResponse({ ok: true, marker: "fresh-wins" });
         }
         return new Response("Too Many Requests", { status: 429 });
@@ -407,7 +476,7 @@ test("all rows cold + sibling fresh row -> fresh fires first", async () => {
     // pass 1). With deterministic id sort: row-cold-1, row-cold-2,
     // row-fresh. Cold filter skips the first two -> fresh fires first.
     assert.equal(
-      composioCalls[0].body && JSON.parse(composioCalls[0].body).connectedAccountId,
+      composioCalls[0].body && JSON.parse(composioCalls[0].body).connected_account_id,
       "nango-fresh-NEW",
       "fresh row fires before cold siblings on pass 1",
     );
@@ -611,11 +680,11 @@ test("composioCall passes opts.input verbatim to Composio executeAction", async 
       "user-vb",
     );
     assert.equal(captured.length, 1);
-    assert.match(captured[0].url, /\/actions\/GMAIL_SEND_EMAIL\/execute$/);
+    assert.match(captured[0].url, /\/tools\/execute\/GMAIL_SEND_EMAIL$/);
     const body = JSON.parse(captured[0].body ?? "{}");
-    assert.deepEqual(body.input, input, "input passed through unchanged");
-    assert.equal(body.entityId, "user-vb");
-    assert.equal(body.connectedAccountId, "nango-verbatim");
+    assert.deepEqual(body.arguments, input, "input passed through unchanged");
+    assert.equal(body.user_id, "user-vb");
+    assert.equal(body.connected_account_id, "nango-verbatim");
   } finally {
     restoreEnv(snap);
   }

@@ -3,6 +3,7 @@ import { deleteConnection, getConnection } from "@/lib/connections/queries";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { deleteWebhook as deleteTelegramWebhook } from "@/lib/telegram/client";
 import { tryDecryptSecret } from "@/lib/crypto";
+import { resolveComposioApiKey } from "@/lib/composio/proxy";
 
 export const runtime = "nodejs";
 
@@ -41,13 +42,15 @@ export async function DELETE(
     } else if (providerConfigKey.startsWith("composio:")) {
       // Composio swap gap #3: revoke at Composio so the upstream OAuth
       // grant is actually torn down, not just the local row. The grid
-      // POST stored connectionId in nango_connection_id; the API key
-      // lives in env.
-      const composioKey = process.env.COMPOSIO_API_KEY;
+      // POST stored connectionId in nango_connection_id. Per-org key
+      // first, then env fallback - matches composioCall + the OAuth
+      // start route so revoke targets the same Composio tenant.
+      const composioKey = await resolveComposioApiKey(organizationId);
       if (composioKey && existing.nango_connection_id) {
         try {
+          // v3 endpoint - same DELETE shape, just /api/v3/connected_accounts.
           await fetch(
-            `https://backend.composio.dev/api/v1/connectedAccounts/${existing.nango_connection_id}`,
+            `https://backend.composio.dev/api/v3/connected_accounts/${existing.nango_connection_id}`,
             {
               method: "DELETE",
               headers: { "x-api-key": composioKey },

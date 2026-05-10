@@ -2,18 +2,32 @@ import { NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { getCatalogEntry, composioAppNameFor } from "@/lib/connections/catalog";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import {
+  resolveComposioApiKey,
+  resolveOrCreateAuthConfig,
+} from "@/lib/composio/proxy";
 
 export const runtime = "nodejs";
 
 /**
  * Composio bridge. Two paths:
  *   1. COMPOSIO_API_KEY env present: real OAuth flow via Composio REST API.
- *      Calls https://backend.composio.dev/api/v1/connectedAccounts to start
- *      the auth dance + returns the redirect URL for the operator.
+ *      Calls /api/v3/connected_accounts/link to start the auth dance +
+ *      returns the redirect URL for the operator.
  *   2. No env: log interest + persist a pending connection row so the queue
  *      can be replayed when keys land.
  *
- * PR 1 (per-user OAuth, migration 0063): entityId scopes the Composio
+ * v3 migration (2026-05-10): Composio deprecated v1 connectedAccounts
+ * with the message "⚠️ Please migrate to v3 API". v3 splits the flow:
+ *   - First, ensure an auth_config exists for the toolkit (cached per
+ *     org via resolveOrCreateAuthConfig).
+ *   - Then POST /api/v3/connected_accounts/link with auth_config_id +
+ *     user_id + callback_url. Response contains redirect_url +
+ *     connected_account_id.
+ * Composio appends `connected_account_id=` and `status=success|failed`
+ * to the callback URL when OAuth completes.
+ *
+ * PR 1 (per-user OAuth, migration 0063): user_id scopes the Composio
  * grant to the calling member's userId so two members of the same org
  * each get their own Gmail / HubSpot / etc bucket. Pending row also
  * stamps user_id so the callback only flips that member's row.
@@ -36,63 +50,94 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `unknown connector '${key}'` }, { status: 404 });
     }
 
-    const composioKey = process.env.COMPOSIO_API_KEY;
+    // Per-org Composio key first (Connections → Workspace API keys),
+    // fall back to env. Mirrors composioCall's resolution so the OAuth
+    // start path uses the same credentials the proxy will later call with.
+    const composioKey = await resolveComposioApiKey(organizationId);
     if (composioKey) {
-      // Real OAuth flow via Composio
+      // v3 OAuth flow: resolve auth_config first, then POST to link.
       try {
-        const r = await fetch("https://backend.composio.dev/api/v1/connectedAccounts", {
-          method: "POST",
-          headers: {
-            "x-api-key": composioKey,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            appName: composioAppNameFor(entry.key),
-            // entityId scopes the Composio grant per member so two
-            // users in the same org each get their own bucket. Falls
-            // back to org-wide if no session (shouldn't happen post
-            // getOrgContext gate above, defensive).
-            entityId: userId ?? organizationId,
-            redirectUri: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/connections/composio/callback`,
-          }),
-        });
-        if (r.ok) {
-          const data = (await r.json()) as { redirectUrl?: string; connectionId?: string };
-          // Persist pending row so the OAuth callback can find it and
-          // upgrade to 'connected'. If this insert fails we MUST refuse
-          // the redirect - otherwise the user OAuths upstream, the
-          // callback can't find the row to flip to 'connected', and the
-          // connection silently rots in pending forever. Surface the
-          // cause so the operator sees a clear toast.
-          const ins = await supabaseAdmin()
-            .from("rgaios_connections")
-            .insert({
-              organization_id: organizationId,
-              user_id: userId ?? null,
-              provider_config_key: `composio:${entry.key}`,
-              nango_connection_id: data.connectionId ?? `pending-${Date.now()}`,
-              display_name: entry.name,
-              status: "pending_token",
-              metadata: { composio_app: entry.key, started_at: new Date().toISOString() },
-            } as never);
-          if (ins.error) {
-            console.error(
-              `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
-              ins.error.message,
-            );
-            return NextResponse.json(
-              { error: "could not stage connection: " + ins.error.message },
-              { status: 500 },
-            );
+        const toolkitSlug = composioAppNameFor(entry.key);
+        const authConfigId = await resolveOrCreateAuthConfig(
+          organizationId,
+          toolkitSlug,
+          composioKey,
+        );
+        if (!authConfigId) {
+          console.warn(
+            `[composio] no auth_config available for ${toolkitSlug} - falling through to interest log`,
+          );
+        } else {
+          const callbackBase = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/connections/composio/callback`;
+          const r = await fetch(
+            "https://backend.composio.dev/api/v3/connected_accounts/link",
+            {
+              method: "POST",
+              headers: {
+                "x-api-key": composioKey,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                auth_config_id: authConfigId,
+                // user_id scopes the Composio grant per member so two
+                // users in the same org each get their own bucket. Falls
+                // back to org-wide if no session (shouldn't happen post
+                // getOrgContext gate above, defensive).
+                user_id: userId ?? organizationId,
+                callback_url: callbackBase,
+              }),
+              signal: AbortSignal.timeout(15_000),
+            },
+          );
+          if (r.ok) {
+            const data = (await r.json()) as {
+              redirect_url?: string;
+              connected_account_id?: string;
+              link_token?: string;
+            };
+            // Persist pending row so the OAuth callback can find it and
+            // upgrade to 'connected'. If this insert fails we MUST refuse
+            // the redirect - otherwise the user OAuths upstream, the
+            // callback can't find the row to flip to 'connected', and the
+            // connection silently rots in pending forever. Surface the
+            // cause so the operator sees a clear toast.
+            const ins = await supabaseAdmin()
+              .from("rgaios_connections")
+              .insert({
+                organization_id: organizationId,
+                user_id: userId ?? null,
+                provider_config_key: `composio:${entry.key}`,
+                nango_connection_id:
+                  data.connected_account_id ?? `pending-${Date.now()}`,
+                display_name: entry.name,
+                status: "pending_token",
+                metadata: {
+                  composio_app: entry.key,
+                  composio_auth_config_id: authConfigId,
+                  started_at: new Date().toISOString(),
+                },
+              } as never);
+            if (ins.error) {
+              console.error(
+                `[composio] pending row insert failed for org ${organizationId} ${entry.key}:`,
+                ins.error.message,
+              );
+              return NextResponse.json(
+                { error: "could not stage connection: " + ins.error.message },
+                { status: 500 },
+              );
+            }
+            return NextResponse.json({
+              ok: true,
+              redirectUrl: data.redirect_url,
+              connectionId: data.connected_account_id,
+            });
           }
-          return NextResponse.json({
-            ok: true,
-            redirectUrl: data.redirectUrl,
-            connectionId: data.connectionId,
-          });
+          const errText = await r.text();
+          console.warn(
+            `[composio] v3 link failed: ${r.status} ${errText.slice(0, 200)}`,
+          );
         }
-        const errText = await r.text();
-        console.warn(`[composio] init failed: ${r.status} ${errText.slice(0, 200)}`);
       } catch (err) {
         console.warn(`[composio] fetch threw: ${(err as Error).message}`);
       }

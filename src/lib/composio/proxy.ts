@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getConnection } from "@/lib/connections/queries";
+import { tryDecryptSecret } from "@/lib/crypto";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -9,12 +10,26 @@ import type { Database } from "@/lib/supabase/types";
  * Composio swap gap #1: agents that want to call a Composio-backed app
  * (e.g. send a Slack message via the linkedin app) need an outbound
  * proxy that takes (orgId, appKey, action) and forwards to Composio's
- * `executeAction` endpoint with the right entityId + connectionId.
+ * `executeAction` endpoint with the right user_id + connected_account_id.
  *
  * Resolves the local rgaios_connections row (provider_config_key =
- * "composio:<appKey>"), pulls the stored connectionId, then invokes
- * `POST /api/v1/actions/{action}/execute` against Composio. API key
+ * "composio:<appKey>"), pulls the stored connected_account_id, then
+ * invokes `POST /api/v3/tools/execute/{slug}` against Composio. API key
  * lives in COMPOSIO_API_KEY env.
+ *
+ * v3 migration (2026-05-10): Composio deprecated the v1 connectedAccounts
+ * + actions endpoints. New shape:
+ *   - Connect: POST /api/v3/auth_configs (one-time per toolkit) +
+ *              POST /api/v3/connected_accounts/link (per user grant).
+ *   - Execute: POST /api/v3/tools/execute/{slug}
+ *              body { user_id, arguments, connected_account_id? }
+ *   - Discovery: GET  /api/v3/tools?toolkit_slug=<slug>
+ *   - Revoke: DELETE  /api/v3/connected_accounts/{id}
+ * `entityId` in v1 is now `user_id` in v3. `connectedAccountId` is now
+ * `connected_account_id`. `input` is now `arguments`. Auth_configs are
+ * required - we cache one per (org, toolkit) in a synthetic row
+ * keyed `composio-auth-config:<toolkit>` so the link path doesn't
+ * recreate one on every connect.
  *
  * PR 4 additions:
  *   - per-user pool rotation. When a member wires 2+ accounts for the
@@ -127,8 +142,12 @@ async function executeOnce<T>(
   organizationId: string,
   userId: string | null,
 ): Promise<T> {
+  // v3 tools/execute. URL slug is the action enum. Body uses snake_case
+  // and renames: connectedAccountId->connected_account_id, entityId->
+  // user_id, input->arguments. user_id is REQUIRED even when
+  // connected_account_id is supplied (Composio errors otherwise).
   const res = await fetch(
-    `https://backend.composio.dev/api/v1/actions/${encodeURIComponent(opts.action)}/execute`,
+    `https://backend.composio.dev/api/v3/tools/execute/${encodeURIComponent(opts.action)}`,
     {
       method: "POST",
       headers: {
@@ -136,14 +155,14 @@ async function executeOnce<T>(
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        connectedAccountId: conn.nango_connection_id,
-        // entityId mirrors what /api/connections/composio POST wrote
-        // on grant - per-user when available, org-wide as fallback.
-        // Composio matches the connection by entityId on its side too,
+        connected_account_id: conn.nango_connection_id,
+        // user_id mirrors what /api/connections/composio POST wrote on
+        // grant - per-user when available, org-wide as fallback.
+        // Composio matches the connection by user_id on its side too,
         // so a mismatch here returns "no connected account" even when
         // our local row exists.
-        entityId: userId ?? organizationId,
-        input: opts.input,
+        user_id: userId ?? organizationId,
+        arguments: opts.input,
       }),
       signal: AbortSignal.timeout(30_000),
     },
@@ -155,6 +174,161 @@ async function executeOnce<T>(
     );
   }
   return (await res.json()) as T;
+}
+
+/**
+ * v3 requires an auth_config_id before any connected_accounts/link
+ * call. We cache one per (org, toolkit_slug) in a synthetic row keyed
+ * `composio-auth-config:<toolkit>` so the connect handler doesn't
+ * recreate one every time a user clicks an integration. The row's
+ * `nango_connection_id` column stores the auth_config_id (we reuse
+ * that column name for v3 too - rename would churn migrations + tests
+ * for no behavioural gain). Composio-managed auth means we don't need
+ * client_id/secret per tenant; one auth_config per app shared across
+ * users is the documented v3 pattern.
+ *
+ * Returns null when Composio rejects the create call (e.g. unknown
+ * toolkit slug). Caller decides whether to fall back to the "interest
+ * recorded" path.
+ */
+export async function resolveOrCreateAuthConfig(
+  organizationId: string,
+  toolkitSlug: string,
+  composioKey: string,
+): Promise<string | null> {
+  const cacheKey = `composio-auth-config:${toolkitSlug}`;
+  const db = supabaseAdmin();
+
+  // 1. Look up cached auth_config_id for this (org, toolkit).
+  try {
+    const { data } = await db
+      .from("rgaios_connections")
+      .select("nango_connection_id")
+      .eq("organization_id", organizationId)
+      .eq("provider_config_key", cacheKey)
+      .eq("status", "connected")
+      .maybeSingle();
+    const cached = (data as { nango_connection_id?: string } | null)
+      ?.nango_connection_id;
+    if (cached && cached.startsWith("ac_")) return cached;
+  } catch {
+    // Table missing / RLS surprise - fall through to create.
+  }
+
+  // 2. Ask Composio to create a composio-managed auth_config for this
+  //    toolkit. Idempotent enough: if the API returns an existing one
+  //    Composio is happy to hand us the same id back.
+  let authConfigId: string;
+  try {
+    const r = await fetch(
+      "https://backend.composio.dev/api/v3/auth_configs",
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": composioKey,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          toolkit: { slug: toolkitSlug },
+          auth_config: {
+            type: "use_composio_managed_auth",
+            name: toolkitSlug,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!r.ok) {
+      const errText = await r.text();
+      console.warn(
+        `[composio] auth_config create failed for ${toolkitSlug}: ${r.status} ${errText.slice(0, 200)}`,
+      );
+      return null;
+    }
+    const json = (await r.json()) as {
+      auth_config?: { id?: string };
+      id?: string;
+    };
+    authConfigId = json.auth_config?.id ?? json.id ?? "";
+    if (!authConfigId.startsWith("ac_")) {
+      console.warn(
+        `[composio] auth_config create returned no id for ${toolkitSlug}`,
+      );
+      return null;
+    }
+  } catch (err) {
+    console.warn(
+      `[composio] auth_config create threw for ${toolkitSlug}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+
+  // 3. Cache it. Failure to insert isn't fatal - we already have the
+  //    id and can return it; next call will just re-create. Use upsert
+  //    to win against concurrent connect clicks (two users clicking
+  //    Slack at the same moment shouldn't error on the unique
+  //    constraint).
+  try {
+    await db
+      .from("rgaios_connections")
+      .upsert(
+        {
+          organization_id: organizationId,
+          user_id: null,
+          provider_config_key: cacheKey,
+          nango_connection_id: authConfigId,
+          display_name: `Composio auth_config (${toolkitSlug})`,
+          status: "connected",
+          metadata: {
+            composio_toolkit: toolkitSlug,
+            cached_at: new Date().toISOString(),
+          },
+        } as never,
+        {
+          onConflict:
+            "organization_id,coalesce(user_id::text, ''),provider_config_key,coalesce(agent_id::text, '')",
+        },
+      );
+  } catch (err) {
+    console.warn(
+      `[composio] auth_config cache write failed for ${toolkitSlug}: ${(err as Error).message}`,
+    );
+  }
+  return authConfigId;
+}
+
+/**
+ * Resolve which Composio API key to use for this org. Priority:
+ *   1. Per-org key stored via /api/connections/api-keys (provider="composio")
+ *      → encrypted in rgaios_connections.metadata.api_key, decrypted here.
+ *   2. VPS-wide COMPOSIO_API_KEY env var (legacy fleet default).
+ *
+ * Returning the per-org key first lets each tenant pay for their own
+ * Composio action quota without rotating an env var across the fleet.
+ * Returns null when neither is set so the caller can throw a precise
+ * "not configured" error.
+ *
+ * Exported for the unit test that asserts the precedence rule.
+ */
+export async function resolveComposioApiKey(
+  organizationId: string,
+): Promise<string | null> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from("rgaios_connections")
+      .select("metadata")
+      .eq("organization_id", organizationId)
+      .eq("provider_config_key", "composio-key")
+      .eq("status", "connected")
+      .maybeSingle();
+    const enc = (data as { metadata?: { api_key?: string } } | null)?.metadata
+      ?.api_key;
+    const plain = tryDecryptSecret(enc);
+    if (plain && plain.length >= 8) return plain;
+  } catch {
+    // Table missing / RLS surprise / decrypt fail. Fall through to env.
+  }
+  return process.env.COMPOSIO_API_KEY ?? null;
 }
 
 export async function composioCall<T = unknown>(
@@ -171,10 +345,10 @@ export async function composioCall<T = unknown>(
    */
   userId?: string | null,
 ): Promise<T> {
-  const composioKey = process.env.COMPOSIO_API_KEY;
+  const composioKey = await resolveComposioApiKey(organizationId);
   if (!composioKey) {
     throw new Error(
-      "COMPOSIO_API_KEY missing - composio integration not configured",
+      "Composio API key missing - set per-org key in Connections → Workspace API keys, or set COMPOSIO_API_KEY env on the VPS",
     );
   }
   const pck = `composio:${opts.appKey}`;

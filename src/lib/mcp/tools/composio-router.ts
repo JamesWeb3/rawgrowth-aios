@@ -30,10 +30,14 @@ import { composioAction } from "../proxy";
 type ComposioActionListItem = {
   name?: string;
   enum?: string;
+  /** v3 returns slug instead of enum. Discovery accepts either. */
+  slug?: string;
   display_name?: string;
   appName?: string;
   appKey?: string;
   description?: string;
+  /** v3 nests toolkit metadata. */
+  toolkit?: { slug?: string; name?: string };
 };
 
 type ComposioActionListResponse = {
@@ -71,10 +75,14 @@ registerTool({
     },
   },
   handler: async (args, ctx) => {
-    const apiKey = process.env.COMPOSIO_API_KEY;
+    // Per-org Composio key first (Connections → Workspace API keys),
+    // then env fallback. Mirrors composioCall + composio OAuth start
+    // so listing + execution + revoke all hit the same Composio tenant.
+    const { resolveComposioApiKey } = await import("@/lib/composio/proxy");
+    const apiKey = await resolveComposioApiKey(ctx.organizationId);
     if (!apiKey) {
       return textError(
-        "COMPOSIO_API_KEY missing - composio router not configured",
+        "Composio API key missing - set per-org key in Connections → Workspace API keys, or set COMPOSIO_API_KEY env on the VPS",
       );
     }
     const rawApp = String(args.app ?? "").trim().toLowerCase();
@@ -89,9 +97,10 @@ registerTool({
       );
       items = cached.actions;
     } else {
+      // v3 tools listing. v1 used appNames=, v3 uses toolkit_slug=.
       const url = filter
-        ? `https://backend.composio.dev/api/v1/actions?appNames=${encodeURIComponent(filter)}`
-        : "https://backend.composio.dev/api/v1/actions";
+        ? `https://backend.composio.dev/api/v3/tools?toolkit_slug=${encodeURIComponent(filter)}`
+        : "https://backend.composio.dev/api/v3/tools";
 
       let res: Response;
       try {
@@ -136,8 +145,11 @@ registerTool({
       : `Composio catalog actions (${items.length}). Pass \`app\` to filter:`;
 
     const lines = items.slice(0, 200).map((it, i) => {
-      const slug = it.enum ?? it.name ?? "(unnamed)";
-      const app = it.appName ?? it.appKey ?? "?";
+      // v3 returns `slug`; v1 returned `enum`. Tolerate both during the
+      // migration window so cached v1 responses still render until the
+      // cache TTL clears.
+      const slug = it.slug ?? it.enum ?? it.name ?? "(unnamed)";
+      const app = it.toolkit?.slug ?? it.appName ?? it.appKey ?? "?";
       const display = it.display_name ?? it.name ?? slug;
       const desc = it.description ? ` - ${it.description.slice(0, 120)}` : "";
       return `${i + 1}. \`${slug}\` (app=${app}) - ${display}${desc}`;

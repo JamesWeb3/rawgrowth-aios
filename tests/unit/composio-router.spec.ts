@@ -175,23 +175,23 @@ test("registerTool: both tools are registered with correct shapes", async () => 
   );
 });
 
-test("composio_list_tools (no app): hits unfiltered catalog endpoint", async () => {
+test("composio_list_tools (no app): hits unfiltered v3 tools endpoint", async () => {
   // The router has a 5-min in-memory cache keyed on
   // `${orgId}:${filter}`. Tests use unique orgIds so a previous test's
   // cached response can't satisfy this one's fetch expectation.
   const router = installFetchRouter((req) => {
-    if (req.url.includes("backend.composio.dev/api/v1/actions")) {
+    if (req.url.includes("backend.composio.dev/api/v3/tools")) {
       return jsonResponse({
         items: [
           {
-            enum: "GMAIL_SEND_EMAIL",
-            appName: "gmail",
+            slug: "GMAIL_SEND_EMAIL",
+            toolkit: { slug: "gmail" },
             display_name: "Send email",
             description: "Send a Gmail message",
           },
           {
-            enum: "SLACK_SEND_MESSAGE",
-            appName: "slack",
+            slug: "SLACK_SEND_MESSAGE",
+            toolkit: { slug: "slack" },
             display_name: "Send Slack message",
           },
         ],
@@ -212,23 +212,23 @@ test("composio_list_tools (no app): hits unfiltered catalog endpoint", async () 
   assert.match(text, /GMAIL_SEND_EMAIL/);
   assert.match(text, /SLACK_SEND_MESSAGE/);
 
-  // No `appNames=` filter on the URL when app is omitted.
+  // No `toolkit_slug=` filter on the URL when app is omitted.
   const composioCall = router.calls.find((c) =>
     c.url.includes("backend.composio.dev"),
   );
   assert.ok(composioCall);
-  assert.doesNotMatch(composioCall!.url, /appNames=/);
+  assert.doesNotMatch(composioCall!.url, /toolkit_slug=/);
   assert.equal(composioCall!.headers["x-api-key"], "test-composio-key");
 });
 
-test("composio_list_tools (app=gmail): filters via appNames query param", async () => {
+test("composio_list_tools (app=gmail): filters via toolkit_slug query param", async () => {
   const router = installFetchRouter((req) => {
-    if (req.url.includes("backend.composio.dev/api/v1/actions")) {
+    if (req.url.includes("backend.composio.dev/api/v3/tools")) {
       return jsonResponse({
         items: [
           {
-            enum: "GMAIL_SEND_EMAIL",
-            appName: "gmail",
+            slug: "GMAIL_SEND_EMAIL",
+            toolkit: { slug: "gmail" },
             display_name: "Send email",
           },
         ],
@@ -251,7 +251,7 @@ test("composio_list_tools (app=gmail): filters via appNames query param", async 
     c.url.includes("backend.composio.dev"),
   );
   assert.ok(composioCall);
-  assert.match(composioCall!.url, /appNames=gmail/);
+  assert.match(composioCall!.url, /toolkit_slug=gmail/);
 });
 
 test("composio_list_tools (app='all'): treated like no filter", async () => {
@@ -268,7 +268,7 @@ test("composio_list_tools (app='all'): treated like no filter", async () => {
     c.url.includes("backend.composio.dev"),
   );
   assert.ok(composioCall);
-  assert.doesNotMatch(composioCall!.url, /appNames=/);
+  assert.doesNotMatch(composioCall!.url, /toolkit_slug=/);
 });
 
 test("composio_list_tools: missing COMPOSIO_API_KEY surfaces textError (no throw)", async () => {
@@ -286,7 +286,10 @@ test("composio_list_tools: missing COMPOSIO_API_KEY surfaces textError (no throw
     );
     // textError shape: isError=true, single text block.
     assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /COMPOSIO_API_KEY missing/);
+    assert.match(
+      result.content[0].text,
+      /Composio API key missing|COMPOSIO_API_KEY missing/,
+    );
   } finally {
     restoreEnv(snap);
   }
@@ -375,7 +378,7 @@ test("composio_list_tools: 5-min cache returns cached actions on second call (no
 test("composio_use_tool: routes through composioAction with ctx.userId thread", async () => {
   const composioCalls: CapturedRequest[] = [];
   installFetchRouter((req) => {
-    if (req.url.includes("backend.composio.dev/api/v1/actions/")) {
+    if (req.url.includes("backend.composio.dev/api/v3/tools/execute/")) {
       composioCalls.push(req);
       return jsonResponse({ ok: true, message_id: "m_42" });
     }
@@ -408,18 +411,18 @@ test("composio_use_tool: routes through composioAction with ctx.userId thread", 
   assert.equal(composioCalls.length, 1);
   assert.match(
     composioCalls[0].url,
-    /\/actions\/GMAIL_SEND_EMAIL\/execute$/,
-    "URL contains action enum",
+    /\/tools\/execute\/GMAIL_SEND_EMAIL$/,
+    "v3 URL contains action enum",
   );
   const body = JSON.parse(composioCalls[0].body ?? "{}");
   assert.equal(
-    body.entityId,
+    body.user_id,
     "user-route",
-    "ctx.userId threaded through to Composio entityId",
+    "ctx.userId threaded through to Composio user_id (v3)",
   );
-  assert.equal(body.connectedAccountId, "nango-route-1");
-  // Input passes through verbatim (not transformed).
-  assert.deepEqual(body.input, { to: "x@y.z", subject: "hi", body: "yo" });
+  assert.equal(body.connected_account_id, "nango-route-1");
+  // Input passes through verbatim (not transformed) under v3 `arguments`.
+  assert.deepEqual(body.arguments, { to: "x@y.z", subject: "hi", body: "yo" });
 });
 
 test("composio_use_tool: missing COMPOSIO_API_KEY surfaces textError, doesn't throw", async () => {
@@ -448,7 +451,10 @@ test("composio_use_tool: missing COMPOSIO_API_KEY surfaces textError, doesn't th
       { organizationId: "org-1", userId: "user-x" },
     );
     assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /COMPOSIO_API_KEY missing/);
+    assert.match(
+      result.content[0].text,
+      /Composio API key missing|COMPOSIO_API_KEY missing/,
+    );
   } finally {
     restoreEnv(snap);
   }
@@ -573,7 +579,7 @@ test("composio_use_tool: denylist allows safe actions whose names share a substr
   for (const action of safeActionsThatRouteToComposio) {
     let composioHit = false;
     installFetchRouter((req) => {
-      if (req.url.includes("backend.composio.dev/api/v1/actions/")) {
+      if (req.url.includes("backend.composio.dev/api/v3/tools/execute/")) {
         composioHit = true;
         return jsonResponse({ ok: true });
       }

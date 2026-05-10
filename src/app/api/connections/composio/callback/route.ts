@@ -7,9 +7,11 @@ export const runtime = "nodejs";
 /**
  * GET /api/connections/composio/callback
  *
- * Composio redirects here after OAuth completes. Query params include
- * `connectionId` and `status`. We promote the pending row to status='connected'
- * and redirect the operator back to /connections.
+ * Composio redirects here after OAuth completes. v3 query params are
+ * `connected_account_id` and `status` (success|failed). v1 used
+ * `connectionId` + status (ACTIVE|FAILED) - we accept both for
+ * back-compat during the migration window. We promote the pending row
+ * to status='connected' and redirect the operator back to /connections.
  *
  * Org-scope: the update is constrained to rows belonging to the
  * caller's active org. Without this check, an attacker who learned a
@@ -26,7 +28,12 @@ export const runtime = "nodejs";
  */
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
-  const connectionId = url.searchParams.get("connectionId");
+  // Accept both v3 (snake_case) and v1 (camelCase) param names so a
+  // mid-flight upgrade doesn't strand connections that started under
+  // the old shape.
+  const connectionId =
+    url.searchParams.get("connected_account_id") ??
+    url.searchParams.get("connectionId");
   const status = url.searchParams.get("status") ?? "connected";
 
   if (!connectionId) {
@@ -44,10 +51,16 @@ export async function GET(req: NextRequest) {
   // their user_id. Cast on column name + value because Supabase
   // generated types are stale relative to migration 0063 (column
   // exists in DB, types haven't been regenerated yet).
+  const isOk =
+    status === "ACTIVE" ||
+    status === "connected" ||
+    status === "success" ||
+    status === "ACTIVE_TOKEN" ||
+    status === "active";
   const { error } = await supabaseAdmin()
     .from("rgaios_connections")
     .update({
-      status: status === "ACTIVE" || status === "connected" ? "connected" : "error",
+      status: isOk ? "connected" : "error",
       metadata: { composio_callback_at: new Date().toISOString() },
     } as never)
     .eq("nango_connection_id", connectionId)
