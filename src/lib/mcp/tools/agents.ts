@@ -9,6 +9,7 @@ import { AGENT_ROLES, type AgentRole } from "@/lib/agents/constants";
 import { addSkillsToAgent, listAssignments } from "@/lib/skills/queries";
 import { getSkill, installCommand } from "@/lib/skills/catalog";
 import { autoPickSkillsForAgent } from "@/lib/skills/rank";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 /**
  * MCP tools for the agent lifecycle. Let clients create, list, update, and
@@ -349,7 +350,55 @@ registerTool({
   handler: async (args, ctx) => {
     const id = String(args.id ?? "").trim();
     if (!id) return textError("id is required");
+
+    // Safety guard - mirrors src/lib/agent/agent-blocks.ts:184-192. Without
+    // this check any MCP caller could delete CEO/department-head rows from
+    // any agent the bearer token has access to (suspected NovaBloom demo
+    // agent count drop 22 → 10). Lookup is org-scoped via ctx.organizationId
+    // so cross-tenant fires are also impossible even if the id is guessed.
+    const db = supabaseAdmin();
+    const { data: target } = await db
+      .from("rgaios_agents")
+      .select("role, is_department_head, name")
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const t = target as {
+      role: string | null;
+      is_department_head: boolean | null;
+      name: string;
+    } | null;
+    if (!t) {
+      return textError(`agent ${id} not found in your organization`);
+    }
+    if (t.role === "ceo") {
+      return textError(
+        "can't fire the CEO. Reassign role first if you want to remove the agent.",
+      );
+    }
+    if (t.is_department_head === true) {
+      return textError(
+        "can't fire a department head from MCP. Use the dashboard agent panel which forces explicit confirmation.",
+      );
+    }
+
     await deleteAgent(ctx.organizationId, id);
+
+    // Audit row so future debug surfaces MCP-driven fires distinctly from
+    // dashboard / agent-blocks paths.
+    await db.from("rgaios_audit_log").insert({
+      organization_id: ctx.organizationId,
+      kind: "agent_fired_via_mcp",
+      actor_type: "system",
+      actor_id: "agents_fire",
+      detail: {
+        agent_id: id,
+        agent_name: t.name,
+        agent_role: t.role,
+        fired_by_tool: "agents_fire",
+      },
+    } as never);
+
     return text(`Fired agent \`${id}\`.`);
   },
 });
