@@ -5,9 +5,90 @@ import {
   resolveOrgFromToken,
 } from "@/lib/mcp/token-resolver";
 import { listPromptsForOrg, getPromptForOrg } from "@/lib/mcp/prompts";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 // Force the tools/ modules to register themselves on cold start.
 import "@/lib/mcp/tools";
+
+// ─── Audit-log helpers for tools/call ───────────────────────────────
+//
+// Brief required `chat_command_tool_call` audit row for every tool
+// invocation through /api/mcp. W6 found this missing: denylist
+// refusals from composio_use_tool and every other tool call were
+// silently flying under the radar - no trace, no replay, nothing for
+// security review. Insert is fire-and-forget; we never let an audit
+// failure break a real tool response.
+
+// Args may carry secrets the model copy-pasted (e.g. an API key it
+// pulled from connections). Strip anything that looks token-shaped
+// before the row hits the database. Better to drop too much than to
+// log a credential to a row a future viewer can read.
+const SECRET_KEY_PATTERN =
+  /token|secret|password|passwd|api[_-]?key|authorization|bearer|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key/i;
+
+function sanitizeArgsForAudit(value: unknown, depth = 0): unknown {
+  if (depth > 4) return "[depth-capped]";
+  if (value == null) return value;
+  if (typeof value === "string") {
+    return value.length > 500 ? value.slice(0, 500) + "...(truncated)" : value;
+  }
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((v) => sanitizeArgsForAudit(v, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_KEY_PATTERN.test(k)) {
+      out[k] = "[redacted]";
+      continue;
+    }
+    out[k] = sanitizeArgsForAudit(v, depth + 1);
+  }
+  return out;
+}
+
+type ToolCallResult = Awaited<ReturnType<typeof callTool>>;
+
+function logToolCallAudit(opts: {
+  organizationId: string;
+  tool: string;
+  args: unknown;
+  ok: boolean;
+  errorExcerpt?: string;
+}): void {
+  // Fire-and-forget; never block or break the response.
+  try {
+    const detail: Record<string, unknown> = {
+      tool: opts.tool,
+      args: sanitizeArgsForAudit(opts.args),
+      ok: opts.ok,
+    };
+    if (opts.errorExcerpt) detail.error_excerpt = opts.errorExcerpt.slice(0, 300);
+    // Supabase's PostgrestBuilder is `PromiseLike` (no native .catch),
+    // so wrap in Promise.resolve to get a real Promise we can attach
+    // a catch handler to. Fire-and-forget intentional - audit failure
+    // must never block the tool response.
+    Promise.resolve(
+      supabaseAdmin()
+        .from("rgaios_audit_log")
+        .insert({
+          organization_id: opts.organizationId,
+          kind: "mcp_tool_call",
+          actor_type: "mcp",
+          actor_id: opts.tool,
+          detail,
+        } as never),
+    ).catch((err: unknown) => {
+      console.warn(
+        `[mcp/audit] insert failed for ${opts.tool}: ${(err as Error).message}`,
+      );
+    });
+  } catch (err) {
+    console.warn(
+      `[mcp/audit] sync setup failed for ${opts.tool}: ${(err as Error).message}`,
+    );
+  }
+}
 
 /**
  * Streamable HTTP MCP endpoint (stateless variant).
@@ -97,8 +178,41 @@ export async function POST(req: NextRequest) {
       case "tools/call": {
         const name = String(msg.params?.name ?? "");
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-        const result = await callTool(name, args, {
+        let result: ToolCallResult;
+        try {
+          result = await callTool(name, args, {
+            organizationId: org.id,
+          });
+        } catch (err) {
+          // Tool threw before returning a result envelope - still
+          // audit then rethrow into the outer handler so the JSON-RPC
+          // error response shape is unchanged.
+          logToolCallAudit({
+            organizationId: org.id,
+            tool: name,
+            args,
+            ok: false,
+            errorExcerpt: (err as Error).message,
+          });
+          throw err;
+        }
+        // result.isError covers textError (denylist refusals, missing
+        // creds, upstream non-2xx). detail.error_excerpt grabs the
+        // first text block so the audit row has actionable context.
+        const isError = result.isError === true;
+        let errorExcerpt: string | undefined;
+        if (isError) {
+          const first = result.content?.[0];
+          if (first && typeof first === "object" && "text" in first) {
+            errorExcerpt = String((first as { text?: unknown }).text ?? "");
+          }
+        }
+        logToolCallAudit({
           organizationId: org.id,
+          tool: name,
+          args,
+          ok: !isError,
+          errorExcerpt,
         });
         return NextResponse.json(reply(msg.id, result));
       }

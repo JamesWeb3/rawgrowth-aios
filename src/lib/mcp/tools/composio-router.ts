@@ -44,7 +44,23 @@ type ComposioActionListResponse = {
   items?: ComposioActionListItem[];
   // Older shapes seen in Composio responses - tolerate both.
   actions?: ComposioActionListItem[];
+  // v3 cursor pagination. Tolerate snake_case + camelCase + nested.
+  next_cursor?: string | null;
+  nextCursor?: string | null;
+  pagination?: { next_cursor?: string | null; nextCursor?: string | null };
 };
+
+// ─── Pagination caps for composio_list_tools ────────────────────────
+//
+// Composio v3 /api/v3/tools defaults to ~20 items per page. Without
+// loop+cursor we silently drop the long tail (W6 found this:
+// SLACK_SEND_MESSAGE was missing because alphabetical ordering put
+// SLACK_ADD_*, SLACK_ARCHIVE_* in the first page). Loop until cursor
+// drains, capped at PAGE_LIMIT*MAX_PAGES so a runaway upstream can't
+// blow heap. limit=200 matches Composio's documented per-page max.
+const COMPOSIO_PAGE_LIMIT = 200;
+const COMPOSIO_MAX_PAGES = 3; // 3 * 200 = 600 raw, sliced to 500 below
+const COMPOSIO_TOTAL_CAP = 500;
 
 // ─── 5-min cache for composio_list_tools ────────────────────────────
 //
@@ -98,35 +114,63 @@ registerTool({
       items = cached.actions;
     } else {
       // v3 tools listing. v1 used appNames=, v3 uses toolkit_slug=.
-      const url = filter
-        ? `https://backend.composio.dev/api/v3/tools?toolkit_slug=${encodeURIComponent(filter)}`
-        : "https://backend.composio.dev/api/v3/tools";
+      // Loop with cursor pagination - Composio v3 defaults to 20/page
+      // and SLACK_SEND_MESSAGE etc were getting dropped (W6 finding).
+      const baseParams = new URLSearchParams();
+      if (filter) baseParams.set("toolkit_slug", filter);
+      baseParams.set("limit", String(COMPOSIO_PAGE_LIMIT));
 
-      let res: Response;
+      const aggregated: ComposioActionListItem[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
       try {
-        res = await fetch(url, {
-          method: "GET",
-          headers: {
-            "x-api-key": apiKey,
-            "content-type": "application/json",
-          },
-          signal: AbortSignal.timeout(20_000),
-        });
+        while (pages < COMPOSIO_MAX_PAGES) {
+          const params = new URLSearchParams(baseParams);
+          if (cursor) params.set("cursor", cursor);
+          const url = `https://backend.composio.dev/api/v3/tools?${params.toString()}`;
+
+          const res = await fetch(url, {
+            method: "GET",
+            headers: {
+              "x-api-key": apiKey,
+              "content-type": "application/json",
+            },
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!res.ok) {
+            const body = await res.text();
+            return textError(
+              `composio_list_tools ${res.status}: ${body.slice(0, 300)}`,
+            );
+          }
+          const json = (await res.json()) as ComposioActionListResponse;
+          const pageItems = json.items ?? json.actions ?? [];
+          aggregated.push(...pageItems);
+          pages += 1;
+
+          if (aggregated.length >= COMPOSIO_TOTAL_CAP) break;
+
+          // Cursor lives at top-level (snake or camel) or nested under
+          // pagination. Treat empty-string as no-more-pages.
+          const next =
+            json.next_cursor ??
+            json.nextCursor ??
+            json.pagination?.next_cursor ??
+            json.pagination?.nextCursor ??
+            null;
+          if (!next || pageItems.length === 0) break;
+          cursor = next;
+        }
       } catch (err) {
         return textError(
           `composio_list_tools fetch failed: ${(err as Error).message}`,
         );
       }
 
-      if (!res.ok) {
-        const body = await res.text();
-        return textError(
-          `composio_list_tools ${res.status}: ${body.slice(0, 300)}`,
-        );
-      }
-
-      const json = (await res.json()) as ComposioActionListResponse;
-      items = json.items ?? json.actions ?? [];
+      items =
+        aggregated.length > COMPOSIO_TOTAL_CAP
+          ? aggregated.slice(0, COMPOSIO_TOTAL_CAP)
+          : aggregated;
       composioListCache.set(cacheKey, {
         actions: items,
         until: Date.now() + LIST_CACHE_TTL_MS,
