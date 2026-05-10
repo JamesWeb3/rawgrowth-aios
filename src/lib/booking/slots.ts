@@ -1,5 +1,5 @@
 import { computeSlots } from "./availability";
-import { getBusyTimes } from "./calendar";
+import { getBusyTimes } from "./booking";
 import {
   bookingsForDay,
   getAvailability,

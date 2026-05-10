@@ -206,7 +206,7 @@ async function fireBinding(input: {
 
     const prompt =
       `You are an agent in the user's Rawgrowth workspace. ${personaLine}.${promptTemplateLine}\n\n` +
-      `You have access to MCP tools (gmail_search, gmail_get_message, gmail_draft, agents_list, etc.). Use whatever tools you need to complete the request.\n\n` +
+      `You have access to MCP tools. For Gmail / Slack / Google Calendar / etc. use composio_list_tools to discover the action you need, then composio_use_tool to invoke it. agents_list and the rest of the catalog are also available. Use whatever tools you need to complete the request.\n\n` +
       `When done, deliver your final answer by calling the slack_post_message MCP tool with:\n` +
       `  channel_id: "${channelId}"\n` +
       (threadTs ? `  thread_ts: "${threadTs}"\n` : "") +

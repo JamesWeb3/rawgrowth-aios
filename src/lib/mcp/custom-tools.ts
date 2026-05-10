@@ -70,19 +70,20 @@ async function findAtlasAgent(
   return { id: (data as { id: string }).id, orgName };
 }
 
-async function readGmailTemplate(): Promise<string> {
+async function readToolTemplate(): Promise<string> {
+  // PR 5 deleted the old gmail.ts template - composio-router.ts is now
+  // the canonical registerTool + composioAction reference for the model.
+  // Trim to keep the prompt small; the head of that file carries the
+  // registerTool API shape plus two example registrations.
   try {
     const path = resolve(
       process.cwd(),
-      "src/lib/mcp/tools/gmail.ts",
+      "src/lib/mcp/tools/composio-router.ts",
     );
     const src = await readFile(path, "utf8");
-    // Trim to keep the model's prompt small. The full file is ~220 LoC,
-    // first ~150 LoC carries the registerTool API surface plus two
-    // example registrations (search + draft).
     return src.split(/\r?\n/).slice(0, 150).join("\n");
   } catch {
-    return "// gmail.ts unavailable - rely on the API description above.";
+    return "// composio-router.ts unavailable - rely on the API description above.";
   }
 }
 
@@ -123,7 +124,7 @@ const SYSTEM_PROMPT_HEADER = [
   "- requiresIntegration is OPTIONAL. Set it only if the tool genuinely",
   "  needs an OAuth connection wired through Composio.",
   "",
-  "EXAMPLE (gmail.ts, trimmed):",
+  "EXAMPLE (composio-router.ts, trimmed):",
 ].join("\n");
 
 function buildDraftPrompt(input: {
@@ -175,7 +176,7 @@ export async function draftCustomMcpTool(input: {
       error: "No CEO agent (Atlas) found for this org. Hire one first.",
     };
   }
-  const template = await readGmailTemplate();
+  const template = await readToolTemplate();
   const userMessage = buildDraftPrompt({
     name: input.name,
     description: input.description,

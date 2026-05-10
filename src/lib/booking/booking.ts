@@ -10,14 +10,141 @@ import {
 } from "./queries";
 import { ymdInTz } from "./timezone";
 import { newManageToken } from "./tokens";
-import {
-  CalendarError,
-  createCalendarEvent,
-  deleteCalendarEvent,
-  getBusyTimes,
-} from "./calendar";
+import { composioCall } from "@/lib/composio/proxy";
 import type { BookingRow, EventTypeRow } from "./types";
 import { supabaseAdmin } from "@/lib/supabase/server";
+
+/**
+ * PR 5: src/lib/booking/calendar.ts is gone - the booking flow now hits
+ * Composio's Google Calendar actions directly via composioCall, same path
+ * the agent-side composio_use_tool router uses. Public booking is guest-
+ * triggered (no session), so userId is null here and composioCall falls
+ * back to the org-wide row.
+ */
+
+export class CalendarError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+interface BusyInterval {
+  start: Date;
+  end: Date;
+}
+
+async function getBusyTimes(
+  orgId: string,
+  calendarId: string,
+  start: Date,
+  end: Date,
+  timezone: string,
+): Promise<BusyInterval[]> {
+  const data = await composioCall<{
+    calendars?: Record<
+      string,
+      { busy?: Array<{ start: string; end: string }> }
+    >;
+  }>(
+    orgId,
+    {
+      appKey: "google-calendar",
+      action: "GOOGLECALENDAR_FIND_FREE_SLOTS",
+      input: {
+        time_min: start.toISOString(),
+        time_max: end.toISOString(),
+        timezone,
+        items: [{ id: calendarId }],
+      },
+    },
+    null,
+  );
+  const cal = data?.calendars?.[calendarId];
+  return (cal?.busy ?? []).map((b) => ({
+    start: new Date(b.start),
+    end: new Date(b.end),
+  }));
+}
+
+interface CreateEventInput {
+  summary: string;
+  description: string;
+  startUtc: Date;
+  durationMinutes: number;
+  attendees: Array<{ email: string; displayName?: string }>;
+  withMeet: boolean;
+}
+
+interface CreatedEvent {
+  googleEventId: string;
+  meetLink: string | null;
+}
+
+async function createCalendarEvent(
+  orgId: string,
+  calendarId: string,
+  input: CreateEventInput,
+): Promise<CreatedEvent> {
+  const endUtc = new Date(
+    input.startUtc.getTime() + input.durationMinutes * 60_000,
+  );
+  const data = await composioCall<Record<string, unknown>>(
+    orgId,
+    {
+      appKey: "google-calendar",
+      action: "GOOGLECALENDAR_CREATE_EVENT",
+      input: {
+        calendar_id: calendarId,
+        summary: input.summary,
+        description: input.description,
+        start_datetime: input.startUtc.toISOString(),
+        end_datetime: endUtc.toISOString(),
+        attendees: input.attendees.map((a) => ({
+          email: a.email,
+          display_name: a.displayName,
+        })),
+        create_meeting_room: input.withMeet,
+        send_updates: "all",
+      },
+    },
+    null,
+  );
+  const id = (data?.id as string | undefined) ?? null;
+  if (!id) throw new CalendarError("create_event: missing event id");
+  const hangoutLink = (data?.hangoutLink as string | undefined) ?? null;
+  const conferenceData = data?.conferenceData as
+    | { entryPoints?: Array<{ entryPointType: string; uri: string }> }
+    | undefined;
+  const meetEntry = conferenceData?.entryPoints?.find(
+    (e) => e.entryPointType === "video",
+  );
+  const meetLink = hangoutLink ?? meetEntry?.uri ?? null;
+  return { googleEventId: id, meetLink };
+}
+
+async function deleteCalendarEvent(
+  orgId: string,
+  calendarId: string,
+  eventId: string,
+): Promise<void> {
+  await composioCall(
+    orgId,
+    {
+      appKey: "google-calendar",
+      action: "GOOGLECALENDAR_DELETE_EVENT",
+      input: {
+        calendar_id: calendarId,
+        event_id: eventId,
+        send_updates: "all",
+      },
+    },
+    null,
+  );
+}
+
+// Exposed so slots.ts (read-only availability lookup) can reuse the same
+// busy-times Composio call without duplicating the request shape.
+export { getBusyTimes };
 
 export class BookingError extends Error {
   constructor(
@@ -244,4 +371,3 @@ async function notifyAssignedAgent(booking: BookingRow, evt: EventTypeRow): Prom
 }
 
 export type { BookingRow, EventTypeRow };
-export { CalendarError };
