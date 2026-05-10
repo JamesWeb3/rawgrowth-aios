@@ -97,7 +97,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "intercom", name: "Intercom", category: "Communication", brandColor: "#1F8DED", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/intercom" },
   { key: "zoom", name: "Zoom", category: "Communication", brandColor: "#2D8CFF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/zoom" },
   { key: "outlook", name: "Outlook", category: "Communication", brandColor: "#0078D4", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/outlook" },
-  { key: "microsoft-teams", name: "Microsoft Teams", category: "Communication", brandColor: "#6264A7", hasNativeIntegration: false, composioAppName: "microsoftteams", logoUrl: "https://logos.composio.dev/api/microsoft_teams" },
+  { key: "microsoft-teams", name: "Microsoft Teams", category: "Communication", brandColor: "#6264A7", hasNativeIntegration: false, composioAppName: "microsoft_teams", logoUrl: "https://logos.composio.dev/api/microsoft_teams" },
 
   // CRM
   { key: "hubspot", name: "HubSpot", category: "CRM", brandColor: "#FF7A59", hasNativeIntegration: true, logoUrl: "https://logos.composio.dev/api/hubspot" },
@@ -112,18 +112,18 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "activecampaign", name: "ActiveCampaign", category: "Marketing", brandColor: "#356AE6", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/active_campaign" },
   { key: "klaviyo", name: "Klaviyo", category: "Marketing", brandColor: "#232627", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/klaviyo" },
   { key: "linkedin", name: "LinkedIn", category: "Marketing", brandColor: "#0A66C2", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/linkedin" },
-  { key: "twitter", name: "Twitter / X", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, composioAppName: "x", logoUrl: "https://logos.composio.dev/api/twitter" },
+  { key: "twitter", name: "Twitter / X", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/twitter" },
   { key: "meta", name: "Meta Ads", category: "Marketing", brandColor: "#0467DF", hasNativeIntegration: true, composioAppName: "facebook", logoUrl: "https://logos.composio.dev/api/metaads" },
   { key: "tiktok", name: "TikTok Ads", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/tiktok" },
 
   // Calendar
   { key: "google-calendar", name: "Google Calendar", category: "Calendar", brandColor: "#4285F4", hasNativeIntegration: true, composioAppName: "googlecalendar", logoUrl: "https://logos.composio.dev/api/googlecalendar" },
   { key: "calendly", name: "Calendly", category: "Calendar", brandColor: "#006BFF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/calendly" },
-  { key: "cal-com", name: "Cal.com", category: "Calendar", brandColor: "#0F172A", hasNativeIntegration: false, composioAppName: "calcom", logoUrl: "https://logos.composio.dev/api/cal" },
+  { key: "cal-com", name: "Cal.com", category: "Calendar", brandColor: "#0F172A", hasNativeIntegration: false, composioAppName: "cal", logoUrl: "https://logos.composio.dev/api/cal" },
   { key: "fathom", name: "Fathom", category: "Calendar", brandColor: "#9F6EF3", hasNativeIntegration: true, logoUrl: "https://logos.composio.dev/api/fathom" },
 
   // Analytics
-  { key: "google-analytics", name: "Google Analytics", category: "Analytics", brandColor: "#E37400", hasNativeIntegration: true, composioAppName: "googleanalytics", logoUrl: "https://logos.composio.dev/api/google_analytics" },
+  { key: "google-analytics", name: "Google Analytics", category: "Analytics", brandColor: "#E37400", hasNativeIntegration: true, composioAppName: "google_analytics", logoUrl: "https://logos.composio.dev/api/google_analytics" },
   { key: "mixpanel", name: "Mixpanel", category: "Analytics", brandColor: "#7856FF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/mixpanel" },
   { key: "amplitude", name: "Amplitude", category: "Analytics", brandColor: "#1E61F0", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/amplitude" },
   { key: "posthog", name: "PostHog", category: "Analytics", brandColor: "#1D4AFF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/posthog" },
@@ -135,8 +135,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "dropbox", name: "Dropbox", category: "Storage", brandColor: "#0061FF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/dropbox" },
   { key: "onedrive", name: "OneDrive", category: "Storage", brandColor: "#0078D4", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/one_drive" },
   { key: "box", name: "Box", category: "Storage", brandColor: "#0061D5", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/box" },
-  // s3: no Composio CDN logo (composioAppName="aws_s3" for OAuth, but logo CDN 404s) - falls back to letter avatar.
-  { key: "s3", name: "AWS S3", category: "Storage", brandColor: "#FF9900", hasNativeIntegration: false, composioAppName: "aws_s3" },
+  // s3: Composio has no AWS S3 toolkit (verified against /api/v1/apps).
+  { key: "s3", name: "AWS S3", category: "Storage", brandColor: "#FF9900", hasNativeIntegration: false },
 
   // AI
   { key: "openai", name: "OpenAI", category: "AI", brandColor: "#10A37F", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/openai" },
