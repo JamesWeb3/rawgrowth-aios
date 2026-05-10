@@ -75,6 +75,13 @@ const KNOWN_PROVIDERS = [
     docsUrl: "https://mailchimp.com/help/about-api-keys/",
     placeholder: "abc123-us21",
   },
+  {
+    key: "composio",
+    label: "Composio",
+    description: "Per-org Composio API key. Overrides the VPS-wide COMPOSIO_API_KEY env when set so each tenant pays for their own action quota.",
+    docsUrl: "https://app.composio.dev/settings",
+    placeholder: "ck_live_...",
+  },
 ] as const;
 
 export async function GET() {

@@ -7,6 +7,7 @@ import { chatReply } from "@/lib/agent/chat";
 import { applyBrandFilter } from "@/lib/brand/apply-filter";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
+import { extractAndExecuteCommands } from "@/lib/agent/agent-commands";
 import { badUuidResponse } from "@/lib/utils";
 
 export const runtime = "nodejs";
@@ -422,6 +423,34 @@ export async function POST(
           );
         }
 
+        // 4a-ter. JSON command extraction. Atlas (CEO) and dept heads
+        // can emit <command type="tool_call|agent_invoke|routine_create">
+        // blocks whose body is JSON. The handler executes each command
+        // server-side (composio action / dispatch a routine to a sub-
+        // agent / create a scheduled routine) and we post a single
+        // system message summarising results back into the chat. This
+        // is the response-side substitute for the MCP wire-protocol
+        // that Anthropic's OAuth gate refuses to combine with on-call
+        // tool_use today.
+        let commandResults: Array<{ ok: boolean; type: string; summary: string }> = [];
+        try {
+          const ext = await extractAndExecuteCommands({
+            orgId,
+            speakerAgentId: agentId,
+            reply: preFilterText,
+            callerUserId: userId,
+          });
+          if (ext.results.length > 0) {
+            preFilterText = ext.visibleReply || preFilterText;
+            commandResults = ext.results;
+          }
+        } catch (err) {
+          console.warn(
+            "[chat] command extraction failed:",
+            (err as Error).message,
+          );
+        }
+
         // 4a-bis. Data-ask extraction. Atlas (or any agent following the
         // DATA-ASK PROTOCOL in preamble.ts) can emit <need scope="..."> blocks
         // when it genuinely lacks data. We strip those blocks from the
@@ -489,6 +518,36 @@ export async function POST(
         emit({ type: "text", delta: visibleText });
         if (createdTasks.length > 0) {
           emit({ type: "tasks_created", tasks: createdTasks });
+        }
+        if (commandResults.length > 0) {
+          // Surface each command result as a system row so the operator
+          // can see WHAT just got executed in their behalf (Composio
+          // action ran, dept head was invoked, routine created). Best-
+          // effort - the visible chat text already streamed.
+          emit({ type: "commands_executed", results: commandResults });
+          const summary = commandResults
+            .map(
+              (r, i) => `${i + 1}. [${r.ok ? "ok" : "fail"}] ${r.type} - ${r.summary}`,
+            )
+            .join("\n");
+          try {
+            await db.from("rgaios_agent_chat_messages").insert({
+              organization_id: orgId,
+              agent_id: agentId,
+              user_id: null,
+              role: "system",
+              content: `Commands executed:\n${summary}`,
+              metadata: {
+                kind: "chat_commands_executed",
+                results: commandResults,
+              } as never,
+            } as never);
+          } catch (err) {
+            console.warn(
+              "[chat] command system message insert failed:",
+              (err as Error).message,
+            );
+          }
         }
 
         // 5. Persist the assistant reply (or operator-warning sentinel).
