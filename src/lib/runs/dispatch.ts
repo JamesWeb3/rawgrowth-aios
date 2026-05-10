@@ -14,63 +14,91 @@ import { executeRun } from "./executor";
  *                 long-running Claude Code session). The audit row +
  *                 in-process executor is the right default; clients who
  *                 actually want MCP claim semantics can flip to v3.
- *   v3          → leaves the run in `pending` and pokes the host-side
- *                 rawclaw-drain.service (port 9876) so it spawns Claude Code
- *                 to claim + execute via MCP. Drain is bounded by the
- *                 4-concurrent spawn cap (CTO brief §02 + R05). Without
- *                 this branch v3 silently fell into the in-process
- *                 Anthropic-API path and the drain server was dead infra.
+ *   v3          → audits + pokes the host-side rawclaw-drain.service
+ *                 (port 9876). If the drain ack comes back, drain owns
+ *                 the run and we exit. If the drain didn't ack (no URL
+ *                 set, network refusal, non-200 reply), fall back to the
+ *                 same in-process after()/direct path. Without that
+ *                 fallback every v3 VPS missing a live drain daemon
+ *                 silently age-outs every dispatched run.
  *
  * Callers do not need to know which mode they're in  -  this helper is the
  * single place that branches.
  */
 export function dispatchRun(runId: string, organizationId: string) {
   if (isV3) {
-    // Supabase's PostgrestBuilder is a PromiseLike, not a real Promise,
-    // so .catch() isn't on the prototype. Wrap with Promise.resolve()
-    // to get full Promise semantics for both error-payload + thrown
-    // rejection handling. Pre-fix this was `void ...insert(...)` which
-    // silently swallowed both branches.
-    Promise.resolve(
-      supabaseAdmin()
-        .from("rgaios_audit_log")
-        .insert({
-          organization_id: organizationId,
-          kind: "run_queued_for_drain",
-          actor_type: "system",
-          actor_id: "dispatcher",
-          detail: { run_id: runId },
-        }),
-    )
-      .then(({ error }) => {
-        if (error) {
-          console.error("[dispatch.audit] insert failed", error);
-        }
-      })
-      .catch((err) => {
-        console.error("[dispatch.audit] insert threw", err);
-      });
-    const drainUrl = process.env.RAWCLAW_DRAIN_URL;
-    if (drainUrl) {
-      // Fire-and-forget poke. The drain server's /triage path runs the
-      // rawgrowth-triage slash command which uses MCP runs_claim to pick
-      // up the pending row. 1s timeout — drain ack is local + immediate.
-      fetch(`${drainUrl.replace(/\/$/, "")}/triage`, {
-        method: "POST",
-        signal: AbortSignal.timeout(1000),
-      }).catch(() => {
-        /* drain unreachable; the systemd-tick fallback (every 1-2 min)
-           will retry the pending row so a momentarily-down drain
-           daemon doesn't lose work. */
-      });
-    }
+    void dispatchV3(runId, organizationId);
     return;
   }
-  // hosted + self_hosted: in-process executor via Next.js after().
-  // after() requires Next.js request scope; if we're called from a
-  // background context where it throws (e.g. a script invoking
-  // dispatchRun directly outside an HTTP handler), fall back to a
-  // detached executeRun() so the run still progresses past pending.
+  fireInProcess(runId);
+}
+
+/**
+ * v3 branch: audit + drain poke + in-process fallback. Runs as a detached
+ * Promise from the synchronous dispatchRun caller so HTTP handlers don't
+ * block on the drain handshake.
+ */
+async function dispatchV3(runId: string, organizationId: string) {
+  // Supabase's PostgrestBuilder is a PromiseLike, not a real Promise,
+  // so .catch() isn't on the prototype. Wrap with Promise.resolve()
+  // to get full Promise semantics for both error-payload + thrown
+  // rejection handling. Pre-fix this was `void ...insert(...)` which
+  // silently swallowed both branches.
+  Promise.resolve(
+    supabaseAdmin()
+      .from("rgaios_audit_log")
+      .insert({
+        organization_id: organizationId,
+        kind: "run_queued_for_drain",
+        actor_type: "system",
+        actor_id: "dispatcher",
+        detail: { run_id: runId },
+      }),
+  )
+    .then(({ error }) => {
+      if (error) {
+        console.error("[dispatch.audit] insert failed", error);
+      }
+    })
+    .catch((err) => {
+      console.error("[dispatch.audit] insert threw", err);
+    });
+
+  const drainUrl = process.env.RAWCLAW_DRAIN_URL;
+  if (drainUrl) {
+    // Fire-and-forget poke. The drain server's /triage path runs the
+    // rawgrowth-triage slash command which uses MCP runs_claim to pick
+    // up the pending row. 1s timeout — drain ack is local + immediate.
+    let drainAcked = false;
+    try {
+      const r = await fetch(`${drainUrl.replace(/\/$/, "")}/triage`, {
+        method: "POST",
+        signal: AbortSignal.timeout(1000),
+      });
+      drainAcked = r.ok;
+    } catch {
+      /* drain unreachable; fall through to in-process below. */
+    }
+    if (drainAcked) return;
+    console.warn(
+      `[dispatch] drain at ${drainUrl} did not ack, falling back to in-process executor for run ${runId}`,
+    );
+  }
+
+  // No drain URL OR drain didn't ack: run in-process so the v3 VPS
+  // doesn't lose the run. Brief double-execute risk if the drain wakes
+  // late is bounded by claimRun's atomic status=pending→running -
+  // whichever side wins, the loser bails on a no-op.
+  fireInProcess(runId);
+}
+
+/**
+ * In-process executor dispatch via Next.js after(). after() requires
+ * the request scope of an HTTP handler; if we're called from a script
+ * or other background context where it throws, fall back to a detached
+ * executeRun() so the run still progresses past pending.
+ */
+function fireInProcess(runId: string) {
   try {
     after(async () => {
       await executeRun(runId);
