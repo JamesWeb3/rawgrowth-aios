@@ -4,8 +4,6 @@ import { composioAction } from "../proxy";
 /**
  * Composio Tool Router MCP surface.
  *
- * Today our agents see ~7 hardcoded integration tools (gmail_search,
- * gmail_get_message, gmail_draft, plus the 4 booking/calendar wrappers).
  * Composio's Tool Router (Sept 2025) exposes 1000+ apps through a
  * single MCP endpoint with per-user session scoping. Instead of writing
  * one tool per app+action and shipping a redeploy every time a client
@@ -27,11 +25,6 @@ import { composioAction } from "../proxy";
  * that thread the router would silently borrow the first user's
  * grant for every member of the org - same bug Claude Max already
  * hit and we already fixed.
- *
- * We deliberately keep gmail.ts + calendar.ts shadowing the router
- * for the canonical paths until PR 5 deletes them: the model can
- * still reach Gmail via either path during the transition. PR 5
- * lands 24h after this commit proves stable on prod.
  */
 
 type ComposioActionListItem = {

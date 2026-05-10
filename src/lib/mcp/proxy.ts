@@ -39,9 +39,3 @@ export async function composioAction<T = unknown>(
 ): Promise<T> {
   return composioCall<T>(organizationId, { appKey, action, input }, userId);
 }
-
-/**
- * Legacy alias kept so existing tool code compiles unchanged. New
- * callers should import composioAction directly.
- */
-export const nangoCall = composioAction;
