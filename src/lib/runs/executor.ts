@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
+import { anthropic } from "@ai-sdk/anthropic";
 import {
   generateText,
   stepCountIs,
@@ -17,6 +17,11 @@ import {
 } from "@/lib/mcp/registry";
 import type { ToolContext } from "@/lib/mcp/types";
 import { createApproval } from "@/lib/approvals/queries";
+import {
+  runOauthToolLoop,
+  type OauthToolDef,
+  type ToolCallTrace,
+} from "@/lib/llm/oauth-anthropic";
 import {
   claimRun,
   finaliseRun,
@@ -68,7 +73,7 @@ export async function executeRun(runId: string): Promise<void> {
       string,
       "direct" | "requires_approval" | "draft_only"
     >;
-    const tools = buildToolset(
+    const { aiSdkTools, oauthTools } = buildToolsets(
       toolCtx,
       run.id,
       agent?.id ?? null,
@@ -94,19 +99,20 @@ export async function executeRun(runId: string): Promise<void> {
 
     const abortCtl = new AbortController();
     const wallClockTimer = setTimeout(() => abortCtl.abort(), WALL_CLOCK_MS);
-    let result;
+    let result: NormalisedRunResult;
     try {
       // Runtime selector per CTO brief §02 Decision 2:
       //   Path A (RUNTIME_PATH=cli): Claude Code CLI subprocess. Reuses the
       //     operator's Max OAuth token in ~/.claude. No ANTHROPIC_API_KEY
       //     needed. MCP tool use only fires if the operator has registered
       //     this v3 MCP server in claude_desktop_config (operational).
-      //   Path B (default): @ai-sdk/anthropic with auth resolution order:
-      //     1. Org's Claude Max OAuth token pool (mirrors chat.ts +
-      //        oauth-first.ts behaviour - no API key required).
-      //     2. ANTHROPIC_API_KEY env (commercial API fallback).
-      //     Either way the AI SDK runs the in-process tool loop with the
-      //     same toolset / systemPrompt.
+      //   Path B (default): raw fetch to /v1/messages with the org's
+      //     Claude Max OAuth pool (mirrors lib/agent/chat.ts wire shape;
+      //     bypasses @ai-sdk/anthropic's opaque "Failed after N attempts.
+      //     Last error: Error" wrapper that hid real status codes).
+      //     Falls back to @ai-sdk/anthropic + ANTHROPIC_API_KEY when the
+      //     pool is empty or fully exhausted, so VPSes with a commercial
+      //     key still get a working executor.
       // One env var flips per-VPS. Both paths build from the same systemPrompt
       // + userMessage so prompt drift can't sneak between them.
       if (process.env.RUNTIME_PATH === "cli") {
@@ -115,14 +121,15 @@ export async function executeRun(runId: string): Promise<void> {
           userMessage,
           abortCtl.signal,
         );
-        result = { text, steps: [] as unknown[] };
+        result = { text, stepCount: 0, toolCalls: [] };
       } else {
         result = await generateWithOauthOrApiKey({
           organizationId: run.organization_id,
           model: runtimeToModel(agent?.runtime),
           systemPrompt,
           userMessage,
-          tools,
+          aiSdkTools,
+          oauthTools,
           abortSignal: abortCtl.signal,
         });
       }
@@ -135,12 +142,8 @@ export async function executeRun(runId: string): Promise<void> {
       "succeeded",
       {
         text: result.text,
-        stepCount: result.steps?.length ?? 0,
-        toolCalls: result.steps?.flatMap((s) =>
-          s.content
-            .filter((c) => c.type === "tool-call")
-            .map((c) => (c as { toolName: string }).toolName),
-        ),
+        stepCount: result.stepCount,
+        toolCalls: result.toolCalls,
       },
     );
 
@@ -230,23 +233,6 @@ function generateViaClaudeCli(
 
 // ─── Path B dispatcher: OAuth pool first, API key fallback ─────────
 
-/**
- * Anthropic's OAuth gate for /v1/messages requires the system prompt to
- * START with this exact identity line - any other content in `system`
- * before this line returns 401 "OAuth authentication is currently not
- * supported." Same constant used by lib/agent/chat.ts and lib/llm/provider.ts;
- * duplicated here to keep the executor self-contained.
- */
-const CLAUDE_CODE_PREFIX =
-  "You are Claude Code, Anthropic's official CLI for Claude.";
-
-/**
- * Beta header that flips /v1/messages into OAuth-token mode. Same value
- * the chat.ts + provider.ts paths send; required alongside the Bearer
- * auth token to accept sk-ant-oat01-* tokens.
- */
-const OAUTH_BETA_HEADER = "oauth-2025-04-20";
-
 type ClaudeMaxRow = {
   id: string;
   user_id: string | null;
@@ -286,150 +272,132 @@ async function loadOauthTokenPool(orgId: string): Promise<string[]> {
 }
 
 /**
- * In-process cooldown for tokens we just saw 429 / 401 on. Same 60s
- * window as chat.ts / oauth-first.ts so all three callers treat
- * Anthropic's per-account buckets consistently.
+ * Normalised shape both the OAuth raw-fetch loop and the AI SDK
+ * fallback flatten into. Keeps `finaliseRun` insulated from upstream
+ * SDK shape drift, and means the run row always gets the same
+ * (text, stepCount, toolCalls) tuple regardless of which path served
+ * the request.
  */
-const EXEC_TOKEN_COOLDOWN: Map<string, number> = new Map();
-const EXEC_COOLDOWN_MS = 60_000;
-
-function isExecTokenCold(token: string): boolean {
-  const until = EXEC_TOKEN_COOLDOWN.get(token);
-  if (!until) return false;
-  if (Date.now() >= until) {
-    EXEC_TOKEN_COOLDOWN.delete(token);
-    return false;
-  }
-  return true;
-}
-
-function markExecTokenCold(token: string): void {
-  EXEC_TOKEN_COOLDOWN.set(token, Date.now() + EXEC_COOLDOWN_MS);
-}
-
-function isOauthRotateError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  // AI SDK rebrands upstream 4xx as "Failed after N attempts. Last error: Error"
-  // - by the time we see it the original 401/429 detail is gone. Treat that
-  // wrapper as a rotation signal too: a different token in the pool might
-  // have a fresh bucket / unrevoked credential and avoid the same fate.
-  // False positives (e.g. a transient network blip surviving 3 retries) cost
-  // us at most one extra round-trip on the next pool member.
-  return (
-    /\b429\b/.test(msg) ||
-    /\b401\b/.test(msg) ||
-    /rate_limit_error/i.test(msg) ||
-    /authentication_error/i.test(msg) ||
-    /Too Many Requests/i.test(msg) ||
-    /Invalid authentication credentials/i.test(msg) ||
-    /Failed after \d+ attempts/i.test(msg)
-  );
-}
+export type NormalisedRunResult = {
+  text: string;
+  stepCount: number;
+  toolCalls: string[];
+};
 
 type GenerateOptions = {
   organizationId: string;
   model: string;
   systemPrompt: string;
   userMessage: string;
-  tools: ToolSet;
+  /** Toolset for the AI SDK + ANTHROPIC_API_KEY fallback path. */
+  aiSdkTools: ToolSet;
+  /** Native Anthropic tool defs for the OAuth raw-fetch loop. */
+  oauthTools: Record<string, OauthToolDef>;
   abortSignal: AbortSignal;
 };
 
 /**
- * Resolve auth and call generateText with full toolset support. Order:
- *   1. Walk the org's Claude Max OAuth pool (caller-paid via Pedro's
- *      existing connections). Builds a per-call createAnthropic instance
- *      with `authToken` (sends Authorization: Bearer) + the OAuth beta
- *      header, prepending the Claude Code identity line to systemPrompt
- *      so the gate doesn't 401. Two-pass walk like the chat path:
- *      cold-skipping pass first, then everything.
- *   2. Fallback to ANTHROPIC_API_KEY (default anthropic() instance).
- *   3. Throw the last OAuth error if neither path is available, so the
- *      run row's error column shows a concrete reason instead of
- *      "executor offline".
+ * Resolve auth and run the agent loop. Order of preference:
  *
- * Tool execute side-effects always fire (unlike provider.ts where they're
- * captured no-ops) - this is the manager-runs critical path.
+ *   1. Org's Claude Max OAuth pool via raw fetch to /v1/messages
+ *      (mirrors lib/agent/chat.ts wire shape). Native Anthropic tools
+ *      execute server-side via the registered OauthToolDef.execute
+ *      callbacks (which wrap the same MCP callTool() + write-policy +
+ *      audit logic the AI SDK toolset uses).
+ *
+ *   2. ANTHROPIC_API_KEY commercial fallback via @ai-sdk/anthropic.
+ *      Only reached when the OAuth pool is empty (no Claude Max
+ *      connections) AND an API key env is present.
+ *
+ *   3. Otherwise rethrow the OAuth pool's last error (or a synthetic
+ *      "no auth" error) so the run row records a concrete reason.
+ *
+ * The reason this dropped @ai-sdk/anthropic for OAuth: createAnthropic({
+ * authToken }) was wrapping upstream 4xx/5xx into "Failed after 3
+ * attempts. Last error: Error" with no surfaced status code, hiding
+ * real failures from the run row's error column. Atlas chat already
+ * proved a hand-rolled fetch + the same beta header works end-to-end,
+ * so executor.ts now reuses that wire shape via lib/llm/oauth-anthropic.
  */
-async function generateWithOauthOrApiKey(opts: GenerateOptions) {
+async function generateWithOauthOrApiKey(
+  opts: GenerateOptions,
+): Promise<NormalisedRunResult> {
   const tokens = await loadOauthTokenPool(opts.organizationId);
 
-  // Build the OAuth-gated system prompt once. Identity line MUST be the
-  // first chars of `system`; the rest of the prompt comes after a blank
-  // line so the model still sees the agent persona / routine instructions.
-  const oauthSystem = opts.systemPrompt.startsWith(CLAUDE_CODE_PREFIX)
-    ? opts.systemPrompt
-    : `${CLAUDE_CODE_PREFIX}\n\n${opts.systemPrompt}`;
-
-  const passes: Array<(t: string) => boolean> = [
-    (t) => !isExecTokenCold(t),
-    () => true,
-  ];
-
-  let lastOauthErr: unknown = null;
-  for (const filter of passes) {
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i];
-      if (!filter(tok)) continue;
-      try {
-        const provider = createAnthropic({
-          // apiKey omitted: when authToken is set the SDK sends
-          // Authorization: Bearer <token> instead of x-api-key, which
-          // is what /v1/messages expects for sk-ant-oat01-* tokens.
-          authToken: tok,
-          headers: {
-            "anthropic-beta": OAUTH_BETA_HEADER,
-          },
-        });
-        return await generateText({
-          model: provider(opts.model),
-          system: oauthSystem,
-          prompt: opts.userMessage,
-          tools: opts.tools,
-          stopWhen: stepCountIs(MAX_STEPS),
-          abortSignal: opts.abortSignal,
-          // Disable AI SDK's per-call retry - we're managing retries
-          // ourselves via the OAuth pool walk. Without this, a 401 on one
-          // token burns 3 internal retries before we even rotate to the
-          // next pool member.
-          maxRetries: 0,
-        });
-      } catch (err) {
-        lastOauthErr = err;
-        if (!isOauthRotateError(err)) throw err;
-        markExecTokenCold(tok);
-        console.warn(
-          `[executor.oauth] token ${i + 1}/${tokens.length} failed (${
-            (err as Error).message?.slice(0, 120) ?? ""
-          }), cooling 60s, trying next`,
-        );
-      }
+  if (tokens.length > 0) {
+    try {
+      const loop = await runOauthToolLoop({
+        tokens,
+        model: opts.model,
+        // runOauthToolLoop already prepends CLAUDE_CODE_PREFIX when it
+        // isn't present, so passing the raw systemPrompt is safe.
+        system: opts.systemPrompt,
+        userMessage: opts.userMessage,
+        tools: opts.oauthTools,
+        maxSteps: MAX_STEPS,
+        // 4096 matches the chat.ts default; the executor's wall-clock
+        // budget caps any single request well below this either way.
+        maxTokens: 4096,
+        abortSignal: opts.abortSignal,
+        logPrefix: "[executor.oauth]",
+      });
+      return {
+        text: loop.text,
+        stepCount: loop.steps,
+        toolCalls: loop.toolCalls.map((c) => c.name),
+      };
+    } catch (err) {
+      // Pool exhausted or every token returned a non-rotatable error.
+      // Fall through to the API key branch only if one is configured -
+      // otherwise rethrow so the original status / body text from
+      // AnthropicHttpError lands in the run row instead of being
+      // shadowed by a generic "no auth" message.
+      if (!process.env.ANTHROPIC_API_KEY) throw err;
+      console.warn(
+        `[executor.oauth] OAuth pool failed (${
+          (err as Error).message?.slice(0, 200) ?? "unknown"
+        }), falling back to ANTHROPIC_API_KEY`,
+      );
     }
   }
 
-  // OAuth pool exhausted (or empty). Fall through to the commercial
-  // API key path so anyone running this on a VPS with ANTHROPIC_API_KEY
-  // still gets a working executor.
   if (process.env.ANTHROPIC_API_KEY) {
-    if (tokens.length > 0) {
-      console.warn(
-        "[executor.oauth] all OAuth tokens exhausted, falling back to ANTHROPIC_API_KEY",
-      );
-    }
-    return generateText({
+    const sdkResult = await generateText({
       model: anthropic(opts.model),
       system: opts.systemPrompt,
       prompt: opts.userMessage,
-      tools: opts.tools,
+      tools: opts.aiSdkTools,
       stopWhen: stepCountIs(MAX_STEPS),
       abortSignal: opts.abortSignal,
     });
+    return normaliseAiSdkResult(sdkResult);
   }
 
-  if (lastOauthErr) throw lastOauthErr;
   throw new Error(
     "No LLM auth available: no Claude Max OAuth token connected for this org and ANTHROPIC_API_KEY is unset. Connect Claude Max at /connections.",
   );
+}
+
+/**
+ * Flatten the AI SDK's `generateText` result into the executor's
+ * normalised tuple. The SDK exposes tool calls inside steps[].content[]
+ * with type === "tool-call"; we collect their names so the run row
+ * matches what the OAuth loop emits.
+ */
+function normaliseAiSdkResult(r: {
+  text: string;
+  steps?: Array<{ content: Array<{ type: string; toolName?: string }> }>;
+}): NormalisedRunResult {
+  const steps = r.steps ?? [];
+  const toolCalls: string[] = [];
+  for (const s of steps) {
+    for (const c of s.content) {
+      if (c.type === "tool-call" && typeof c.toolName === "string") {
+        toolCalls.push(c.toolName);
+      }
+    }
+  }
+  return { text: r.text, stepCount: steps.length, toolCalls };
 }
 
 // ─── System prompt ──────────────────────────────────────────────────
@@ -647,18 +615,42 @@ function buildUserMessage(
 
 // ─── Toolset construction ──────────────────────────────────────────
 
-function buildToolset(
+type BuiltToolsets = {
+  /** Shape consumed by @ai-sdk/anthropic's generateText fallback. */
+  aiSdkTools: ToolSet;
+  /** Native Anthropic tool defs for the OAuth raw-fetch loop. */
+  oauthTools: Record<string, OauthToolDef>;
+};
+
+/**
+ * Build BOTH toolsets in a single pass so the AI SDK fallback and the
+ * OAuth raw-fetch loop see the exact same set of tools with identical
+ * write-policy + approval + audit semantics. The two surfaces only
+ * differ in their wire shape:
+ *
+ *   - aiSdkTools:  ToolSet of `tool({ description, inputSchema, execute })`
+ *     entries the AI SDK feeds to /v1/messages via createAnthropic().
+ *   - oauthTools:  Record<name, { spec: AnthropicTool, execute }>` the
+ *     OAuth loop feeds verbatim into /v1/messages and uses to dispatch
+ *     tool_use blocks back to the same MCP callTool() pipeline.
+ *
+ * `dispatchTool` is a closure over the policy + audit machinery shared
+ * by both wrappers - any change to approval semantics lands in one place.
+ */
+function buildToolsets(
   toolCtx: ToolContext,
   runId: string,
   agentId: string | null,
   writePolicy: Record<string, "direct" | "requires_approval" | "draft_only">,
-): ToolSet {
+): BuiltToolsets {
   // Pass toolCtx so per-org custom tools (R08 isolation) surface to
   // the executor for the org that drafted them, while staying hidden
   // from every other tenant.
   const mcpTools = listTools(toolCtx);
   const explicit = Object.keys(writePolicy).length > 0;
-  const toolset: ToolSet = {};
+  const aiSdkTools: ToolSet = {};
+  const oauthTools: Record<string, OauthToolDef> = {};
+
   for (const t of mcpTools) {
     // write_policy keys are either an integration id (grants every tool
     // under that integration) or a workspace tool name. Policy on the
@@ -667,55 +659,77 @@ function buildToolset(
     // Explicit mode: only offer tools the user enabled on the agent.
     // Legacy mode (empty policy): offer everything so older agents keep working.
     if (explicit && !(policyKey in writePolicy)) continue;
-    toolset[t.name] = tool({
-      description: t.description,
-      inputSchema: jsonSchema(t.inputSchema as Record<string, unknown>),
-      execute: async (args: unknown) => {
-        const configured = writePolicy[policyKey] ?? "direct";
-        // Read tools are never gated  -  policy only matters for writes.
-        const policy = t.isWrite ? configured : "direct";
-        const typedArgs = (args ?? {}) as Record<string, unknown>;
 
-        if (policy === "requires_approval") {
-          await createApproval({
-            organizationId: toolCtx.organizationId,
-            routineRunId: runId,
-            agentId,
-            toolName: t.name,
-            toolArgs: typedArgs,
-            reason: `Agent attempted ${t.name}  -  write policy requires approval.`,
-          });
-          await auditLog(toolCtx.organizationId, "approval_requested", {
-            run_id: runId,
-            agent_id: agentId,
-            tool: t.name,
-          });
-          return `Action "${t.name}" requires human approval and has been queued in the Approvals inbox. It will execute once a human approves. Do not retry.`;
-        }
+    const dispatchTool = async (
+      typedArgs: Record<string, unknown>,
+    ): Promise<string> => {
+      const configured = writePolicy[policyKey] ?? "direct";
+      // Read tools are never gated  -  policy only matters for writes.
+      const policy = t.isWrite ? configured : "direct";
 
-        const result = await callTool(t.name, typedArgs, toolCtx);
-        // Fire-and-forget the audit insert so cumulative round-trip
-        // latency doesn't push the run past the 120s wall-clock cap
-        // when the model makes many tool calls. Audit is observability,
-        // not in the critical execution path.
-        void auditLog(toolCtx.organizationId, "tool_call", {
+      if (policy === "requires_approval") {
+        await createApproval({
+          organizationId: toolCtx.organizationId,
+          routineRunId: runId,
+          agentId,
+          toolName: t.name,
+          toolArgs: typedArgs,
+          reason: `Agent attempted ${t.name}  -  write policy requires approval.`,
+        });
+        await auditLog(toolCtx.organizationId, "approval_requested", {
           run_id: runId,
           agent_id: agentId,
           tool: t.name,
-          is_error: result.isError ?? false,
-        }).catch((err) => {
-          console.error("[executor.audit] tool_call insert failed", err);
         });
-        const flat = result.content.map((c) => c.text).join("\n");
-        return flat;
-      },
+        return `Action "${t.name}" requires human approval and has been queued in the Approvals inbox. It will execute once a human approves. Do not retry.`;
+      }
+
+      const result = await callTool(t.name, typedArgs, toolCtx);
+      // Fire-and-forget the audit insert so cumulative round-trip
+      // latency doesn't push the run past the 120s wall-clock cap
+      // when the model makes many tool calls. Audit is observability,
+      // not in the critical execution path.
+      void auditLog(toolCtx.organizationId, "tool_call", {
+        run_id: runId,
+        agent_id: agentId,
+        tool: t.name,
+        is_error: result.isError ?? false,
+      }).catch((err) => {
+        console.error("[executor.audit] tool_call insert failed", err);
+      });
+      return result.content.map((c) => c.text).join("\n");
+    };
+
+    aiSdkTools[t.name] = tool({
+      description: t.description,
+      inputSchema: jsonSchema(t.inputSchema as Record<string, unknown>),
+      execute: async (args: unknown) =>
+        dispatchTool((args ?? {}) as Record<string, unknown>),
     });
+
+    oauthTools[t.name] = {
+      spec: {
+        name: t.name,
+        description: t.description,
+        // Anthropic's native tool format expects `input_schema` (snake_case)
+        // with a JSON Schema object body. The MCP registry stores schemas
+        // in the same JSON Schema shape, so this is a verbatim handoff.
+        input_schema: t.inputSchema as Record<string, unknown>,
+      },
+      execute: dispatchTool,
+    };
   }
-  return toolset;
+
+  return { aiSdkTools, oauthTools };
 }
 
 // Suppress unused-helper warning; kept exposed for future use.
 void toolText;
+// `ToolCallTrace` is re-exported by oauth-anthropic but not referenced
+// directly here once the loop result is normalised; keep the import so
+// the type stays attached to the symbol the helper actually returns.
+type _ToolCallTraceKept = ToolCallTrace;
+void ({} as _ToolCallTraceKept);
 
 // ─── Audit helper ──────────────────────────────────────────────────
 
