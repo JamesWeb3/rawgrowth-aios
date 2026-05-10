@@ -7,6 +7,7 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ClaudeConnectionCard } from "@/components/connections/claude-card";
 import { ConnectorsGrid } from "@/components/connections/connectors-grid";
+import { ApiKeysCard } from "@/components/connections/api-keys-card";
 import { CreateClientSheet } from "@/components/admin/create-client-sheet";
 import { jsonFetcher } from "@/lib/swr";
 
@@ -73,6 +74,15 @@ export function ConnectionsView() {
           subtitle="Search 400+ apps. Native integrations connect immediately; the rest queue via Composio."
         />
         <ConnectorsGrid />
+      </section>
+
+      {/* 3. Workspace API keys (per-org credentials including Composio) */}
+      <section>
+        <SectionHeading
+          title="Workspace API keys"
+          subtitle="Per-org credentials the agents use directly. Set the Composio key here to override the VPS-wide env."
+        />
+        <ApiKeysCard />
       </section>
 
       {isAdmin && (
