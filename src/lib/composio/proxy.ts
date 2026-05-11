@@ -1,7 +1,24 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getConnection } from "@/lib/connections/queries";
 import { tryDecryptSecret } from "@/lib/crypto";
+import { CONNECTOR_CATALOG } from "@/lib/connections/catalog";
 import type { Database } from "@/lib/supabase/types";
+
+/**
+ * Atlas (and any LLM-driven caller) often passes Composio's canonical
+ * toolkit slug ("googlecalendar", "googledrive", "x", "facebook") instead
+ * of our catalog key ("google-calendar", "google-drive", "twitter",
+ * "meta"). DB rows store the catalog key in `provider_config_key`, so
+ * normalize before lookup. Returns the input unchanged if no override
+ * matches (already a catalog key, or a custom slug).
+ */
+function normalizeComposioAppKey(input: string): string {
+  if (CONNECTOR_CATALOG.some((c) => c.key === input)) return input;
+  const reverse = CONNECTOR_CATALOG.find(
+    (c) => c.composioAppName === input,
+  );
+  return reverse?.key ?? input;
+}
 
 /**
  * Composio proxy wrapper. Mirrors src/lib/mcp/proxy.ts (which fronts
@@ -358,7 +375,7 @@ export async function composioCall<T = unknown>(
       "Composio API key missing - set per-org key in Connections → Workspace API keys, or set COMPOSIO_API_KEY env on the VPS",
     );
   }
-  const pck = `composio:${opts.appKey}`;
+  const pck = `composio:${normalizeComposioAppKey(opts.appKey)}`;
   const callerUserId = userId ?? null;
 
   const rows = await listComposioTokensForUser(
