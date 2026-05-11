@@ -17,10 +17,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = String(credentials?.password ?? "");
         if (!email || !password) return null;
 
+        // Case-insensitive lookup. The signup/invite path does not
+        // always normalize email to lowercase, so a user stored as
+        // "Dilan@rawgrowth.ai" did not match an `eq` on the
+        // lowercased input and signin returned 401. `ilike` with no
+        // wildcards is the cleanest case-insensitive equality on
+        // PostgREST.
         const { data: user } = await supabaseAdmin()
           .from("rgaios_users")
           .select("id, email, name, password_hash")
-          .eq("email", email)
+          .ilike("email", email)
           .maybeSingle();
 
         if (!user?.password_hash) return null;
