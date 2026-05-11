@@ -60,6 +60,31 @@ async function replaceTriggers(
   if (delErr) throw new Error(`replaceTriggers delete: ${delErr.message}`);
 
   if (triggers.length === 0) return;
+
+  // Cron sanity floor. The e2e sweep caught a routine running every
+  // minute (`* * * * *`), hammering the executor and racking up
+  // hundreds of failed runs in a few hours. Reject schedule triggers
+  // whose minute field would fire more than once per 5 minutes. The
+  // autonomous-heartbeat path inserts triggers directly (not through
+  // this function), so its `*/2 * * * *` is unaffected.
+  for (const t of triggers) {
+    if (t.kind === "schedule" && t.cron) {
+      const minuteField = t.cron.trim().split(/\s+/)[0];
+      if (!minuteField) continue;
+      const tooFrequent =
+        minuteField === "*" ||
+        /^\*\/[1-4]$/.test(minuteField) ||
+        // "0,5,10,..." with sub-5min stride: count comma items vs span.
+        // Cheap check: if there are 12+ comma-separated minutes, reject.
+        (minuteField.includes(",") && minuteField.split(",").length > 12);
+      if (tooFrequent) {
+        throw new Error(
+          `replaceTriggers: cron "${t.cron}" fires more than once per 5 minutes; refusing (minimum interval is 5min)`,
+        );
+      }
+    }
+  }
+
   const rows = triggers.map((t) => ({
     // Omit id when missing so the DB default (gen_random_uuid()) fires.
     // Sending {id: undefined} serialises as null over PostgREST, which

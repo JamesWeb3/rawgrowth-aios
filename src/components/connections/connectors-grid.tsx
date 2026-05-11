@@ -95,15 +95,28 @@ export function ConnectorsGrid() {
         error?: string;
         message?: string;
         redirectUrl?: string;
+        pending?: boolean;
       };
       if (!res.ok) {
         throw new Error(json.error ?? "Failed to record interest");
       }
       // Real Composio path returns a redirectUrl - send the operator to
-      // the OAuth screen. Otherwise stay on /connections (interest log).
+      // the OAuth screen.
       if (json.redirectUrl) {
         toast.success(`${entry.name} - opening OAuth`);
         window.location.assign(json.redirectUrl);
+        return;
+      }
+      // pending=true means the backend recorded interest but couldn't
+      // start a real OAuth flow (no Composio key). The previous quiet
+      // toast.success was easy to miss. Surface it as a warning that
+      // names the fix so the operator doesn't think the click did
+      // nothing (e2e audit found this dead-air UX).
+      if (json.pending) {
+        toast.warning(
+          `${entry.name} - Composio API key not set. Paste a key in the Composio card at the top of this page, then click Connect again.`,
+          { duration: 8000 },
+        );
         return;
       }
       toast.success(json.message ?? `${entry.name} - request recorded`);
