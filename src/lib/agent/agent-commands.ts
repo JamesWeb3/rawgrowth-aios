@@ -39,6 +39,70 @@ import { dispatchRun } from "@/lib/runs/dispatch";
 const COMMAND_BLOCK_RE =
   /<command\s+type="([^"]+)"\s*>([\s\S]*?)<\/command>/gi;
 
+/**
+ * Tolerant fallback: when LLMs (Atlas in particular) emit the right JSON
+ * payload but forget the <command type="..."> wrapper, scan the reply for
+ * bare JSON objects whose top-level shape matches a known command type and
+ * treat them as such. Reduces "Atlas said 'creating now' but nothing
+ * happened" failure mode where the model strips XML tags despite the
+ * preamble teaching them. Same destructive-action denylist + speaker
+ * authority gates apply downstream.
+ *
+ * Recognised shapes:
+ *   { "tool": "composio_use_tool", "args": {...} }      → tool_call
+ *   { "agent": "<name>", "task": "<text>" }              → agent_invoke
+ *   { "title": "...", "description": "...", ... }       → routine_create
+ *
+ * Returns { type, body } pairs. Optionally fenced with ```json...```.
+ */
+function extractBareJsonCommands(
+  reply: string,
+): Array<{ type: string; body: string; rawSpan: string }> {
+  const out: Array<{ type: string; body: string; rawSpan: string }> = [];
+  // Match any top-level JSON object. Greedy enough for nested args. Stops
+  // at the first balanced close. Naive but effective for LLM output that
+  // emits one object at a time per code-fence or paragraph.
+  const objectRe = /\{[\s\S]*?\}(?=\s*(?:\n|$|```))/g;
+  for (const m of reply.matchAll(objectRe)) {
+    const span = m[0];
+    if (!span) continue;
+    const stripped = span
+      .replace(/^```(?:json)?\s*\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripped);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (
+      typeof obj.tool === "string" &&
+      obj.tool === "composio_use_tool" &&
+      obj.args &&
+      typeof obj.args === "object"
+    ) {
+      out.push({ type: "tool_call", body: stripped, rawSpan: span });
+    } else if (
+      typeof obj.agent === "string" &&
+      typeof obj.task === "string"
+    ) {
+      out.push({ type: "agent_invoke", body: stripped, rawSpan: span });
+    } else if (
+      typeof obj.title === "string" &&
+      typeof obj.description === "string" &&
+      typeof obj.assignee === "string"
+    ) {
+      out.push({ type: "routine_create", body: stripped, rawSpan: span });
+    }
+  }
+  return out;
+}
+
 export type CommandResult = {
   ok: boolean;
   type: string;
@@ -422,11 +486,30 @@ export async function extractAndExecuteCommands(input: {
   callerUserId?: string | null;
 }): Promise<ExtractCommandsResult> {
   const { orgId, speakerAgentId, reply, callerUserId } = input;
-  const matches = [...reply.matchAll(COMMAND_BLOCK_RE)];
-  if (matches.length === 0) {
+  const wrappedMatches = [...reply.matchAll(COMMAND_BLOCK_RE)];
+
+  // Two-pass: prefer wrapped <command> blocks (canonical), then fall back
+  // to bare JSON detection for LLM responses that drop the XML wrapper.
+  type Pending = { type: string; body: string; rawSpan: string | null };
+  const pending: Pending[] = wrappedMatches.map((m) => ({
+    type: (m[1] ?? "").trim().toLowerCase(),
+    body: m[2] ?? "",
+    rawSpan: null,
+  }));
+
+  let visibleReply = reply.replace(COMMAND_BLOCK_RE, "").trim();
+
+  if (pending.length === 0) {
+    const bare = extractBareJsonCommands(reply);
+    for (const b of bare) {
+      pending.push({ type: b.type, body: b.body, rawSpan: b.rawSpan });
+      visibleReply = visibleReply.replace(b.rawSpan, "").trim();
+    }
+  }
+
+  if (pending.length === 0) {
     return { visibleReply: reply, results: [] };
   }
-  const visibleReply = reply.replace(COMMAND_BLOCK_RE, "").trim();
 
   const speaker = await loadSpeaker(orgId, speakerAgentId);
   if (!speaker) {
@@ -451,9 +534,9 @@ export async function extractAndExecuteCommands(input: {
   }
 
   const results: CommandResult[] = [];
-  for (const m of matches) {
-    const type = (m[1] ?? "").trim().toLowerCase();
-    const payload = tryParseJson(m[2] ?? "");
+  for (const m of pending) {
+    const type = m.type;
+    const payload = tryParseJson(m.body);
     if (payload === null) {
       results.push({
         ok: false,
