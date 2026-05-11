@@ -39,6 +39,12 @@ export function CalendarBindingForm() {
           setError(data?.error ?? "Load failed");
           return;
         }
+        // Surface listError so user sees actual Composio failure
+        // (e.g. token expired, scope missing) instead of generic
+        // "not connected" when calendars empty for a real error.
+        if (data.listError) {
+          setError(`Calendar list failed: ${data.listError}`);
+        }
         setCalendars(data.calendars ?? []);
         if (data.binding) {
           setCalendarId(data.binding.calendarId);

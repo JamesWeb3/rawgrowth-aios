@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
       docsUrl: p.docsUrl,
       placeholder: p.placeholder,
       hasKey: Boolean(plain),
-      preview: plain ? `${plain.slice(0, 4)}…${plain.slice(-4)}` : null,
+      preview: plain ? `••••${plain.slice(-4)}` : null,
       updatedAt: row?.updated_at ?? row?.connected_at ?? null,
     };
   });

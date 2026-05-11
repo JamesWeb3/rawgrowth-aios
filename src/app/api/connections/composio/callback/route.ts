@@ -57,11 +57,22 @@ export async function GET(req: NextRequest) {
     status === "success" ||
     status === "ACTIVE_TOKEN" ||
     status === "active";
+  // Read the existing row first so we can spread its metadata. Without
+  // this, the update clobbers composio_app + composio_auth_config_id
+  // and the proxy can't resolve the toolkit on subsequent calls.
+  const { data: existing } = await supabaseAdmin()
+    .from("rgaios_connections")
+    .select("metadata")
+    .eq("nango_connection_id", connectionId)
+    .eq("organization_id", ctx.activeOrgId)
+    .eq("user_id" as never, (ctx.userId ?? null) as never)
+    .maybeSingle();
+  const prevMeta = (existing as { metadata?: Record<string, unknown> } | null)?.metadata ?? {};
   const { error } = await supabaseAdmin()
     .from("rgaios_connections")
     .update({
       status: isOk ? "connected" : "error",
-      metadata: { composio_callback_at: new Date().toISOString() },
+      metadata: { ...prevMeta, composio_callback_at: new Date().toISOString() },
     } as never)
     .eq("nango_connection_id", connectionId)
     .eq("organization_id", ctx.activeOrgId)

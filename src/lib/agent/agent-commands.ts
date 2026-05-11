@@ -158,22 +158,49 @@ async function resolveAgent(
   const db = supabaseAdmin();
   const { data: agents } = await db
     .from("rgaios_agents")
-    .select("id, name, role, is_department_head")
+    .select("id, name, role, department, is_department_head")
     .eq("organization_id", orgId);
   const list = (agents ?? []) as Array<{
     id: string;
     name: string;
     role: string | null;
+    department: string | null;
     is_department_head: boolean | null;
   }>;
-  // Prefer department-head when multiple agents share a role - matches
-  // tasks.ts resolveAssignee semantics.
+  // 1. Exact role match (prefers dept head when multiple agents share role).
   const roleMatches = list.filter((a) => (a.role ?? "").toLowerCase() === raw);
   const byRole =
     roleMatches.find((a) => a.is_department_head) ?? roleMatches[0];
   if (byRole) return { id: byRole.id, name: byRole.name, role: byRole.role };
+  // 2. Exact full-name match.
   const byName = list.find((a) => a.name.toLowerCase() === raw);
   if (byName) return { id: byName.id, name: byName.name, role: byName.role };
+  // 3. Department-head shorthand. Atlas often emits "Marketing Manager",
+  //    "Sales Manager", "Finance Manager" instead of the seeded names
+  //    ("Content Strategist x4z4y", "Sales Manager picsa", etc). Map
+  //    "<dept-keyword> manager|head|lead" -> the dept head of <dept>.
+  //    Without this every Atlas dispatch fails on first try.
+  const headerMatch = raw.match(/^(.+?)\s+(manager|head|lead|director|chief)$/);
+  const deptKeyword = headerMatch ? headerMatch[1] : raw;
+  if (deptKeyword) {
+    const byDept = list.find(
+      (a) =>
+        a.is_department_head === true &&
+        (a.department ?? "").toLowerCase().includes(deptKeyword),
+    );
+    if (byDept) return { id: byDept.id, name: byDept.name, role: byDept.role };
+  }
+  // 4. Partial name match (case-insensitive substring). Catches
+  //    "Sales Manager" -> "Sales Manager picsa". Prefer dept heads when
+  //    multiple agents partial-match.
+  const partialMatches = list.filter((a) =>
+    a.name.toLowerCase().includes(raw) || raw.includes(a.name.toLowerCase()),
+  );
+  if (partialMatches.length > 0) {
+    const partial =
+      partialMatches.find((a) => a.is_department_head) ?? partialMatches[0];
+    return { id: partial.id, name: partial.name, role: partial.role };
+  }
   return null;
 }
 

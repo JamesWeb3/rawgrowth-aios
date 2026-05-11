@@ -191,13 +191,63 @@ export async function buildAgentChatPreamble(input: {
     // cross-tenant we'd leak other-org titles. Belt + suspenders.
     const { data: agentRow3 } = await db
       .from("rgaios_agents")
-      .select("role")
+      .select("role, is_department_head")
       .eq("id", agentId)
       .eq("organization_id", orgId)
       .maybeSingle();
-    const isCeo =
-      (agentRow3 as { role?: string } | null)?.role === "ceo";
+    const agentMeta = (agentRow3 as { role?: string; is_department_head?: boolean } | null);
+    const isCeo = agentMeta?.role === "ceo";
+    const isDeptHead = agentMeta?.is_department_head === true;
+    const canCommand = isCeo || isDeptHead;
     if (isCeo) {
+      // 1c-pre. Live agent roster. Atlas hallucinates "Marketing Manager"
+      // / "Sales Manager" / "Finance Manager" because the seeded names
+      // carry random suffixes (Sales Manager picsa, Bookkeeper 7vpa9,
+      // Content Strategist x4z4y). Without the actual roster injected
+      // every first-attempt agent_invoke fails. Inject the heads list +
+      // sub-agents grouped by department so Atlas dispatches by exact
+      // name on the first try.
+      try {
+        const { data: roster } = await db
+          .from("rgaios_agents")
+          .select("name, role, department, is_department_head")
+          .eq("organization_id", orgId)
+          .neq("id", agentId)
+          .order("is_department_head", { ascending: false });
+        const rows = (roster ?? []) as Array<{
+          name: string;
+          role: string | null;
+          department: string | null;
+          is_department_head: boolean | null;
+        }>;
+        if (rows.length > 0) {
+          const heads = rows.filter((a) => a.is_department_head);
+          const subs = rows.filter((a) => !a.is_department_head);
+          const headBlock = heads.length
+            ? "Department heads (use the EXACT name when emitting agent_invoke):\n" +
+              heads
+                .map(
+                  (h) =>
+                    `  - ${h.name} (department=${h.department ?? "?"}, role=${h.role ?? "?"})`,
+                )
+                .join("\n")
+            : "";
+          const subBlock = subs.length
+            ? "Sub-agents (route work to them via their dept head, NOT via Atlas direct dispatch):\n" +
+              subs
+                .map(
+                  (s) =>
+                    `  - ${s.name} (department=${s.department ?? "?"}, role=${s.role ?? "?"})`,
+                )
+                .join("\n")
+            : "";
+          preamble +=
+            (preamble ? "\n\n" : "") +
+            "═══ ORG ROSTER (live, from DB) ═══\n\n" +
+            [headBlock, subBlock].filter(Boolean).join("\n\n");
+        }
+      } catch {}
+
       // Last 20 routine runs (succeeded or running) across org
       const { data: runs } = await db
         .from("rgaios_routine_runs")
@@ -272,45 +322,80 @@ export async function buildAgentChatPreamble(input: {
           "  </task>",
           "",
           "Do NOT dispatch tasks for things YOU can answer (questions, summaries, opinions). Do NOT delegate cross-team coordination back to a single head when it spans depts - that's YOUR job.",
-          "",
-          "═══ JSON COMMANDS (Atlas + dept heads only) ═══",
-          "",
-          "When the operator asks you to TAKE AN ACTION (run a Composio tool, dispatch a head, create a scheduled routine), emit one or more <command> blocks in your reply. The system parses them, runs the action server-side, and posts a system message back into chat with the result. You CAN stack multiple <command> blocks.",
-          "",
-          "Format (exact - body must be valid JSON):",
-          "",
-          "  <command type=\"tool_call\">",
-          "  { \"tool\": \"composio_use_tool\",",
-          "    \"args\": { \"app\": \"slack\", \"action\": \"SLACK_SEND_MESSAGE\",",
-          "               \"input\": { \"channel\": \"#general\", \"text\": \"hi team\" } } }",
-          "  </command>",
-          "",
-          "  <command type=\"agent_invoke\">",
-          "  { \"agent\": \"Sales Manager\", \"task\": \"Run a CRM stale-leads scan and report top 5\" }",
-          "  </command>",
-          "",
-          "  <command type=\"routine_create\">",
-          "  { \"title\": \"Weekly recap\", \"description\": \"Summarise last 7 days of agent runs\",",
-          "    \"assignee\": \"marketer\", \"schedule\": \"weekly\" }",
-          "  </command>",
-          "",
-          "Rules:",
-          "  - tool_call: only `composio_use_tool` is supported. Destructive actions (DELETE/PURGE/WIPE) are refused.",
-          "  - agent_invoke: target must be an existing agent name or role. The system creates a routine + run scoped to them; output flows into their chat tab.",
-          "  - routine_create: schedule preset can be \"hourly\", \"daily\", or \"weekly\". Omit for one-shot.",
-          "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
-          "  - If the action genuinely doesn't need a tool / dispatch (pure conversation), DO NOT emit a command - just answer.",
-          "",
-          "═══ DATA-ASK PROTOCOL ═══",
-          "",
-          "If you genuinely cannot answer or plan without specific data the corpus doesn't have (e.g. real CTR numbers, AOV, customer count), end your reply with one or more <need> blocks:",
-          "",
-          "<need scope=\"crm|metric|file|other\">EXACT data you need. Be specific - 'last 30 days of FB ads CTR' beats 'recent ad data'.</need>",
-          "",
-          "The system picks these up + posts a chat message to the operator + creates a Data Entry stub. DO NOT fabricate numbers.",
         ].join("\n");
     }
   } catch {}
+
+  // 1c-ter. JSON COMMANDS block (Atlas + dept heads). Previously gated
+  // inside the isCeo branch, which left dept heads silently refusing
+  // tool_call / agent_invoke / routine_create. Audit caught Content
+  // Strategist + Bookkeeper Head telling the operator "I cannot emit
+  // command blocks" while Sales Manager (same is_department_head=true)
+  // happened to comply by accident. Move the block out so any agent
+  // with command authority gets the protocol.
+  if (canCommand) {
+    preamble +=
+      (preamble ? "\n\n" : "") +
+      [
+        "═══ JSON COMMANDS (Atlas + dept heads only) ═══",
+        "",
+        "You ARE authorised to emit <command> blocks. When the operator asks you to TAKE AN ACTION (run a Composio tool, dispatch a head, create a scheduled routine), emit one or more <command> blocks in your reply. The system parses them, runs the action server-side, and posts a system message back into chat with the result. You CAN stack multiple <command> blocks.",
+        "",
+        "Do NOT say 'I can't emit command blocks' or 'I am a sub-agent' - that is FALSE for you. You are Atlas or a department head with full command authority on this surface.",
+        "",
+        "Format (exact - body must be valid JSON):",
+        "",
+        "  <command type=\"tool_call\">",
+        "  { \"tool\": \"composio_use_tool\",",
+        "    \"args\": { \"app\": \"slack\", \"action\": \"SLACK_SEND_MESSAGE\",",
+        "               \"input\": { \"channel\": \"#general\", \"text\": \"hi team\" } } }",
+        "  </command>",
+        "",
+        "  <command type=\"agent_invoke\">",
+        "  { \"agent\": \"Sales Manager\", \"task\": \"Run a CRM stale-leads scan and report top 5\" }",
+        "  </command>",
+        "",
+        "  <command type=\"routine_create\">",
+        "  { \"title\": \"Weekly recap\", \"description\": \"Summarise last 7 days of agent runs\",",
+        "    \"assignee\": \"marketer\", \"schedule\": \"weekly\" }",
+        "  </command>",
+        "",
+        "Composio action input shapes (use EXACTLY these field names - the model often hallucinates Google API style; Composio uses snake_case top-level fields):",
+        "",
+        "  GOOGLECALENDAR_CREATE_EVENT input:",
+        "    { \"calendar_id\": \"primary\",",
+        "      \"summary\": \"Coffee with Pedro\",",
+        "      \"start_datetime\": \"2026-05-15T10:00:00-03:00\",",
+        "      \"end_datetime\":   \"2026-05-15T10:30:00-03:00\",",
+        "      \"description\": \"15min sync\",",
+        "      \"attendees\": [\"pedro@rawgrowth.ai\"] }",
+        "    NOT { start: { dateTime: ... } } - that is the raw Google API shape and Composio rejects it.",
+        "",
+        "  GMAIL_SEND_EMAIL input:",
+        "    { \"to\": [\"pedro@rawgrowth.ai\"],",
+        "      \"subject\": \"hi\", \"body\": \"plain text body\" }",
+        "",
+        "  SLACK_SEND_MESSAGE input:",
+        "    { \"channel\": \"#general\", \"text\": \"hi team\" }",
+        "",
+        "If you don't know an action's exact input shape, emit composio_list_tools first to discover it - DO NOT guess.",
+        "",
+        "Rules:",
+        "  - tool_call: only `composio_use_tool` is supported. Destructive actions (DELETE/PURGE/WIPE) are refused.",
+        "  - agent_invoke: target must be an existing agent name or role. The system creates a routine + run scoped to them; output flows into their chat tab.",
+        "  - routine_create: schedule preset can be \"hourly\", \"daily\", or \"weekly\". Omit for one-shot.",
+        "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
+        "  - If the action genuinely doesn't need a tool / dispatch (pure conversation), DO NOT emit a command - just answer.",
+        "",
+        "═══ DATA-ASK PROTOCOL ═══",
+        "",
+        "If you genuinely cannot answer or plan without specific data the corpus doesn't have (e.g. real CTR numbers, AOV, customer count), end your reply with one or more <need> blocks:",
+        "",
+        "<need scope=\"crm|metric|file|other\">EXACT data you need. Be specific - 'last 30 days of FB ads CTR' beats 'recent ad data'.</need>",
+        "",
+        "The system picks these up + posts a chat message to the operator + creates a Data Entry stub. DO NOT fabricate numbers.",
+      ].join("\n");
+  }
 
   // 2. Past memories (last 15 chat_memory audit entries for this agent)
   try {

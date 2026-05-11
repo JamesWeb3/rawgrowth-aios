@@ -19,10 +19,8 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "This email can't be found in our system." },
-      { status: 404 },
-    );
+    // Always 200 to prevent email enumeration.
+    return NextResponse.json({ ok: true });
   }
 
   const { token, tokenHash, expiresAt } = createResetToken();

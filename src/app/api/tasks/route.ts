@@ -100,11 +100,15 @@ export async function GET() {
     succeeded: 0,
     failed: 0,
   };
-  for (const r of runs) {
-    if (r.status === "pending") counts.pending += 1;
-    else if (r.status === "running") counts.running += 1;
-    else if (r.status === "succeeded") counts.succeeded += 1;
-    else if (r.status === "failed") counts.failed += 1;
+  // Count by latest run status per routine, not total run volume.
+  // Prevents failed > total when a routine ran many times.
+  for (const routine of routines) {
+    const taskRuns = runsByRoutine.get(routine.id) ?? [];
+    const latestStatus = taskRuns[0]?.status ?? "pending";
+    if (latestStatus === "pending") counts.pending += 1;
+    else if (latestStatus === "running") counts.running += 1;
+    else if (latestStatus === "succeeded") counts.succeeded += 1;
+    else if (latestStatus === "failed") counts.failed += 1;
   }
 
   const tasks = routines.map((r) => {

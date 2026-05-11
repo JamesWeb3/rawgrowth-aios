@@ -1169,10 +1169,35 @@ export async function POST(req: NextRequest) {
     //   - if Claude Max OAuth is connected for this org -> claude-max-oauth
     //     (no OPENAI_API_KEY needed, fastest path on Vercel hobby)
     //   - else fall back to whatever resolveProvider returns (defaults openai)
+    //
+    // Hard guard: onboarding chat is a streaming NDJSON UI surface. The
+    // anthropic-cli backend spawns a subprocess and does not stream
+    // mid-call, so even if it works it breaks the UX. And on a VPS that
+    // doesn't have the Claude CLI binary installed it returns
+    // `spawn claude ENOENT` which surfaces to the operator as the
+    // first onboarding turn outright failing. Refuse anthropic-cli for
+    // this surface and degrade to anthropic-api (if key) -> openai.
     const envOverride = process.env.ONBOARDING_LLM_PROVIDER;
     let provider = envOverride
       ? resolveProvider("ONBOARDING_LLM_PROVIDER")
       : resolveProvider();
+    if (provider === "anthropic-cli") {
+      if (process.env.ANTHROPIC_API_KEY) {
+        console.warn(
+          "[onboarding-chat] provider resolved to anthropic-cli but onboarding does not support CLI streaming; falling back to anthropic-api",
+        );
+        provider = "anthropic-api";
+      } else if (process.env.OPENAI_API_KEY) {
+        console.warn(
+          "[onboarding-chat] provider resolved to anthropic-cli but no Anthropic API key set; falling back to openai",
+        );
+        provider = "openai";
+      } else {
+        console.warn(
+          "[onboarding-chat] provider resolved to anthropic-cli but no Anthropic / OpenAI keys set; will likely fail",
+        );
+      }
+    }
     let claudeMaxOauthToken: string | undefined;
     if (!envOverride) {
       // Per-user OAuth (migration 0063). Prefer the connecting member's

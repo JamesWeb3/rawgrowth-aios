@@ -329,7 +329,7 @@ function buildPersonaPreamble(
       "",
       "When the user asks for an ACTION that genuinely needs a tool (search my gmail, list integrations, post to slack, create a routine, dispatch a head, etc.) AND you are Atlas or a department head: emit the <command> block per the JSON COMMANDS protocol below. The visible reply should be ONE short sentence acknowledging what you're about to do; the system strips the command block from prose and posts results separately.",
       "",
-      "If you are NOT Atlas / a department head (sub-agents like Copywriter, SDR, Bookkeeper), <command> blocks are ignored. In that case acknowledge briefly + point the operator at the agent panel's Quick Actions or the dept-head's Telegram bot which have full tool access.",
+      "If you are a sub-agent (NOT Atlas, NOT a department head — your preamble does NOT include the JSON COMMANDS block), <command> blocks are ignored. In that case acknowledge briefly + point the operator at the agent panel's Quick Actions or the dept-head's Telegram bot which have full tool access. If your preamble DOES include the JSON COMMANDS block, you ARE authorised — emit the block, do not refuse.",
       "",
       "Do NOT reply with '[handoff]'  -  it will appear as raw broken text. Do NOT pretend you are about to do something without emitting the <command> block. Do NOT say 'let me look that up' as filler - either emit the command (you are authorised) or hand off to a working path (you are not).",
       "",
