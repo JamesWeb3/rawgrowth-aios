@@ -156,12 +156,19 @@ async function executeOnce<T>(
       },
       body: JSON.stringify({
         connected_account_id: conn.nango_connection_id,
-        // user_id mirrors what /api/connections/composio POST wrote on
-        // grant - per-user when available, org-wide as fallback.
-        // Composio matches the connection by user_id on its side too,
-        // so a mismatch here returns "no connected account" even when
-        // our local row exists.
-        user_id: userId ?? organizationId,
+        // user_id MUST mirror exactly what /api/connections/composio
+        // POST wrote on grant, otherwise Composio rejects with
+        // ActionExecute_ConnectedAccountEntityIdMismatch. Read it from
+        // the row itself (conn.user_id) so post-OAuth tool calls match
+        // the entityId the connected_account was created with - even
+        // when the caller has no session (MCP HTTP bearer path) and
+        // the per-call userId arg is null. Fall back to caller's
+        // userId, then organizationId, only when the row was inserted
+        // before migration 0063 added user_id (legacy org-wide rows).
+        user_id:
+          (conn as { user_id?: string | null }).user_id ??
+          userId ??
+          organizationId,
         arguments: opts.input,
       }),
       signal: AbortSignal.timeout(30_000),
