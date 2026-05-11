@@ -10,6 +10,39 @@ import { badUuidResponse } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
+/**
+ * GET /api/agents/[id]
+ *
+ * Single-agent fetch for tooling + testing scripts. The dashboard
+ * page already loads the agent server-side; this endpoint is mostly
+ * for external scripts (Playwright e2e, the post-deploy verifier)
+ * that need to confirm an agent's seeded state without scraping HTML.
+ *
+ * Org-scoped via the same listAgentsForOrg helper PATCH/DELETE use,
+ * so RLS + cross-tenant guarantees are identical.
+ */
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const bad = badUuidResponse(id);
+    if (bad) return bad;
+    const orgId = await currentOrganizationId();
+    const agents = await listAgentsForOrg(orgId);
+    const agent = agents.find((a) => a.id === id);
+    if (!agent) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ agent });
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error("[agents GET] error", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },

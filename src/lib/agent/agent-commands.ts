@@ -466,6 +466,23 @@ async function execRoutineCreate(
     };
     const cron = cronByPreset[p.schedule.trim().toLowerCase()] ?? null;
     if (cron) {
+      // Resolve org timezone. Prefer the calendar booking default
+      // timezone (set by operator on /booking/calendar), fall back
+      // to UTC. Audit caught "9am every morning" firing at 6am local
+      // for Sao Paulo because the trigger persisted timezone="UTC".
+      let tz = "UTC";
+      try {
+        const { data: bind } = await db
+          .from("rgaios_calendar_bindings")
+          .select("default_timezone")
+          .eq("organization_id", orgId)
+          .maybeSingle();
+        const fromBind = (bind as { default_timezone?: string } | null)
+          ?.default_timezone;
+        if (fromBind && typeof fromBind === "string" && fromBind.trim()) {
+          tz = fromBind;
+        }
+      } catch {}
       try {
         // kind='schedule' (not 'cron') matches the canonical TriggerKind
         // union in routines/constants.ts. Older rows with kind='cron' are
@@ -476,7 +493,7 @@ async function execRoutineCreate(
           routine_id: routineId,
           kind: "schedule",
           enabled: true,
-          config: { preset: "custom", cron, timezone: "UTC" },
+          config: { preset: "custom", cron, timezone: tz },
         } as never);
       } catch (err) {
         console.warn(
