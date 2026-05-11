@@ -69,7 +69,7 @@ export async function GET() {
     ? await db
         .from("rgaios_routine_runs")
         .select(
-          "id, routine_id, status, source, started_at, completed_at, created_at, output, error_excerpt",
+          "id, routine_id, status, source, started_at, completed_at, created_at, output, error",
         )
         .eq("organization_id", orgId)
         .in("routine_id", routineIds)
@@ -85,7 +85,7 @@ export async function GET() {
     completed_at: string | null;
     created_at: string;
     output: { reply?: string; executed_inline?: boolean } | null;
-    error_excerpt: string | null;
+    error: string | null;
   };
   const runs = (runsRaw ?? []) as RunRow[];
   const runsByRoutine = new Map<string, RunRow[]>();
@@ -131,13 +131,13 @@ export async function GET() {
         lastRun?.output?.reply && typeof lastRun.output.reply === "string"
           ? String(lastRun.output.reply)
           : null,
-      // Surface the error excerpt for failed runs so /tasks gives the
+      // Surface the error message for failed runs so /tasks gives the
       // operator a hint about WHY a routine failed instead of a blank
       // "Failed" badge. e2e audit found 87 failed runs with zero
       // visibility into the cause.
       latestError:
-        lastRun?.status === "failed" && lastRun.error_excerpt
-          ? String(lastRun.error_excerpt).slice(0, 500)
+        lastRun?.status === "failed" && lastRun.error
+          ? String(lastRun.error).slice(0, 500)
           : null,
     };
   });

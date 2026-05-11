@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
           .in("status", ["queued", "running"]),
         db
           .from("rgaios_routine_runs")
-          .select("id, error_excerpt, routine_id, created_at")
+          .select("id, error, routine_id, created_at")
           .eq("organization_id", orgId)
           .eq("status", "failed")
           .gte("created_at", oneHourAgo)
@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
       const openRuns = openRunsRes.count ?? 0;
       const failedRuns = (failedRunsRes.data ?? []) as Array<{
         id: string;
-        error_excerpt: string | null;
+        error: string | null;
         routine_id: string | null;
         created_at: string;
       }>;
@@ -205,7 +205,7 @@ export async function GET(req: NextRequest) {
       if (failedRuns.length > 0) {
         lines.push(`Failed tasks (last 1h): ${failedRuns.length}`);
         for (const f of failedRuns.slice(0, 3)) {
-          const err = (f.error_excerpt ?? "no error msg").slice(0, 120);
+          const err = (f.error ?? "no error msg").slice(0, 120);
           lines.push(`  - run ${f.id.slice(0, 8)}: ${err}`);
         }
         if (failedRuns.length > 3) lines.push(`  - +${failedRuns.length - 3} more`);
