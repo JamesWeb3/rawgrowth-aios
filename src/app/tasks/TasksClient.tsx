@@ -16,6 +16,7 @@ type Task = {
   latestStatus: string;
   latestRunAt: string | null;
   latestOutput: string | null;
+  latestError: string | null;
 };
 
 type Resp = {
@@ -184,6 +185,15 @@ export function TasksClient() {
                       </p>
                       <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-[12px] leading-relaxed text-foreground">
                         {t.latestOutput}
+                      </pre>
+                    </div>
+                  ) : t.latestError ? (
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-[#f4b27a]">
+                        Latest error
+                      </p>
+                      <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-[#3a1a10] bg-[#1a0b08] p-3 text-[12px] leading-relaxed text-[#f4b27a]">
+                        {t.latestError}
                       </pre>
                     </div>
                   ) : (
