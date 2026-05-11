@@ -6,19 +6,28 @@ import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ClaudeConnectionCard } from "@/components/connections/claude-card";
+import { ComposioKeyCard } from "@/components/connections/composio-key-card";
 import { ConnectorsGrid } from "@/components/connections/connectors-grid";
 import { ApiKeysCard } from "@/components/connections/api-keys-card";
 import { CreateClientSheet } from "@/components/admin/create-client-sheet";
 import { jsonFetcher } from "@/lib/swr";
 
 /**
- * Connections - cleaned up per Chris's v3 spec (May 7 video feedback):
+ * Connections - cleaned up per Chris's v3 spec (May 7 video feedback)
+ * + Pedro's 2026-05-10 visibility fix:
  *
  *   1. Claude Max          (powers the VPS-side 24/7 agent runtime)
- *   2. Apps grid           (Composio-driven searchable catalog of 400+
+ *   2. Composio API key    (proxy for ~80% of the Apps grid below.
+ *                           Promoted out of the bottom Workspace API
+ *                           keys card so users can't miss it before
+ *                           clicking Connect/Request on Composio apps.)
+ *   3. Apps grid           (Composio-driven searchable catalog of 400+
  *                           apps. Native integrations open the existing
  *                           OAuth / API key flow; the rest queue an
  *                           interest record server-side.)
+ *   4. Workspace API keys  (per-org keys for analytics + bespoke
+ *                           providers. Composio intentionally moved to
+ *                           the hero card above; do not re-add here.)
  *
  * The Rawgrowth MCP card was removed per Chris - clients shouldn't see
  * MCP wiring on this page. Admin token rotation + new-client lives in
@@ -67,7 +76,19 @@ export function ConnectionsView() {
         <ClaudeConnectionCard />
       </section>
 
-      {/* 2. Apps */}
+      {/* 2. Composio API key - hero card. Used to live as the last row
+          inside <ApiKeysCard /> at the bottom of the page; promoted to
+          the top so users see it before scrolling through the Apps grid
+          (which is mostly Composio-backed). */}
+      <section>
+        <SectionHeading
+          title="Composio API key"
+          subtitle="One key powers the Composio-backed apps in the grid below. Set it here, not in the Workspace API keys section."
+        />
+        <ComposioKeyCard />
+      </section>
+
+      {/* 3. Apps */}
       <section>
         <SectionHeading
           title="Apps"
@@ -76,11 +97,13 @@ export function ConnectionsView() {
         <ConnectorsGrid />
       </section>
 
-      {/* 3. Workspace API keys (per-org credentials including Composio) */}
+      {/* 4. Workspace API keys (per-org analytics + bespoke creds.
+          Composio is intentionally NOT in this list anymore - it lives
+          in the hero card above.) */}
       <section>
         <SectionHeading
           title="Workspace API keys"
-          subtitle="Per-org credentials the agents use directly. Set the Composio key here to override the VPS-wide env."
+          subtitle="Per-org credentials for analytics + bespoke providers. Composio lives in its own card above."
         />
         <ApiKeysCard />
       </section>

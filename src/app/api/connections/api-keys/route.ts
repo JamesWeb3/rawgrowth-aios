@@ -14,8 +14,14 @@ export const runtime = "nodejs";
  * encrypted (AES-256-GCM via encryptSecret).
  *
  * GET → { keys: [{ provider, hasKey, preview, updated_at }] }
- * PUT body { provider, api_key } → upsert
- * DELETE ?provider=<x> → drop
+ *   Pass ?include=composio (or any provider key in HIDDEN_FROM_LIST)
+ *   to surface a hidden provider in the response, otherwise the
+ *   default list is the catalog minus those entries. The hidden set
+ *   covers providers that have their own dedicated UI surface
+ *   elsewhere on /connections (Composio sits in <ComposioKeyCard />
+ *   at the top of the page since 2026-05-10).
+ * PUT body { provider, api_key } → upsert (no list filtering)
+ * DELETE ?provider=<x> → drop (no list filtering)
  */
 
 const KNOWN_PROVIDERS = [
@@ -80,22 +86,37 @@ const KNOWN_PROVIDERS = [
     label: "Composio",
     description: "Per-org Composio API key. Overrides the VPS-wide COMPOSIO_API_KEY env when set so each tenant pays for their own action quota.",
     docsUrl: "https://app.composio.dev/settings",
-    placeholder: "ck_live_...",
+    placeholder: "ak_live_...",
   },
 ] as const;
 
-export async function GET() {
+// Providers with a dedicated UI surface elsewhere - kept out of the
+// default GET response so the bottom-of-page <ApiKeysCard /> doesn't
+// duplicate the dedicated card. Pass ?include=<key>[,<key2>] to opt
+// back in. PUT / DELETE still accept these keys without ceremony.
+const HIDDEN_FROM_LIST = new Set<string>(["composio"]);
+
+export async function GET(req: NextRequest) {
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const include = new Set(
+    (req.nextUrl.searchParams.get("include") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const visible = KNOWN_PROVIDERS.filter(
+    (p) => include.has(p.key) || !HIDDEN_FROM_LIST.has(p.key),
+  );
   const { data } = await supabaseAdmin()
     .from("rgaios_connections")
     .select("provider_config_key, metadata, updated_at, connected_at")
     .eq("organization_id", ctx.activeOrgId)
     .in(
       "provider_config_key",
-      KNOWN_PROVIDERS.map((p) => `${p.key}-key`),
+      visible.map((p) => `${p.key}-key`),
     );
   const rows = (data ?? []) as Array<{
     provider_config_key: string;
@@ -106,7 +127,7 @@ export async function GET() {
   const byKey = new Map(
     rows.map((r) => [r.provider_config_key.replace(/-key$/, ""), r]),
   );
-  const keys = KNOWN_PROVIDERS.map((p) => {
+  const keys = visible.map((p) => {
     const row = byKey.get(p.key);
     const plain = tryDecryptSecret(row?.metadata?.api_key);
     return {
