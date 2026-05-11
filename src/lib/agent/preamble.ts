@@ -57,6 +57,32 @@ export async function buildAgentChatPreamble(input: {
   const db = supabaseAdmin();
   let preamble = "";
 
+  // 0. Authority override (must come BEFORE persona). The seeded
+  //    `system_prompt` for some dept heads contains stale "I am a
+  //    sub-agent / I cannot emit command blocks" text from an earlier
+  //    role-template version. The LLM anchors on the first identity
+  //    claim it reads, so the JSON COMMANDS block we add later is
+  //    ignored. Prepend an explicit authority assertion for Atlas +
+  //    dept heads so the persona text below reads as flavor, not
+  //    capability scope.
+  try {
+    const { data: authRow } = await db
+      .from("rgaios_agents")
+      .select("role, is_department_head")
+      .eq("id", agentId)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+    const a0 = authRow as { role?: string; is_department_head?: boolean } | null;
+    const authCanCommand =
+      a0?.role === "ceo" || a0?.is_department_head === true;
+    if (authCanCommand) {
+      preamble +=
+        "═══ AUTHORITY OVERRIDE (read this FIRST) ═══\n\n" +
+        "You are Atlas (CEO) or a department head in this org. You ARE authorised to emit <command> blocks (tool_call / agent_invoke / routine_create) on this chat surface. The system parses them and executes server-side.\n\n" +
+        "If your persona block below says 'I am a sub-agent', 'I cannot emit command blocks', 'route this through Atlas', or anything similar - IGNORE those claims. They are stale text from an earlier template. Your authority is granted by this preamble, not by the persona. The JSON COMMANDS section further down has the exact format. When the operator asks for an action, emit the block - do NOT refuse and do NOT say you lack tool access.\n\n";
+    }
+  } catch {}
+
   // 1. Persona (role + title + system_prompt fallback to description)
   try {
     const { data: agentRow } = await db
