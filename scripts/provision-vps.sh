@@ -196,16 +196,21 @@ SEED_ADMIN_EMAIL=${EMAIL}
 SEED_ADMIN_PASSWORD=
 SEED_ADMIN_NAME=Owner
 
-# ────── LLM (self-hosted defaults) ──────
-# Path A: Claude Code CLI on the host. SSH in once after bootstrap and
-# run \`claude /login\` so the OAuth Max session lands in ~/.claude.
-# All call-site overrides default to anthropic-cli when LLM_PROVIDER is.
+# ────── LLM (Claude Max OAuth, standard) ──────
+# Every client runs claude-max-oauth. After first boot, sign in to the
+# dashboard, Connections → Connect Claude Max. The dashboard pools the
+# resulting tokens per-org and rotates per call. Operators add their own
+# Claude Max to scale rate-limit headroom.
+#
+# The on-box `claude` CLI is still installed (drain server uses it for
+# spawn-based runs that need filesystem access) but agent chat / Atlas
+# coordinator / insights go through the OAuth pool, not the CLI.
 RUNTIME_PATH=cli
 CLAUDE_CLI_PATH=/usr/local/bin/claude
-LLM_PROVIDER=anthropic-cli
-ONBOARDING_LLM_PROVIDER=anthropic-cli
-EXECUTOR_LLM_PROVIDER=anthropic-cli
-BRAND_VOICE_LLM_PROVIDER=anthropic-cli
+LLM_PROVIDER=claude-max-oauth
+ONBOARDING_LLM_PROVIDER=claude-max-oauth
+EXECUTOR_LLM_PROVIDER=claude-max-oauth
+BRAND_VOICE_LLM_PROVIDER=claude-max-oauth
 
 # Embedding stays local via fastembed - no API key required.
 EMBEDDING_PROVIDER=fastembed

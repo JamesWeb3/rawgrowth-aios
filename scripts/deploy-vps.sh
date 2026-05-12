@@ -2,19 +2,40 @@
 # Pull-only deploy. Replaces `docker compose up -d --build` which
 # OOM-killed the 4GB CX22 every time. Runs on the VPS, expects:
 #
-#   - /opt/rawgrowth checked out on branch v3
-#   - .env in /opt/rawgrowth (postgres password, JWT, etc)
+#   - the repo checked out somewhere with docker-compose.yml + .env inside
+#   - branch v3 checked out
 #   - GHCR_PULL_TOKEN env var (read-only PAT for ghcr.io) OR public image
 #
 # Triggered from your laptop:
 #   ssh root@<vps-ip> 'bash /opt/rawgrowth/scripts/deploy-vps.sh'
 #
-# Or as a one-shot from anywhere with the repo checked out:
-#   scp scripts/deploy-vps.sh root@<vps-ip>:/tmp/ && ssh root@<vps-ip> 'bash /tmp/deploy-vps.sh'
+# On legacy boxes (e.g. Marti at /opt/rawclaw), the same script works
+# because of the path-resolver below.
+#
+# Path resolution priority:
+#   1. RAWGROWTH_HOME env var if set (explicit override)
+#   2. parent dir of this script if it sits inside <repo>/scripts/
+#      and that dir contains both docker-compose.yml and .env
+#   3. fallback /opt/rawgrowth (historical default)
 
 set -euo pipefail
 
-cd /opt/rawgrowth
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PARENT_DIR="$( cd "${SCRIPT_DIR}/.." 2>/dev/null && pwd || echo "" )"
+
+if [ -n "${RAWGROWTH_HOME:-}" ]; then
+  TARGET="${RAWGROWTH_HOME}"
+elif [ -n "${PARENT_DIR}" ] && [ -f "${PARENT_DIR}/docker-compose.yml" ] && [ -f "${PARENT_DIR}/.env" ]; then
+  TARGET="${PARENT_DIR}"
+elif [ -d /opt/rawgrowth ]; then
+  TARGET=/opt/rawgrowth
+else
+  echo "[deploy] cannot find repo root. Set RAWGROWTH_HOME, run from inside <repo>/scripts/, or ensure /opt/rawgrowth exists." >&2
+  exit 1
+fi
+
+echo "[deploy] working dir: ${TARGET}"
+cd "${TARGET}"
 
 echo "[deploy] git pull origin v3"
 git pull origin v3
