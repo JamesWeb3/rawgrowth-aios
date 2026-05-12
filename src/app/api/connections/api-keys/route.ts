@@ -127,9 +127,22 @@ export async function GET(req: NextRequest) {
   const byKey = new Map(
     rows.map((r) => [r.provider_config_key.replace(/-key$/, ""), r]),
   );
+  // For each provider we surface, the API-key value resolves with this
+  // precedence: per-org DB row first, then a VPS-level env-var fallback
+  // for providers that the operator may have set in `/opt/rawgrowth/.env`
+  // (Composio is the canonical example - shared during onboarding,
+  // overridden per-client via the UI). Returning a `source` field so the
+  // UI can show "(stored in DB)" vs "(from VPS env)" without ambiguity.
+  const ENV_FALLBACK: Record<string, string | undefined> = {
+    composio: process.env.COMPOSIO_API_KEY,
+    openai: process.env.OPENAI_API_KEY,
+  };
   const keys = visible.map((p) => {
     const row = byKey.get(p.key);
-    const plain = tryDecryptSecret(row?.metadata?.api_key);
+    const dbPlain = tryDecryptSecret(row?.metadata?.api_key);
+    const envPlain = !dbPlain ? ENV_FALLBACK[p.key]?.trim() || null : null;
+    const plain = dbPlain ?? envPlain;
+    const source: "db" | "env" | null = dbPlain ? "db" : envPlain ? "env" : null;
     return {
       provider: p.key,
       label: p.label,
@@ -137,6 +150,7 @@ export async function GET(req: NextRequest) {
       docsUrl: p.docsUrl,
       placeholder: p.placeholder,
       hasKey: Boolean(plain),
+      source,
       preview: plain ? `••••${plain.slice(-4)}` : null,
       updatedAt: row?.updated_at ?? row?.connected_at ?? null,
     };

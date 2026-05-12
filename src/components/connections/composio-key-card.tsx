@@ -46,6 +46,7 @@ type KeyRow = {
   docsUrl: string;
   placeholder: string;
   hasKey: boolean;
+  source: "db" | "env" | null;
   preview: string | null;
   updatedAt: string | null;
 };
@@ -125,6 +126,7 @@ export function ComposioKeyCard() {
   }
 
   const connected = row?.hasKey ?? false;
+  const fromEnv = row?.source === "env";
 
   return (
     <Card className="border-border bg-card/50">
@@ -151,7 +153,7 @@ export function ComposioKeyCard() {
                     variant="secondary"
                     className="bg-primary/15 text-[10px] text-primary"
                   >
-                    Connected
+                    {fromEnv ? "Connected · from VPS env" : "Connected"}
                   </Badge>
                 ) : (
                   <Badge
