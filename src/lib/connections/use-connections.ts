@@ -11,7 +11,7 @@ export type ConnectionRow = {
   provider_config_key: string;
   nango_connection_id: string;
   display_name: string | null;
-  status: "connected" | "error" | "disconnected";
+  status: "connected" | "error" | "disconnected" | "pending_token";
   metadata: Record<string, unknown>;
   connected_at: string;
   updated_at: string;
