@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Database,
   Inbox,
+  GitBranch,
 } from "lucide-react";
 
 import {
@@ -70,6 +71,7 @@ const navSections: NavSection[] = [
       { label: "Tasks", href: "/tasks", icon: ListChecks },
       { label: "Mini SaaS", href: "/mini-saas", icon: Code2 },
       { label: "Routines", href: "/routines", icon: Repeat },
+      { label: "Trace", href: "/trace", icon: GitBranch },
       { label: "Booking", href: "/booking", icon: CalendarDays },
       { label: "Approvals", href: "/approvals", icon: ShieldCheck },
     ],
