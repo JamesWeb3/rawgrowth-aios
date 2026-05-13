@@ -420,8 +420,20 @@ export default function AgentChatTab({
             const hits = (event.hits as unknown[]).filter(
               (h): h is string => typeof h === "string",
             );
+            const redactedText = typeof event.redactedText === "string" ? event.redactedText : null;
             setMessages((prev) => {
               const copy = [...prev];
+              // Replace the just-sent user message with the server's
+              // redacted version so the bubble doesn't keep displaying
+              // the raw secret we already scrubbed server-side.
+              if (redactedText) {
+                for (let i = copy.length - 1; i >= 0; i--) {
+                  if (copy[i].role === "user") {
+                    copy[i] = { role: "user", content: redactedText };
+                    break;
+                  }
+                }
+              }
               const last = copy[copy.length - 1];
               const warning: ChatMessage = {
                 role: "system",

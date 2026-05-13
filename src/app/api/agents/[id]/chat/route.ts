@@ -71,6 +71,15 @@ function redactSecrets(text: string): {
       replacement: "[REDACTED API KEY]",
     },
     {
+      // Catch the truncated/ellipsis form agents tend to echo back in
+      // warnings: `ak_gHrg9Sor...`. Lower length floor (4+ chars after
+      // prefix) and trailing ellipsis or dots. Runs after the full-key
+      // pattern so the longer-match-first ordering still holds.
+      kind: "api_key_prefix_truncated",
+      re: /(sk|ak|pk|ck|sk_live|pk_live|sk_test|sk-proj|ghp|gho|gha|glpat|xoxb|xoxp|xoxa)[-_][A-Za-z0-9_-]{4,}\.{2,}/g,
+      replacement: "[REDACTED API KEY]",
+    },
+    {
       kind: "password_phrase",
       re: /(?:password|passwd|pwd)\s*[:=]\s*\S+/gi,
       replacement: "password: [REDACTED]",
@@ -497,6 +506,7 @@ export async function POST(
           emit({
             type: "secret_redacted",
             hits: inboundHits.map((h) => h.kind),
+            redactedText: lastContent,
           });
         }
 
