@@ -6,6 +6,7 @@ import {
   resolveComposioApiKey,
   resolveOrCreateAuthConfig,
 } from "@/lib/composio/proxy";
+import { getBrowseCache } from "@/lib/connections/browse-cache";
 
 export const runtime = "nodejs";
 
@@ -45,9 +46,35 @@ export async function POST(req: Request) {
     if (!key) {
       return NextResponse.json({ error: "missing 'key' in body" }, { status: 400 });
     }
-    const entry = getCatalogEntry(key);
+    // Two allowlists: (1) hardcoded CONNECTOR_CATALOG, (2) live browse
+    // cache for this org (toolkits Composio just told us about within
+    // 5 min). The live-browse path lets operators connect any of the
+    // 200+ apps without us hardcoding them, while preserving the gate
+    // against arbitrary client-supplied strings. Without (2) the modal
+    // would be cosmetic - every Connect click 404s.
+    let entry = getCatalogEntry(key);
     if (!entry) {
-      return NextResponse.json({ error: `unknown connector '${key}'` }, { status: 404 });
+      const browse = getBrowseCache(organizationId);
+      const liveItem = browse?.items.find((i) => i.slug === key) ?? null;
+      if (!liveItem) {
+        return NextResponse.json(
+          { error: `unknown connector '${key}'` },
+          { status: 404 },
+        );
+      }
+      // Synthesize a CatalogEntry-shaped record so the rest of the
+      // handler is unchanged. brandColor seeds the letter avatar if
+      // the modal ever falls back to one; hasNativeIntegration=false
+      // since the dynamic path is always Composio-managed.
+      entry = {
+        key: liveItem.slug,
+        name: liveItem.name,
+        category: "Other",
+        brandColor: "#475569",
+        hasNativeIntegration: false,
+        composioAppName: liveItem.slug,
+        logoUrl: liveItem.logo ?? undefined,
+      };
     }
 
     // Per-org Composio key first (Connections → Workspace API keys),
@@ -110,7 +137,18 @@ export async function POST(req: Request) {
             const bareKey = providerConfigKey.startsWith("composio:")
               ? providerConfigKey.slice("composio:".length)
               : providerConfigKey;
-            if (!CONNECTOR_CATALOG.some((c) => c.key === bareKey)) {
+            // Accept hardcoded catalog OR live browse-cache slugs.
+            // Mirrors the entry-resolution gate above so the dynamic
+            // path doesn't trip a second allowlist check inside the
+            // OAuth branch. Live-browse cache is org-scoped and 5 min
+            // TTL; arbitrary client-supplied strings still 400 here.
+            const browseCache = getBrowseCache(organizationId);
+            const inHardcoded = CONNECTOR_CATALOG.some(
+              (c) => c.key === bareKey,
+            );
+            const inBrowse =
+              browseCache?.items.some((i) => i.slug === bareKey) ?? false;
+            if (!inHardcoded && !inBrowse) {
               return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
             }
             const db = supabaseAdmin();

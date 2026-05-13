@@ -15,6 +15,7 @@ import {
   type CatalogCategory,
   type CatalogEntry,
 } from "@/lib/connections/catalog";
+import { AllAppsModal } from "@/components/connections/all-apps-modal";
 
 /**
  * Searchable connector grid. Pedro removed Nango on 2026-05-07 so
@@ -244,6 +245,16 @@ export function ConnectorsGrid() {
           No apps match. Try a different category or clear the search.
         </div>
       )}
+
+      {/* Browse-all entrypoint. Opens AllAppsModal which fetches the
+          live Composio toolkit catalog (~200+ apps) so operators can
+          connect anything that isn't in the curated grid above. */}
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-background/30 px-4 py-3">
+        <div className="text-[11.5px] text-muted-foreground">
+          Don&apos;t see your app? Browse Composio&apos;s full catalog of 200+ integrations.
+        </div>
+        <AllAppsModal />
+      </div>
     </div>
   );
 }
