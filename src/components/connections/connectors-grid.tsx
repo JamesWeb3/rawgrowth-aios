@@ -76,13 +76,23 @@ export function ConnectorsGrid() {
     );
   };
 
-  // Auto-poll the connections list while any pending row exists, so
-  // the operator who returns from Composio's "Successfully connected"
-  // static page sees the badge flip without manually refreshing.
-  // Stops once all rows are resolved (connected or error).
+  // Auto-poll while pending rows exist. Two-step every 5s:
+  //   1. POST /api/connections/composio/sync-pending — hits Composio's
+  //      GET /api/v3/connected_accounts/{id} for each pending row and
+  //      flips status='connected' if Composio reports ACTIVE. This is
+  //      the server-side workaround for Composio v3 not honoring our
+  //      callback_url (Chris bug 1).
+  //   2. refresh() — refetches /api/connections so the UI badge updates.
   useEffect(() => {
     if (pendingKeys.size === 0) return;
-    const id = setInterval(() => {
+    const id = setInterval(async () => {
+      try {
+        await fetch("/api/connections/composio/sync-pending", {
+          method: "POST",
+        });
+      } catch {
+        /* tolerate transient errors; SWR retry next cycle */
+      }
       void refresh();
     }, 5000);
     return () => clearInterval(id);
