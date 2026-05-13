@@ -20,10 +20,16 @@ export type ConnectionRow = {
 const CONNECTIONS_KEY = "/api/connections";
 
 export function useConnections() {
+  // Composio OAuth path lands the operator on Composio's static
+  // "Successfully connected" page and never redirects back. Even with
+  // the new popup-window flow + server-side sync-pending poll, the
+  // main tab needs a kick to revalidate. Enable revalidateOnFocus so
+  // any tab focus (or popup-close → return to main) refreshes the
+  // connections list and the badges flip without operator action.
   const { data, isLoading, mutate } = useSWR<{ connections: ConnectionRow[] }>(
     CONNECTIONS_KEY,
     jsonFetcher,
-    { revalidateOnFocus: false },
+    { revalidateOnFocus: true, refreshInterval: 10_000 },
   );
 
   // Stable reference so dependent useCallback hooks don't re-create on every

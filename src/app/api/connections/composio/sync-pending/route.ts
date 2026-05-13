@@ -35,7 +35,7 @@ export async function POST() {
 
   const { data: pending } = await db
     .from("rgaios_connections")
-    .select("id, nango_connection_id, provider_config_key, metadata")
+    .select("id, nango_connection_id, provider_config_key, metadata, updated_at")
     .eq("organization_id", orgId)
     .eq("status", "pending_token");
 
@@ -44,8 +44,30 @@ export async function POST() {
     nango_connection_id: string | null;
     provider_config_key: string;
     metadata: Record<string, unknown> | null;
+    updated_at: string | null;
   };
   const rows = (pending ?? []) as Row[];
+
+  // Stale-pending cleanup. A row that's been pending_token for more
+  // than 5 minutes is almost certainly an abandoned OAuth attempt
+  // (operator closed the popup, switched browsers, lost the tab).
+  // Delete it so the card flips back to "Connect" and the operator
+  // can retry cleanly. Chris 2026-05-12 follow-up.
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+  const now = Date.now();
+  const stale: string[] = [];
+  for (const r of rows) {
+    const ageMs = r.updated_at
+      ? now - new Date(r.updated_at).getTime()
+      : 0;
+    if (ageMs > FIVE_MIN_MS) stale.push(r.id);
+  }
+  if (stale.length > 0) {
+    await db
+      .from("rgaios_connections")
+      .delete()
+      .in("id", stale);
+  }
   if (rows.length === 0) {
     return NextResponse.json({ ok: true, checked: 0, flipped: 0 });
   }
