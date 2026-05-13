@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,23 +27,36 @@ import {
 type CategoryFilter = (typeof CATALOG_CATEGORIES)[number];
 
 export function ConnectorsGrid() {
-  const { connections } = useConnections();
+  const { connections, refresh } = useConnections();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<CategoryFilter>("All");
   const [requesting, setRequesting] = useState<string | null>(null);
 
   /**
-   * A non-native catalog entry is "connected" when a row exists in
-   * rgaios_connections with status='connected' for either the bare key
-   * or the composio-prefixed key. The Composio POST handler writes
-   * provider_config_key=`composio:${key}`; older rows (and any future
-   * Composio bridge rewrite) may store the bare key. We accept both so
-   * the badge stays correct across migrations.
+   * Three buckets per catalog entry (Chris's bugs 1 + 5, 2026-05-12):
+   *   - connectedKeys     → status='connected'
+   *   - pendingKeys       → status='pending_token' (user clicked Connect
+   *                         but hasn't finished OAuth on Composio side)
+   *
+   * Composio's v3 OAuth flow ends on a "Successfully connected" page that
+   * doesn't auto-redirect back here. We now show a "Connecting…" badge
+   * for pending rows + auto-refresh every 5s while any pending row
+   * exists, so the badge flips to Connected once Composio's server-side
+   * callback fires (which IS reliable even when the redirect isn't).
    */
   const connectedKeys = useMemo(() => {
     const set = new Set<string>();
     for (const c of connections) {
       if (c.status !== "connected") continue;
+      set.add(c.provider_config_key);
+    }
+    return set;
+  }, [connections]);
+
+  const pendingKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of connections) {
+      if (c.status !== "pending_token") continue;
       set.add(c.provider_config_key);
     }
     return set;
@@ -55,6 +68,25 @@ export function ConnectorsGrid() {
       connectedKeys.has(`composio:${entry.key}`)
     );
   };
+
+  const isCardPending = (entry: CatalogEntry): boolean => {
+    return (
+      pendingKeys.has(entry.key) ||
+      pendingKeys.has(`composio:${entry.key}`)
+    );
+  };
+
+  // Auto-poll the connections list while any pending row exists, so
+  // the operator who returns from Composio's "Successfully connected"
+  // static page sees the badge flip without manually refreshing.
+  // Stops once all rows are resolved (connected or error).
+  useEffect(() => {
+    if (pendingKeys.size === 0) return;
+    const id = setInterval(() => {
+      void refresh();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [pendingKeys.size, refresh]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -174,6 +206,7 @@ export function ConnectorsGrid() {
             key={entry.key}
             entry={entry}
             connected={isCardConnected(entry)}
+            pending={isCardPending(entry)}
             requesting={requesting === entry.key}
             onConnect={() => handleConnect(entry)}
           />
@@ -192,11 +225,13 @@ export function ConnectorsGrid() {
 function ConnectorCard({
   entry,
   connected,
+  pending,
   requesting,
   onConnect,
 }: {
   entry: CatalogEntry;
   connected: boolean;
+  pending: boolean;
   requesting: boolean;
   onConnect: () => void;
 }) {
@@ -263,6 +298,13 @@ function ConnectorCard({
               className="bg-emerald-400/10 text-[10px] font-medium uppercase tracking-[1px] text-emerald-400"
             >
               Connected
+            </Badge>
+          ) : pending ? (
+            <Badge
+              variant="secondary"
+              className="bg-amber-400/10 text-[10px] font-medium uppercase tracking-[1px] text-amber-400"
+            >
+              Connecting...
             </Badge>
           ) : (
             <Button
