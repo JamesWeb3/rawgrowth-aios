@@ -281,6 +281,55 @@ export async function GET(req: NextRequest) {
           queuedInsights,
         },
       });
+
+      // Auto-flag failed delegated runs so Scan surfaces them on next operator turn.
+      const { data: failedDelegated } = await db
+        .from("rgaios_routine_runs")
+        .select("id, error, input_payload, created_at")
+        .eq("organization_id", orgId)
+        .eq("source", "chat_command")
+        .eq("status", "failed")
+        .gte("created_at", oneHourAgo)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      for (const fr of (failedDelegated ?? []) as Array<{
+        id: string;
+        error: string | null;
+        input_payload: { title?: string } | null;
+        created_at: string;
+      }>) {
+        // Idempotency: skip if we already flagged this run via metadata
+        const { count } = await db
+          .from("rgaios_agent_chat_messages")
+          .select("*", { count: "exact", head: true })
+          .eq("organization_id", orgId)
+          .filter("metadata->>monitor_alert_run_id", "eq", fr.id);
+        if ((count ?? 0) > 0) continue;
+
+        // Find the CEO agent for this org (reports_to=null)
+        const { data: ceoAgent } = await db
+          .from("rgaios_agents")
+          .select("id")
+          .eq("organization_id", orgId)
+          .is("reports_to", null)
+          .limit(1)
+          .maybeSingle();
+        if (!ceoAgent) continue;
+
+        const errPreview = (fr.error ?? "unknown error").slice(0, 200);
+        const taskPreview =
+          fr.input_payload?.title?.slice(0, 100) ?? "unknown task";
+
+        await db.from("rgaios_agent_chat_messages").insert({
+          organization_id: orgId,
+          agent_id: (ceoAgent as { id: string }).id,
+          user_id: null,
+          role: "system",
+          content: `Monitor alert: Delegated run failed.\nTask: ${taskPreview}\nError: ${errPreview}\nWant me to retry or escalate?`,
+          metadata: { kind: "monitor_alert", monitor_alert_run_id: fr.id },
+        } as never);
+      }
     } catch (err) {
       results.push({
         org: o.id,

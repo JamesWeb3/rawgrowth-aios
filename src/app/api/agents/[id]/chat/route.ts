@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { generateText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
 
 import { getOrgContext } from "@/lib/auth/admin";
 import { isDepartmentAllowed } from "@/lib/auth/dept-acl";
@@ -9,6 +11,35 @@ import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
 import { extractAndExecuteCommands } from "@/lib/agent/agent-commands";
 import { badUuidResponse } from "@/lib/utils";
+
+/**
+ * Single-shot Haiku call to summarise what the agent is about to do.
+ * Surfaced as a `thinking` SSE event so operators see reasoning live
+ * (chain-of-thought). Best-effort: any failure returns null and the
+ * chat reply proceeds without a thinking bubble. Cheap (sub-cent),
+ * fast (<1s) - no rate-limit impact on the main reply pool because
+ * this hits the SDK directly, not via the OAuth pool.
+ */
+async function generateThinkingBrief(userMessage: string): Promise<string | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null; // no key configured
+  if (!userMessage || userMessage.length < 3) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const result = await generateText({
+      model: anthropic("claude-haiku-4-5"),
+      system:
+        "You are summarising what an AI agent is about to do, before it answers. Reply with one short sentence under 100 characters starting with 'I will'. No quotes, no preamble. Be concrete.",
+      prompt: `User message: ${userMessage.slice(0, 400)}`,
+      abortSignal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const brief = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 140);
+    return brief || null;
+  } catch {
+    return null;
+  }
+}
 
 export const runtime = "nodejs";
 
@@ -508,6 +539,35 @@ export async function POST(
             hits: inboundHits.map((h) => h.kind),
             redactedText: lastContent,
           });
+        }
+
+        // Chain-of-thought brief - cheap Haiku call summarises the
+        // agent's plan in <100 chars. Best-effort: any failure skips
+        // the emit silently. Surfaces what Scan is about to do BEFORE
+        // the heavy reply streams, so operator sees reasoning live.
+        try {
+          const brief = await generateThinkingBrief(lastContent);
+          if (brief) {
+            emit({ type: "thinking", brief });
+            // Persist as system msg + audit so /trace can show it.
+            await db.from("rgaios_agent_chat_messages").insert({
+              organization_id: orgId,
+              agent_id: agentId,
+              user_id: null,
+              role: "system",
+              content: `Thinking: ${brief}`,
+              metadata: { kind: "chat_thinking" },
+            } as never);
+            await db.from("rgaios_audit_log").insert({
+              organization_id: orgId,
+              kind: "chat_thinking",
+              actor_type: "agent",
+              actor_id: agentId,
+              detail: { brief, message_preview: lastContent.slice(0, 100) },
+            } as never);
+          }
+        } catch {
+          // Best-effort - never block reply on thinking.
         }
 
         // 3. Generate the reply. chatReply is non-streaming today (Anthropic

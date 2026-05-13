@@ -40,6 +40,8 @@ type TimelineItem = {
     | "approval_reviewed"
     | "telegram_inbound"
     | "chat_message"
+    | "thinking_emitted"
+    | "monitor_alert"
     | "audit";
   actor: Actor;
   routine: { id: string; title: string | null } | null;
@@ -120,6 +122,8 @@ function classifyAuditKind(kind: string): TimelineItem["kind"] {
   if (kind === "task_created") return "agent_spawned_task";
   if (kind === "task_executed") return "tool_call_executed";
   if (kind === "chat_memory" || kind === "chat_message") return "chat_message";
+  if (kind === "chat_thinking") return "thinking_emitted";
+  if (kind === "monitor_alert") return "monitor_alert";
   return "audit";
 }
 

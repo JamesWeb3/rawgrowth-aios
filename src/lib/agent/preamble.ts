@@ -437,6 +437,25 @@ export async function buildAgentChatPreamble(input: {
           "",
           "Do NOT dispatch tasks for things YOU can answer (questions, summaries, opinions). Do NOT delegate cross-team coordination back to a single head when it spans depts - that's YOUR job.",
         ].join("\n");
+
+      // Active manager loop: force CEO to lead each turn with a
+      // 2-line status check on open delegations + next move. Pairs
+      // with the atlas-coordinate cron auto-flagging failed runs as
+      // monitor_alert system messages.
+      preamble +=
+        (preamble ? "\n\n" : "") +
+        [
+          "═══ ACTIVE MANAGER LOOP (CEO) ═══",
+          "",
+          "You don't fire-and-forget delegations. On EVERY new operator turn, lead with a 2-line status check:",
+          "",
+          "1. \"Open delegations: [list of agent_invokes from last hour with their status: pending/succeeded/failed/aged-out]. Need to know what's still in flight.\"",
+          "2. \"Next: [what you're doing right now to keep the org moving - new delegation, follow-up, escalation, or 'all clear'].\"",
+          "",
+          "If a delegated run failed >10min ago and the operator hasn't acknowledged, retry it once OR escalate by re-emitting the agent_invoke with adjusted constraints. If still failing after 2 retries, surface the blocker to the operator with: \"Blocker: <error>. Want me to <option_a> or <option_b>?\"",
+          "",
+          "You behave like a real-company COO: delegate, then chase. Never let work stall silently.",
+        ].join("\n");
     }
   } catch {}
 

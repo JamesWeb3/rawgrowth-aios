@@ -416,6 +416,22 @@ export default function AgentChatTab({
             });
           } else if (event.type === "error") {
             setError(event.message || "Stream error");
+          } else if (event.type === "thinking" && typeof event.brief === "string") {
+            const brief = event.brief;
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              const note: ChatMessage = {
+                role: "system",
+                content: `Thinking: ${brief}`,
+              };
+              if (last && last.role === "assistant" && firstDelta) {
+                copy.splice(copy.length - 1, 0, note);
+              } else {
+                copy.push(note);
+              }
+              return copy;
+            });
           } else if (event.type === "secret_redacted" && Array.isArray(event.hits)) {
             const hits = (event.hits as unknown[]).filter(
               (h): h is string => typeof h === "string",
@@ -866,15 +882,24 @@ function Bubble({
 
   if (message.role === "system") {
     const isSecret = message.content.startsWith("⚠ Detected ");
+    const isThinking = message.content.startsWith("Thinking: ");
     return (
       <div className="flex justify-center" data-role="system">
         <div
-          aria-label={isSecret ? "Secret redacted warning" : undefined}
+          aria-label={
+            isSecret
+              ? "Secret redacted warning"
+              : isThinking
+                ? "Agent thinking brief"
+                : undefined
+          }
           className={
             "rounded-full border px-3 py-1 text-[11px] " +
             (isSecret
               ? "border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-300"
-              : "border-[var(--line)] bg-[var(--brand-surface)]/60 text-[var(--text-muted)]")
+              : isThinking
+                ? "border-t border-[var(--line)] bg-transparent italic text-[10px] text-[var(--text-muted)]/80"
+                : "border-[var(--line)] bg-[var(--brand-surface)]/60 text-[var(--text-muted)]")
           }
         >
           {message.content}
