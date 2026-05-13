@@ -16,7 +16,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -45,8 +44,7 @@ import { useAgents } from "@/lib/agents/use-agents";
 import type { Agent, AgentCreateInput } from "@/lib/agents/dto";
 import { DEPARTMENTS } from "@/lib/agents/dto";
 import { metaFor as deptMeta } from "@/components/departments/departments-view";
-import { ToolsPicker, type WritePolicy } from "@/components/agents/tools-picker";
-import { ConnectorsPicker } from "@/components/agents/connectors-picker";
+import { type WritePolicy } from "@/components/agents/tools-picker";
 import { AgentTelegramBotPanel } from "@/components/agents/agent-telegram-bot-panel";
 import { useConfig } from "@/lib/use-config";
 import {
@@ -194,6 +192,9 @@ export function AgentSheet(props: Props) {
   // budget / tools / reports-to.
   const [quickRole, setQuickRole] = useState("");
   const [quickDept, setQuickDept] = useState<string>(NONE);
+  // Chris's bug 11 (2026-05-12): "Department head?" toggle now lives on
+  // the main quick-hire screen instead of being buried in Advanced.
+  const [quickIsHead, setQuickIsHead] = useState<boolean>(false);
   const [quickSubmitting, setQuickSubmitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -282,8 +283,15 @@ export function AgentSheet(props: Props) {
     const roleForApi = (canonicalLabel ?? roleText.toLowerCase()) as AgentRole;
     const roleEnum = inferRoleEnum(canonicalLabel ?? roleText);
 
-    const name = `${titleText} ${shortSuffix()}`;
-    const reportsTo = dept ? findDeptHeadId(dept) : null;
+    // Use the operator's free-text input directly as the agent name.
+    // Old behaviour appended `${shortSuffix()}` (e.g. "Copywriter cqnqw")
+    // which Chris specifically asked us to drop in bug 11. If the input
+    // matches a role-template label we still use that as a typo-safe
+    // canonical name (e.g. "copywriter" → "Copywriter").
+    const name = canonicalLabel ?? titleText;
+    // Department-head agents don't report to anyone in the dept (they
+    // ARE the head); sub-agents report to the dept head.
+    const reportsTo = !quickIsHead && dept ? findDeptHeadId(dept) : null;
 
     const payload: AgentCreateInput = {
       name,
@@ -295,7 +303,7 @@ export function AgentSheet(props: Props) {
       budgetMonthlyUsd: QUICK_HIRE_BUDGET,
       writePolicy: {},
       department: dept,
-      isDepartmentHead: false,
+      isDepartmentHead: quickIsHead,
     };
 
     setQuickSubmitting(true);
@@ -428,6 +436,28 @@ export function AgentSheet(props: Props) {
                 </Select>
               </Field>
 
+              <Field
+                label="Department head?"
+                hint="Heads coordinate everyone under them and can wire a Telegram bot. Sub-agents report to the head."
+              >
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-md border border-border bg-input/40 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={quickIsHead}
+                    onChange={(e) => setQuickIsHead(e.target.checked)}
+                    disabled={quickDept === NONE}
+                    className="size-4"
+                  />
+                  <span className="text-[12.5px] text-foreground">
+                    {quickDept === NONE
+                      ? "Pick a department first"
+                      : quickIsHead
+                        ? `Yes - head of ${deptMeta(quickDept).label}`
+                        : "No - sub-agent under the dept head"}
+                  </span>
+                </label>
+              </Field>
+
               <Button
                 onClick={() => void handleQuickSubmit()}
                 disabled={quickSubmitting || !quickRole.trim()}
@@ -552,51 +582,24 @@ export function AgentSheet(props: Props) {
               </Field>
             </div>
 
-            <Field
-              label="Department"
-              hint="Groups this agent under that pillar on the Departments page."
-            >
-              <Select
-                value={form.department === NONE ? undefined : form.department}
-                onValueChange={(v) =>
-                  setForm({ ...form, department: v ?? NONE })
-                }
-              >
-                <SelectTrigger className="w-full bg-input/40">
-                  <SelectValue placeholder="No department" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Unassigned</SelectItem>
-                  {deptOptions.map((d) => (
-                    <SelectItem key={d} value={d}>
-                      {deptMeta(d).label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+            {/*
+              Per Chris's 2026-05-12 bug 11:
+                - bottom "Department" Field is removed; the quick form
+                  above already collects it
+                - "Department head" Field is removed from Advanced; the
+                  quick form's "Department head?" toggle is the only
+                  surface now
+                - "Job description" Textarea is removed entirely; the
+                  description column stays on rgaios_agents for legacy
+                  reads but operators stop hand-writing it
+                - "Tools & integrations" / "Connectors" pickers are
+                  removed; the agent picks up tools from its
+                  department + role-template auto-train
 
-            <Field
-              label="Department head"
-              hint="Department heads (CMO, CTO, COO, CEO) can be assigned a Telegram bot. Sub-agents cannot."
-            >
-              <label className="flex cursor-pointer items-center gap-2.5 rounded-md border border-border bg-input/40 px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  checked={form.isDepartmentHead}
-                  onChange={(e) =>
-                    setForm({ ...form, isDepartmentHead: e.target.checked })
-                  }
-                  disabled={form.department === NONE}
-                  className="size-4"
-                />
-                <span className="text-[12.5px] text-foreground">
-                  This agent is the head of {form.department === NONE
-                    ? "(pick a department first)"
-                    : form.department}
-                </span>
-              </label>
-            </Field>
+              On edit-mode for department-head agents, the Telegram bot
+              panel still surfaces here (it's per-head config, not
+              tool config).
+            */}
 
             {isEdit && form.isDepartmentHead && (
               <AgentTelegramBotPanel
@@ -605,23 +608,8 @@ export function AgentSheet(props: Props) {
               />
             )}
 
-            <Field
-              label="Job description"
-              hint="What is this agent responsible for? The clearer, the better."
-            >
-              <Textarea
-                value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
-                placeholder="Writes LinkedIn posts daily in the founder's voice..."
-                rows={5}
-                className="bg-input/40"
-              />
-            </Field>
-
             {!isSelfHosted && (
-              <Field label="Runtime" hint="Which model powers this agent.">
+              <Field label="Model" hint="Which Claude model powers this agent.">
                 <Select
                   value={form.runtime}
                   onValueChange={(v) =>
@@ -645,25 +633,6 @@ export function AgentSheet(props: Props) {
                     ))}
                   </SelectContent>
                 </Select>
-              </Field>
-            )}
-
-            {isSelfHosted ? (
-              <Field label="Connectors">
-                <ConnectorsPicker
-                  value={form.writePolicy}
-                  onChange={(writePolicy) => setForm({ ...form, writePolicy })}
-                />
-              </Field>
-            ) : (
-              <Field
-                label="Tools & integrations"
-                hint="Pick which tools this agent can call. For write actions, choose how much oversight you want."
-              >
-                <ToolsPicker
-                  value={form.writePolicy}
-                  onChange={(writePolicy) => setForm({ ...form, writePolicy })}
-                />
               </Field>
             )}
 
