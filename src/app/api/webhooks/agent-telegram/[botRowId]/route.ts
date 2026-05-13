@@ -205,6 +205,18 @@ export async function POST(
   after(async () => {
     sendChatAction(token, msg.chat.id, "typing").catch(() => {});
 
+    // Chris's bug 10 (2026-05-12): the Telegram typing indicator expires
+    // after ~5s but chatReply takes 10-60s for tool-using agents, so
+    // the bot looked dead after the first "thinking" pulse. Refresh the
+    // typing indicator every 4s for the duration of the reply path.
+    // Cleared in every return / error branch below via `clearTyping()`.
+    const typingTimer = setInterval(() => {
+      sendChatAction(token, msg.chat.id, "typing").catch(() => {});
+    }, 4_000);
+    const clearTyping = () => {
+      clearInterval(typingTimer);
+    };
+
     let placeholderId: number | null = null;
     try {
       const sent = await sendMessage(token, msg.chat.id, "💭 Thinking…");
@@ -270,6 +282,10 @@ export async function POST(
           method: "POST",
           signal: AbortSignal.timeout(500),
         }).catch(() => {});
+        // Drain takes over the message lifecycle; let it manage typing
+        // from here. Clear our refresher so we don't double-fire while
+        // drain spawns claude CLI.
+        clearTyping();
         return;
       }
       if (placeholderId !== null) {
@@ -284,6 +300,7 @@ export async function POST(
           () => {},
         );
       }
+      clearTyping();
       return;
     }
 
@@ -321,6 +338,9 @@ export async function POST(
           });
         }
       }
+      // Drain owns progress + final reply from here; stop refreshing
+      // typing from this handler.
+      clearTyping();
       return;
     }
 
@@ -347,6 +367,8 @@ export async function POST(
     } catch {
       /* delivery failure logged elsewhere */
     }
+
+    clearTyping();
 
     await supabaseAdmin()
       .from("rgaios_telegram_messages")
