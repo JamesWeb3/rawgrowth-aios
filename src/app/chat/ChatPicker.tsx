@@ -75,9 +75,16 @@ export function ChatPicker({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+    // Fixed-viewport layout so the chat surface gets a bounded height
+    // and AgentChatTab's inner `flex-1 overflow-y-auto` resolves
+    // correctly. Without an explicit height the chat content stretches
+    // to fit the messages (no scroll container) and the input box ends
+    // up scrolled below the fold - Chris's 2026-05-12 bug 3.
+    // `100svh - 160px` reserves room for the PageShell header + sidebar
+    // chrome; tweak the offset if the shell padding changes.
+    <div className="grid h-[calc(100svh-160px)] grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
       {/* Picker rail */}
-      <aside className="space-y-4 rounded-md border border-border bg-card/40 p-3">
+      <aside className="space-y-4 overflow-y-auto rounded-md border border-border bg-card/40 p-3">
         {ceo && (
           <div>
             <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
@@ -87,26 +94,18 @@ export function ChatPicker({
           </div>
         )}
         {sortedDepts.map(([dept, list]) => (
-          <div key={dept}>
-            <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
-              {DEPT_LABEL[dept] ?? dept}
-            </div>
-            <div className="space-y-0.5">
-              {list.map((a) => (
-                <AgentRow
-                  key={a.id}
-                  agent={a}
-                  active={activeId === a.id}
-                  onPick={pick}
-                />
-              ))}
-            </div>
-          </div>
+          <DeptGroup
+            key={dept}
+            label={DEPT_LABEL[dept] ?? dept}
+            agents={list}
+            activeId={activeId}
+            onPick={pick}
+          />
         ))}
       </aside>
 
-      {/* Chat surface */}
-      <div className="overflow-hidden rounded-md border border-border bg-card/40">
+      {/* Chat surface: flex column so the chat tab can flex-1 inside it. */}
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card/40">
         {active ? (
           <AgentChatTab
             key={active.id}
@@ -116,11 +115,53 @@ export function ChatPicker({
             agentTitle={active.title ?? undefined}
           />
         ) : (
-          <div className="flex h-[640px] items-center justify-center text-[13px] text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">
             Pick an agent on the left to start.
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Collapsible department group. Per Chris's bug 3: the picker rail
+// fills up fast on orgs with 6+ agents, so each department collapses
+// to a header row that the operator clicks to expand.
+function DeptGroup({
+  label,
+  agents,
+  activeId,
+  onPick,
+}: {
+  label: string;
+  agents: Agent[];
+  activeId: string | null;
+  onPick: (id: string) => void;
+}) {
+  const containsActive = agents.some((a) => a.id === activeId);
+  const [open, setOpen] = useState<boolean>(containsActive);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="mb-1 flex w-full items-center justify-between px-2 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground hover:text-foreground"
+      >
+        <span>{label}</span>
+        <span aria-hidden>{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="space-y-0.5">
+          {agents.map((a) => (
+            <AgentRow
+              key={a.id}
+              agent={a}
+              active={activeId === a.id}
+              onPick={onPick}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
