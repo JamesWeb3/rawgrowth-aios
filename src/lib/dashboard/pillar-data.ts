@@ -73,6 +73,51 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
   const since7d = new Date(now - 7 * day).toISOString();
   const since12mo = new Date(now - 365 * day).toISOString();
 
+  // Honesty gate (Chris bug 7 follow-up, 2026-05-13): the per-pillar
+  // aggregations below derive their hero charts from agent chat /
+  // task / routine activity, NOT from real CRM / marketing / fulfilment
+  // / revenue data. That made "2 leads, last 12 wks" appear on a
+  // dashboard for a client that had ZERO leads in the actual sense.
+  // Misleading. New rule: each pillar only emits data when at least
+  // one real upstream connection exists for that domain. Otherwise
+  // returns null, and the page falls back to the empty-state baseline
+  // (agents + connections + last activity) added in commit a9d09b8.
+  const connectedProviders = await (async () => {
+    const { data } = await db
+      .from("rgaios_connections")
+      .select("provider_config_key, metadata")
+      .eq("organization_id", orgId)
+      .eq("status", "connected");
+    const set = new Set<string>();
+    for (const r of (data ?? []) as Array<{
+      provider_config_key: string;
+      metadata: { composio_app?: string } | null;
+    }>) {
+      // Catalog uses bare key (hubspot) for native and composio:<key>
+      // (composio:hubspot) for Composio-bridged. metadata.composio_app
+      // also carries the slug for back-compat. Walk all three so the
+      // gate matches across the v1 -> v3 migration window.
+      set.add(r.provider_config_key);
+      set.add(r.provider_config_key.replace(/^composio:/, ""));
+      const app = r.metadata?.composio_app;
+      if (app) set.add(app);
+    }
+    return set;
+  })();
+  const hasAny = (...keys: string[]) => keys.some((k) => connectedProviders.has(k));
+  const marketingHasReal = hasAny(
+    "hubspot", "mailchimp", "klaviyo", "activecampaign", "linkedin",
+    "meta-ads", "tiktok-ads", "twitter", "google-analytics",
+  );
+  const salesHasReal = hasAny(
+    "hubspot", "pipedrive", "attio", "close", "salesforce", "zoho-crm",
+  );
+  const fulfilmentHasReal = hasAny(
+    "notion", "linear", "asana", "monday", "trello", "clickup",
+    "airtable", "github",
+  );
+  const financeHasReal = hasAny("stripe", "shopify");
+
   const [
     chatActivity,
     salesAgents,
@@ -173,7 +218,7 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
 
   const totalAct = weekly.reduce((s, v) => s + v, 0);
   const marketing: MarketingData | null =
-    totalAct > 0 || reach > 0
+    marketingHasReal && (totalAct > 0 || reach > 0)
       ? {
           weekly,
           totalThisWeek: weekly[11],
@@ -200,7 +245,7 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
     (a) => a.id,
   );
   let sales: SalesData | null = null;
-  if (salesAgentIds.length > 0) {
+  if (salesHasReal && salesAgentIds.length > 0) {
     const { data: salesRoutines } = await db
       .from("rgaios_routines")
       .select("id")
@@ -263,7 +308,7 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
     role: string;
   }>;
   let fulfilment: FulfilmentData | null = null;
-  if (fulAgents.length > 0) {
+  if (fulfilmentHasReal && fulAgents.length > 0) {
     const { data: fulRuns } = await db
       .from("rgaios_routine_runs")
       .select("routine_id, status")
@@ -342,7 +387,7 @@ export async function getPillarData(orgId: string): Promise<PillarData> {
   }
   const totalRevenue = monthly.reduce((s, m) => s + m.revenue, 0);
   const finance: FinanceData | null =
-    totalRevenue > 0
+    financeHasReal && totalRevenue > 0
       ? {
           monthly,
           netThisMonth: monthly[11].revenue - monthly[11].expenses,
