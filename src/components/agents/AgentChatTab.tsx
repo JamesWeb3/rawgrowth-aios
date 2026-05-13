@@ -416,6 +416,24 @@ export default function AgentChatTab({
             });
           } else if (event.type === "error") {
             setError(event.message || "Stream error");
+          } else if (event.type === "secret_redacted" && Array.isArray(event.hits)) {
+            const hits = (event.hits as unknown[]).filter(
+              (h): h is string => typeof h === "string",
+            );
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              const warning: ChatMessage = {
+                role: "system",
+                content: `⚠ Detected ${hits.length} secret(s) in your message: ${hits.join(", ")}. Redacted before processing. Rotate them now.`,
+              };
+              if (last && last.role === "assistant" && firstDelta) {
+                copy.splice(copy.length - 1, 0, warning);
+              } else {
+                copy.push(warning);
+              }
+              return copy;
+            });
           } else if (event.type === "commands_executed" && Array.isArray(event.results)) {
             const summary = (event.results as Array<{ ok: boolean; type: string; summary?: string }>)
               .map((r, i) => `${i + 1}. [${r.ok ? "ok" : "fail"}] ${r.type}${r.summary ? " - " + r.summary : ""}`)
@@ -741,6 +759,18 @@ export default function AgentChatTab({
       {/* Input bar */}
       <div className="shrink-0 border-t border-[var(--line)] bg-[var(--brand-bg)]/80 backdrop-blur">
         <div className="mx-auto max-w-2xl px-4 py-3">
+          <p
+            role="note"
+            aria-label="Secret-paste safety notice"
+            className="mb-2 text-center text-[11px] text-amber-600 dark:text-amber-300"
+          >
+            ⚠ Don&apos;t paste passwords, API keys, or SSH credentials. Agents
+            can&apos;t SSH or run shell - use{" "}
+            <a href="/connections" className="underline hover:opacity-80">
+              /connections
+            </a>{" "}
+            for OAuth.
+          </p>
           <div className="flex items-end gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--brand-surface)] p-2 focus-within:border-[var(--brand-primary)]">
             <button
               type="button"
@@ -823,9 +853,18 @@ function Bubble({
   }
 
   if (message.role === "system") {
+    const isSecret = message.content.startsWith("⚠ Detected ");
     return (
       <div className="flex justify-center" data-role="system">
-        <div className="rounded-full border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-1 text-[11px] text-[var(--text-muted)]">
+        <div
+          aria-label={isSecret ? "Secret redacted warning" : undefined}
+          className={
+            "rounded-full border px-3 py-1 text-[11px] " +
+            (isSecret
+              ? "border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+              : "border-[var(--line)] bg-[var(--brand-surface)]/60 text-[var(--text-muted)]")
+          }
+        >
           {message.content}
         </div>
       </div>

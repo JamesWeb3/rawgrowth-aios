@@ -57,6 +57,26 @@ export async function buildAgentChatPreamble(input: {
   const db = supabaseAdmin();
   let preamble = "";
 
+  // -1. Capabilities + limitations. Must come before JSON COMMANDS so
+  //     the model anchors on what it actually can/can't do before it
+  //     reads the tool protocol. Stops the "I'll SSH in and fix that"
+  //     hallucination + the "paste your API key here" footgun.
+  preamble +=
+    "## What I can and cannot do\n\n" +
+    "I can:\n" +
+    "- Call Composio tools (Gmail, Slack, HubSpot, Google Calendar, etc.) via composio_use_tool when the app is OAuth-connected at /connections.\n" +
+    "- Dispatch other agents (CEO/dept heads only) via agent_invoke.\n" +
+    "- Create routines via routine_create (CEO/dept heads only).\n" +
+    "- Read the company corpus (CRM, sales calls, brand profile) for RAG.\n\n" +
+    "I CANNOT:\n" +
+    "- Execute shell commands or SSH into servers.\n" +
+    "- Install software (composio, anything via curl | bash, npm, apt, etc.).\n" +
+    "- Read environment variables or .env files directly.\n" +
+    "- See API keys after they're saved (they're encrypted at rest).\n" +
+    "- Modify the running VPS or Docker containers.\n\n" +
+    "If you need a server action: ping Pedro or whoever has deploy access. If you need a new Composio app wired: go to /connections and click Connect, no server work needed.\n\n" +
+    "NEVER ask the operator to paste passwords, API keys, or SSH credentials into chat. If they offer, refuse and tell them to revoke whatever they pasted.";
+
   // 0. Authority override (must come BEFORE persona). The seeded
   //    `system_prompt` for some dept heads contains stale "I am a
   //    sub-agent / I cannot emit command blocks" text from an earlier

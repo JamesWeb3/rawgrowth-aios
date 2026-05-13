@@ -20,6 +20,76 @@ const HARD_FAIL_MESSAGE =
 
 type IncomingMessage = { role: string; content: string };
 
+type SecretHit = { kind: string; fragment: string };
+
+/**
+ * Scrub secrets pasted into chat (API keys, bearer tokens, SSH
+ * creds, PEM blocks, AWS keys). Applied to BOTH inbound user text
+ * and outbound agent reply so secrets never persist to
+ * rgaios_agent_chat_messages or get embedded into
+ * rgaios_company_chunks. Caller logs hit kinds (not fragments) and
+ * surfaces an SSE warning to the operator.
+ */
+function redactSecrets(text: string): {
+  redacted: string;
+  hits: SecretHit[];
+} {
+  const hits: SecretHit[] = [];
+  const patterns: Array<{
+    kind: string;
+    re: RegExp;
+    replacement: string;
+  }> = [
+    {
+      kind: "pem_private_key",
+      re: /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+PRIVATE KEY-----/g,
+      replacement: "[REDACTED PRIVATE KEY]",
+    },
+    {
+      kind: "anthropic_api_key",
+      re: /sk-ant-[A-Za-z0-9_-]{20,}/g,
+      replacement: "[REDACTED]",
+    },
+    {
+      kind: "aws_access_key",
+      re: /AKIA[0-9A-Z]{16}/g,
+      replacement: "[REDACTED AWS KEY]",
+    },
+    {
+      kind: "root_at_ip_password",
+      re: /root@\d{1,3}(?:\.\d{1,3}){3}.{0,40}password\s*[:=]\s*\S+/gi,
+      replacement: "root@x.x.x.x password: [REDACTED]",
+    },
+    {
+      kind: "bearer_token",
+      re: /[Bb]earer\s+[A-Za-z0-9_.\-]{20,}/g,
+      replacement: "Bearer [REDACTED]",
+    },
+    {
+      kind: "api_key_prefix",
+      re: /(sk|ak|pk|ck|sk_live|pk_live|sk_test|sk-proj|ghp|gho|gha|glpat|xoxb|xoxp|xoxa)[-_][A-Za-z0-9_-]{16,}/g,
+      replacement: "[REDACTED API KEY]",
+    },
+    {
+      kind: "password_phrase",
+      re: /(?:password|passwd|pwd)\s*[:=]\s*\S+/gi,
+      replacement: "password: [REDACTED]",
+    },
+  ];
+  let redacted = text;
+  for (const p of patterns) {
+    redacted = redacted.replace(p.re, (match) => {
+      const frag =
+        match.length > 12
+          ? `${match.slice(0, 4)}...${match.slice(-4)}`
+          : "***";
+      hits.push({ kind: p.kind, fragment: frag });
+      return p.replacement;
+    });
+  }
+  return { redacted, hits };
+}
+
 /**
  * Insight chat queue (paired with /api/insights/[id]/open-chat).
  *
@@ -340,7 +410,26 @@ export async function POST(
   // Cap the user turn at 20kb (matches the mini-saas / invites caps).
   // A multi-megabyte body would balloon the supabase row, the LLM
   // preamble, and the brand-filter regex pass.
-  const lastContent = last.content.slice(0, 20_000);
+  const rawLastContent = last.content.slice(0, 20_000);
+
+  // Inbound secret scrub. Operators have pasted live Composio /
+  // Anthropic / VPS-root creds into agent chat. Redact before
+  // persistence + LLM forward so secrets never land in
+  // rgaios_agent_chat_messages, never get embedded into
+  // rgaios_company_chunks, and never echo back across agent memory.
+  const inboundScrub = redactSecrets(rawLastContent);
+  const lastContent = inboundScrub.redacted;
+  const inboundHits = inboundScrub.hits;
+  if (inboundHits.length > 0) {
+    console.warn(
+      "[chat] inbound secret_redacted:",
+      JSON.stringify({
+        org_id: orgId,
+        agent_id: agentId,
+        kinds: inboundHits.map((h) => h.kind),
+      }),
+    );
+  }
 
   // 1. Persist. supabase returns errors as values - without the check
   // the user message silently drops, chatReply still burns an LLM call,
@@ -402,6 +491,15 @@ export async function POST(
       };
 
       try {
+        // Surface inbound redactions to the operator BEFORE the reply
+        // streams. Kinds only - fragments stay server-side.
+        if (inboundHits.length > 0) {
+          emit({
+            type: "secret_redacted",
+            hits: inboundHits.map((h) => h.kind),
+          });
+        }
+
         // 3. Generate the reply. chatReply is non-streaming today (Anthropic
         // OAuth + the Claude Code beta gate don't expose SSE alongside the
         // current beta header), so we emit the brand-filtered text as a
@@ -557,7 +655,29 @@ export async function POST(
           surface: SURFACE,
         });
 
-        const visibleText = filtered.ok ? filtered.text : HARD_FAIL_MESSAGE;
+        const preRedactVisible = filtered.ok ? filtered.text : HARD_FAIL_MESSAGE;
+
+        // Outbound secret scrub. Models echo back pasted creds in
+        // their own "rotate that key" warnings (Scan repeated
+        // ak_gHrg9Sor... verbatim). Redact-on-finalize is the
+        // security gate - intermediate buffer in client is
+        // best-effort only.
+        const outboundScrub = redactSecrets(preRedactVisible);
+        const visibleText = outboundScrub.redacted;
+        if (outboundScrub.hits.length > 0) {
+          console.warn(
+            "[chat] outbound secret_redacted:",
+            JSON.stringify({
+              org_id: orgId,
+              agent_id: agentId,
+              kinds: outboundScrub.hits.map((h) => h.kind),
+            }),
+          );
+          emit({
+            type: "secret_redacted",
+            hits: outboundScrub.hits.map((h) => h.kind),
+          });
+        }
 
         const persistMetadata = filtered.ok
           ? {
