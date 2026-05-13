@@ -35,26 +35,37 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
   // but this helper is internal-callable, so add the explicit filter
   // here too. Cheap and avoids an orphaned insight promotion if the
   // call site ever drifts.
-  const { data: agent } = await db
+  const { data: agent, error: agentErr } = await db
     .from("rgaios_agents")
     .select("role")
     .eq("id", agentId)
     .eq("organization_id", orgId)
     .maybeSingle();
+  if (agentErr) {
+    console.error("[chat] insight-queue agent lookup failed:", agentErr.message);
+    throw new Error(agentErr.message);
+  }
   if ((agent as unknown as { role?: string } | null)?.role !== "ceo") return;
 
   const now = new Date().toISOString();
 
   // Mark all currently-sent insights as answered. There should only be
   // one but be tolerant of pre-existing dupes.
-  await db
+  const sentUpdate = await db
     .from("rgaios_insights")
     .update({ chat_state: "answered", chat_state_updated_at: now } as never)
     .eq("organization_id", orgId)
     .eq("chat_state", "sent");
+  if (sentUpdate.error) {
+    console.error(
+      "[chat] insight-queue answered-update failed:",
+      sentUpdate.error.message,
+    );
+    throw new Error(sentUpdate.error.message);
+  }
 
   // Pick the oldest queued insight to promote.
-  const { data: nextRow } = await db
+  const { data: nextRow, error: nextErr } = await db
     .from("rgaios_insights")
     .select("id, title, suggested_action, reason")
     .eq("organization_id", orgId)
@@ -62,6 +73,13 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
+  if (nextErr) {
+    console.error(
+      "[chat] insight-queue next-row select failed:",
+      nextErr.message,
+    );
+    throw new Error(nextErr.message);
+  }
 
   if (!nextRow) return;
   type Row = {
@@ -77,7 +95,7 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
   if (next.suggested_action) parts.push(next.suggested_action);
   const content = parts.join("\n\n");
 
-  await db.from("rgaios_agent_chat_messages").insert({
+  const seedInsert = await db.from("rgaios_agent_chat_messages").insert({
     organization_id: orgId,
     agent_id: agentId,
     user_id: null,
@@ -85,11 +103,25 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
     content,
     metadata: { source: "insight", insight_id: next.id, promoted: true },
   } as never);
+  if (seedInsert.error) {
+    console.error(
+      "[chat] insight-queue seed-insert failed:",
+      seedInsert.error.message,
+    );
+    throw new Error(seedInsert.error.message);
+  }
 
-  await db
+  const promoteUpdate = await db
     .from("rgaios_insights")
     .update({ chat_state: "sent", chat_state_updated_at: now } as never)
     .eq("id", next.id);
+  if (promoteUpdate.error) {
+    console.error(
+      "[chat] insight-queue promote-update failed:",
+      promoteUpdate.error.message,
+    );
+    throw new Error(promoteUpdate.error.message);
+  }
 }
 
 /**
@@ -192,15 +224,36 @@ export async function DELETE(
     .or("metadata->>archived.is.null,metadata->>archived.eq.false");
   const stamp = new Date().toISOString();
   const typedRows = (rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>;
-  await Promise.all(
-    typedRows.map((r) => {
+  const settled = await Promise.all(
+    typedRows.map(async (r): Promise<{ id: string; ok: boolean; error?: string }> => {
       const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
-      return db
+      const res = await db
         .from("rgaios_agent_chat_messages")
         .update({ metadata: next as never })
         .eq("id", r.id);
+      if (res.error) {
+        return { id: r.id, ok: false, error: res.error.message };
+      }
+      return { id: r.id, ok: true };
     }),
   );
+  const failed = settled.filter((s) => !s.ok);
+  if (failed.length > 0) {
+    console.error(
+      "[chat] DELETE archive partial failure:",
+      failed.map((f) => `${f.id}:${f.error}`).join(", "),
+    );
+    const archived = settled.length - failed.length;
+    const status = archived > 0 ? 207 : 500;
+    return NextResponse.json(
+      {
+        ok: false,
+        archived,
+        failed: failed.map((f) => ({ id: f.id, error: f.error })),
+      },
+      { status },
+    );
+  }
   return NextResponse.json({ ok: true, archived: typedRows.length });
 }
 
@@ -314,7 +367,14 @@ export async function POST(
   // answered, then promote the next queued insight (if any) to "sent"
   // and seed its question as the assistant's next turn. Keeps
   // insight-driven questions sequenced one-at-a-time per Pedro's rule.
-  await maybePromoteInsightQueue(orgId, agentId);
+  try {
+    await maybePromoteInsightQueue(orgId, agentId);
+  } catch (err) {
+    console.warn(
+      "[chat] insight-queue promotion failed:",
+      (err as Error).message,
+    );
+  }
 
   // History for chatReply = everything BEFORE the latest user turn.
   // chatReply re-appends the latest user turn itself wrapped with the

@@ -270,12 +270,25 @@ export async function bookingsForDay(
   return count ?? 0;
 }
 
-export async function getBookingByToken(token: string): Promise<BookingRow | null> {
-  const { data, error } = await supabaseAdmin()
+export async function getBookingByToken(
+  token: string,
+  expectedOrgId?: string,
+): Promise<BookingRow | null> {
+  if (!expectedOrgId) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "booking.getBookingByToken.no_expected_org",
+        msg: "getBookingByToken called without expectedOrgId; cross-org defensive check skipped",
+      }),
+    );
+  }
+  let q = supabaseAdmin()
     .from("rgaios_kalendly_bookings")
     .select("*")
-    .eq("manage_token", token)
-    .maybeSingle();
+    .eq("manage_token", token);
+  if (expectedOrgId) q = q.eq("organization_id", expectedOrgId);
+  const { data, error } = await q.maybeSingle();
   if (error) throw error;
   return data ? dbToBooking(data) : null;
 }
@@ -311,7 +324,38 @@ export async function insertBooking(
 export async function updateBookingStatus(
   bookingId: string,
   patch: Partial<Pick<BookingRow, "status" | "cancelledAt" | "rescheduledToBookingId">>,
+  expectedOrgId?: string,
 ): Promise<void> {
+  if (!expectedOrgId) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "booking.updateBookingStatus.no_expected_org",
+        bookingId,
+        msg: "updateBookingStatus called without expectedOrgId; cross-org defensive check skipped",
+      }),
+    );
+  }
+  // TODO: hard org check - resolve caller session here and verify access
+  // to existing.organization_id before UPDATE. For now we token-blind by
+  // SELECTing the row first and requiring expectedOrgId to match when
+  // provided, so a stray bookingId from one org cannot mutate another.
+  const { data: existing, error: selectError } = await supabaseAdmin()
+    .from("rgaios_kalendly_bookings")
+    .select("id, organization_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (selectError) throw selectError;
+  if (!existing) {
+    throw new Error(`Booking ${bookingId} not found`);
+  }
+  if (expectedOrgId && (existing.organization_id as string) !== expectedOrgId) {
+    const err = new Error("Forbidden: booking organization mismatch") as Error & {
+      status?: number;
+    };
+    err.status = 403;
+    throw err;
+  }
   const update: Record<string, unknown> = {};
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.cancelledAt !== undefined) {
@@ -320,10 +364,12 @@ export async function updateBookingStatus(
   if (patch.rescheduledToBookingId !== undefined) {
     update.rescheduled_to_booking_id = patch.rescheduledToBookingId;
   }
-  const { error } = await supabaseAdmin()
+  let q = supabaseAdmin()
     .from("rgaios_kalendly_bookings")
     .update(update as never)
     .eq("id", bookingId);
+  if (expectedOrgId) q = q.eq("organization_id", expectedOrgId);
+  const { error } = await q;
   if (error) throw error;
 }
 

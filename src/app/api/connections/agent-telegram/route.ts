@@ -132,7 +132,23 @@ export async function POST(req: NextRequest) {
       new URL(req.url).origin
     ).replace(/\/$/, "");
     const webhookUrl = `${origin}/api/webhooks/agent-telegram/${row.id}`;
-    await setWebhook(token, webhookUrl, webhookSecret);
+    try {
+      await setWebhook(token, webhookUrl, webhookSecret);
+    } catch (whErr) {
+      const message = (whErr as Error).message;
+      await db
+        .from("rgaios_agent_telegram_bots")
+        .update({
+          status: "error",
+          metadata: { last_error: message },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+      return NextResponse.json(
+        { error: "Webhook registration failed - operator needs to retry" },
+        { status: 502 },
+      );
+    }
 
     await db.from("rgaios_audit_log").insert({
       organization_id: organizationId,

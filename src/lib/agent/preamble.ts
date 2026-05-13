@@ -217,6 +217,20 @@ export async function buildAgentChatPreamble(input: {
   // inside try {} was out of scope at the read site (Chris bug 4,
   // 2026-05-12).
   let canCommand = false;
+  // hasComposio is hoisted alongside canCommand for the same reason: the
+  // JSON COMMANDS section at line ~370 reads it. Any agent (sub-agents
+  // included) whose org has at least one connected Composio connection
+  // gets the composio_use_tool half of the protocol; agent_invoke /
+  // routine_create stay gated on canCommand (CEO + dept heads).
+  let hasComposio = false;
+  try {
+    const { count: connCount } = await db
+      .from("rgaios_connections")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .eq("status", "connected");
+    hasComposio = (connCount ?? 0) > 0;
+  } catch {}
   try {
     // Defense-in-depth: helper is called from chat route, telegram
     // webhook, executeChatTask. Each caller should pre-validate the
@@ -371,7 +385,7 @@ export async function buildAgentChatPreamble(input: {
     preamble +=
       (preamble ? "\n\n" : "") +
       [
-        "═══ JSON COMMANDS (Atlas + dept heads only) ═══",
+        "═══ JSON COMMANDS (Atlas + dept heads) ═══",
         "",
         "You ARE authorised to emit <command> blocks. When the operator asks you to TAKE AN ACTION (run a Composio tool, dispatch a head, create a scheduled routine), emit one or more <command> blocks in your reply. The system parses them, runs the action server-side, and posts a system message back into chat with the result. You CAN stack multiple <command> blocks.",
         "",
@@ -428,6 +442,52 @@ export async function buildAgentChatPreamble(input: {
         "<need scope=\"crm|metric|file|other\">EXACT data you need. Be specific - 'last 30 days of FB ads CTR' beats 'recent ad data'.</need>",
         "",
         "The system picks these up + posts a chat message to the operator + creates a Data Entry stub. DO NOT fabricate numbers.",
+      ].join("\n");
+  } else if (hasComposio) {
+    // Sub-agents in orgs with at least one connected Composio app get
+    // the composio_use_tool half of the protocol only. agent_invoke /
+    // routine_create stay gated on CEO + dept heads above.
+    preamble +=
+      (preamble ? "\n\n" : "") +
+      [
+        "═══ JSON COMMANDS (composio_use_tool only) ═══",
+        "",
+        "Your org has at least one connected Composio app. You ARE authorised to emit <command type=\"tool_call\"> blocks that call composio_use_tool. The system parses them, runs the action server-side, and posts a system message back into chat with the result.",
+        "",
+        "Do NOT say 'I can't emit command blocks', 'I have no tools', 'I am a sub-agent so I can't', or 'no MCP'. Those refusals are FALSE here - the Composio bridge is wired.",
+        "",
+        "Format (exact - body must be valid JSON):",
+        "",
+        "  <command type=\"tool_call\">",
+        "  { \"tool\": \"composio_use_tool\",",
+        "    \"args\": { \"app\": \"slack\", \"action\": \"SLACK_SEND_MESSAGE\",",
+        "               \"input\": { \"channel\": \"#general\", \"text\": \"hi team\" } } }",
+        "  </command>",
+        "",
+        "Composio action input shapes (use EXACTLY these field names - Composio uses snake_case top-level fields):",
+        "",
+        "  GOOGLECALENDAR_CREATE_EVENT input:",
+        "    { \"calendar_id\": \"primary\",",
+        "      \"summary\": \"Coffee with Pedro\",",
+        "      \"start_datetime\": \"2026-05-15T10:00:00-03:00\",",
+        "      \"end_datetime\":   \"2026-05-15T10:30:00-03:00\",",
+        "      \"description\": \"15min sync\",",
+        "      \"attendees\": [\"pedro@rawgrowth.ai\"] }",
+        "",
+        "  GMAIL_SEND_EMAIL input:",
+        "    { \"to\": [\"pedro@rawgrowth.ai\"],",
+        "      \"subject\": \"hi\", \"body\": \"plain text body\" }",
+        "",
+        "  SLACK_SEND_MESSAGE input:",
+        "    { \"channel\": \"#general\", \"text\": \"hi team\" }",
+        "",
+        "If you don't know an action's exact input shape, emit composio_list_tools first to discover it - DO NOT guess.",
+        "",
+        "Rules:",
+        "  - tool_call: only `composio_use_tool` is supported. Destructive actions (DELETE/PURGE/WIPE) are refused.",
+        "  - You are NOT authorised to emit agent_invoke or routine_create from this surface - those route through Atlas / a department head.",
+        "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
+        "  - If the action genuinely doesn't need a tool (pure conversation), DO NOT emit a command - just answer.",
       ].join("\n");
   }
 

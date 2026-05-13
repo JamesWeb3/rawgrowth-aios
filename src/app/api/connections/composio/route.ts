@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
-import { getCatalogEntry, composioAppNameFor } from "@/lib/connections/catalog";
+import { CONNECTOR_CATALOG, getCatalogEntry, composioAppNameFor } from "@/lib/connections/catalog";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   resolveComposioApiKey,
@@ -107,6 +107,12 @@ export async function POST(req: Request) {
             // row exists we still overwrite to pending_token; the user
             // explicitly clicked Connect again, treat as reconnect.
             const providerConfigKey = `composio:${entry.key}`;
+            const bareKey = providerConfigKey.startsWith("composio:")
+              ? providerConfigKey.slice("composio:".length)
+              : providerConfigKey;
+            if (!CONNECTOR_CATALOG.some((c) => c.key === bareKey)) {
+              return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
+            }
             const db = supabaseAdmin();
             const existing = userId
               ? await db

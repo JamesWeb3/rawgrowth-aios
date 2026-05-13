@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   Bot,
@@ -24,6 +23,21 @@ type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
 };
+
+// Rotating thinking-frame phrases shown in the pending assistant
+// bubble before the first stream delta arrives. Mirrors the Telegram
+// path (src/app/api/webhooks/telegram/[connectionId]/route.ts) so
+// chat surface and bot surface feel consistent. Emoji stripped for
+// the web bubble since the Bubble component already shows a role
+// icon to the left.
+const THINKING_FRAMES = [
+  "Thinking…",
+  "Pondering…",
+  "Analysing…",
+  "Reasoning…",
+  "Looking into it…",
+  "Composing reply…",
+];
 
 type HistoryRow = {
   id: string;
@@ -206,7 +220,6 @@ export default function AgentChatTab({
   agentTitle,
   initialMessages = [],
 }: AgentChatTabProps) {
-  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     initialMessages
       .filter(
@@ -309,10 +322,31 @@ export default function AgentChatTab({
     const next: ChatMessage[] = [
       ...messages,
       { role: "user", content: text },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: THINKING_FRAMES[0] },
     ];
     setMessages(next);
     setStreaming(true);
+
+    // Rotate the thinking-frame phrase in the trailing assistant
+    // bubble every 2.5s so the chat doesn't feel frozen between POST
+    // and the first stream delta. Cleared the moment the first
+    // { type: "text" } event lands (and again in `finally` as a
+    // safety net for error / abort paths).
+    let firstDelta = true;
+    let frame = 0;
+    const thinkingTimer: ReturnType<typeof setInterval> = setInterval(() => {
+      if (!firstDelta) return;
+      frame = (frame + 1) % THINKING_FRAMES.length;
+      const phrase = THINKING_FRAMES[frame];
+      setMessages((prev) => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last && last.role === "assistant" && firstDelta) {
+          copy[copy.length - 1] = { role: "assistant", content: phrase };
+        }
+        return copy;
+      });
+    }, 2500);
 
     try {
       // Wire shape mirrors onboarding chat: send only user/assistant
@@ -360,13 +394,20 @@ export default function AgentChatTab({
           }
 
           if (event.type === "text" && typeof event.delta === "string") {
+            // First delta replaces the rotating thinking-frame
+            // placeholder; subsequent deltas append as usual.
+            const isFirst = firstDelta;
+            if (firstDelta) {
+              firstDelta = false;
+              clearInterval(thinkingTimer);
+            }
             setMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
               if (last && last.role === "assistant") {
                 copy[copy.length - 1] = {
                   role: "assistant",
-                  content: last.content + event.delta,
+                  content: (isFirst ? "" : last.content) + event.delta,
                 };
               } else {
                 copy.push({ role: "assistant", content: event.delta });
@@ -377,11 +418,11 @@ export default function AgentChatTab({
             setError(event.message || "Stream error");
           } else if (event.type === "tasks_created" && Array.isArray(event.tasks)) {
             // Surface the just-created tasks as inline assistant chips
-            // so the operator sees them land. router.refresh() also
-            // re-runs the server component so the Tasks tab picks up
-            // the new routine + run rows + executed output without a
-            // manual reload. Re-fires on a delay so the inline executor
-            // has a chance to flip status pending → succeeded first.
+            // so the operator sees them land. We deliberately do NOT
+            // call router.refresh() here - that was bumping the
+            // operator out of the chat view mid-stream when the Tasks
+            // sibling tab remounted. The /tasks page has its own SWR
+            // poll and the operator can navigate there manually.
             const lines = (event.tasks as Array<{
               title: string;
               assigneeName: string;
@@ -393,19 +434,21 @@ export default function AgentChatTab({
                 content: `Created ${event.tasks.length} task${event.tasks.length === 1 ? "" : "s"}:\n${lines}`,
               },
             ]);
-            router.refresh();
-            setTimeout(() => router.refresh(), 8000);
           }
           // event.type === "done" is implicit; the reader exits when
           // the server closes the stream.
         }
       }
 
-      // Drop trailing empty placeholder if the server closed without
-      // text (rare; e.g. brand-voice hard fail with no visible reply).
+      // Drop trailing placeholder if the server closed without ever
+      // emitting a text delta (rare; e.g. brand-voice hard fail with
+      // no visible reply). If `firstDelta` is still true the bubble
+      // is showing a rotating thinking-frame and never got real text,
+      // so we drop it. Otherwise also handle the legacy empty-string
+      // case for safety.
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last?.role === "assistant" && !last.content.trim()) {
+        if (last?.role === "assistant" && (firstDelta || !last.content.trim())) {
           return prev.slice(0, -1);
         }
         return prev;
@@ -416,6 +459,7 @@ export default function AgentChatTab({
       setError(message);
       setMessages((prev) => prev.slice(0, -1));
     } finally {
+      clearInterval(thinkingTimer);
       setStreaming(false);
     }
   }

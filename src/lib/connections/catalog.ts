@@ -98,6 +98,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "zoom", name: "Zoom", category: "Communication", brandColor: "#2D8CFF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/zoom" },
   { key: "outlook", name: "Outlook", category: "Communication", brandColor: "#0078D4", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/outlook" },
   { key: "microsoft-teams", name: "Microsoft Teams", category: "Communication", brandColor: "#6264A7", hasNativeIntegration: false, composioAppName: "microsoft_teams", logoUrl: "https://logos.composio.dev/api/microsoft_teams" },
+  { key: "whatsapp-business", name: "WhatsApp Business", category: "Communication", brandColor: "#25D366", hasNativeIntegration: false, composioAppName: "whatsapp_business", logoUrl: "https://logos.composio.dev/api/whatsapp_business" },
 
   // CRM
   { key: "hubspot", name: "HubSpot", category: "CRM", brandColor: "#FF7A59", hasNativeIntegration: true, logoUrl: "https://logos.composio.dev/api/hubspot" },
@@ -115,6 +116,10 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "twitter", name: "Twitter / X", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/twitter" },
   { key: "meta", name: "Meta Ads", category: "Marketing", brandColor: "#0467DF", hasNativeIntegration: true, composioAppName: "facebook", logoUrl: "https://logos.composio.dev/api/metaads" },
   { key: "tiktok", name: "TikTok Ads", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/tiktok" },
+  { key: "tiktok-business", name: "TikTok Business", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, composioAppName: "tiktok_business", logoUrl: "https://logos.composio.dev/api/tiktok_business" },
+  { key: "instagram", name: "Instagram", category: "Marketing", brandColor: "#E4405F", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/instagram" },
+  { key: "youtube", name: "YouTube", category: "Marketing", brandColor: "#FF0000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/youtube" },
+  { key: "facebook-pages", name: "Facebook Pages", category: "Marketing", brandColor: "#1877F2", hasNativeIntegration: false, composioAppName: "facebook", logoUrl: "https://logos.composio.dev/api/facebook" },
 
   // Calendar
   { key: "google-calendar", name: "Google Calendar", category: "Calendar", brandColor: "#4285F4", hasNativeIntegration: true, composioAppName: "googlecalendar", logoUrl: "https://logos.composio.dev/api/googlecalendar" },
@@ -129,6 +134,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "posthog", name: "PostHog", category: "Analytics", brandColor: "#1D4AFF", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/posthog" },
   { key: "stripe", name: "Stripe", category: "Analytics", brandColor: "#635BFF", hasNativeIntegration: true, logoUrl: "https://logos.composio.dev/api/stripe" },
   { key: "shopify", name: "Shopify", category: "Analytics", brandColor: "#95BF47", hasNativeIntegration: true, logoUrl: "https://logos.composio.dev/api/shopify" },
+  { key: "quickbooks", name: "QuickBooks", category: "Analytics", brandColor: "#2CA01C", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/quickbooks" },
+  { key: "xero", name: "Xero", category: "Analytics", brandColor: "#13B5EA", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/xero" },
 
   // Storage
   { key: "google-drive", name: "Google Drive", category: "Storage", brandColor: "#1FA463", hasNativeIntegration: true, composioAppName: "googledrive", logoUrl: "https://logos.composio.dev/api/googledrive" },

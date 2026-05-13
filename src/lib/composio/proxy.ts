@@ -59,6 +59,58 @@ function normalizeComposioAppKey(input: string): string {
 type ConnectionRow =
   Database["public"]["Tables"]["rgaios_connections"]["Row"];
 
+/**
+ * Cap error-body reads at 64 KB. Composio occasionally returns
+ * multi-MB HTML error pages (CDN interstitials, runaway debug
+ * payloads); a naive `await res.text()` would buffer the whole
+ * thing into memory before we slice it. Stream via getReader() and
+ * stop accumulating once we cross the cap.
+ */
+const MAX_ERROR_BYTES = 65536;
+
+async function readCappedErrorBody(res: Response): Promise<string> {
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared && declared <= MAX_ERROR_BYTES) {
+    try {
+      return await res.text();
+    } catch {
+      return "";
+    }
+  }
+  const body = res.body;
+  if (!body) {
+    try {
+      const t = await res.text();
+      return t.length > MAX_ERROR_BYTES ? t.slice(0, MAX_ERROR_BYTES) : t;
+    } catch {
+      return "";
+    }
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let out = "";
+  let bytes = 0;
+  try {
+    while (bytes < MAX_ERROR_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      out += decoder.decode(value, { stream: true });
+      if (bytes >= MAX_ERROR_BYTES) break;
+    }
+    out += decoder.decode();
+  } catch {
+    // Network blip mid-error - return whatever we got.
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Reader may already be closed; ignore.
+    }
+  }
+  return out.length > MAX_ERROR_BYTES ? out.slice(0, MAX_ERROR_BYTES) : out;
+}
+
 type ComposioProxyOpts = {
   /** App key as it appears in src/lib/connections/catalog.ts (e.g. "linkedin", "gmail"). */
   appKey: string;
@@ -192,7 +244,7 @@ async function executeOnce<T>(
     },
   );
   if (!res.ok) {
-    const text = await res.text();
+    const text = await readCappedErrorBody(res);
     throw new Error(
       `composio ${opts.action} ${res.status}: ${text.slice(0, 300)}`,
     );
@@ -263,7 +315,7 @@ export async function resolveOrCreateAuthConfig(
       },
     );
     if (!r.ok) {
-      const errText = await r.text();
+      const errText = await readCappedErrorBody(r);
       console.warn(
         `[composio] auth_config create failed for ${toolkitSlug}: ${r.status} ${errText.slice(0, 200)}`,
       );

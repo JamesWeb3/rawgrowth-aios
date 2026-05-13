@@ -314,23 +314,48 @@ registerTool({
     // executing. Operator decides at /approvals. Default false = zero
     // behaviour change for clients that haven't opted in.
     try {
-      const { data: orgRow } = await supabaseAdmin()
+      const { data: orgRow, error: orgErr } = await supabaseAdmin()
         .from("rgaios_organizations")
         .select("approvals_gate_all")
         .eq("id", ctx.organizationId)
         .maybeSingle();
+      if (orgErr) {
+        // Fail closed: if we can't read approvals_gate_all (RLS,
+        // transient DB error), we don't know whether the org has the
+        // gate ON. Bypassing would silently defeat the policy for any
+        // org that opted in, so abort instead of falling through.
+        console.error(
+          `composio_use_tool: approvals_gate_all read failed, aborting tool execution: ${orgErr.message}`,
+        );
+        return textError(
+          `composio_use_tool ${app}/${action}: approval system unavailable, retry in a moment`,
+        );
+      }
       const gateAll =
         (orgRow as { approvals_gate_all?: boolean } | null)?.approvals_gate_all ===
         true;
       if (gateAll) {
-        await createApproval({
-          organizationId: ctx.organizationId,
-          routineRunId: null,
-          agentId: null,
-          toolName: `composio:${app}:${action}`,
-          toolArgs: rawInput as Record<string, unknown>,
-          reason: "Org policy approvals_gate_all is on; every outbound action requires operator approval.",
-        });
+        try {
+          await createApproval({
+            organizationId: ctx.organizationId,
+            routineRunId: null,
+            agentId: null,
+            toolName: `composio:${app}:${action}`,
+            toolArgs: rawInput as Record<string, unknown>,
+            reason: "Org policy approvals_gate_all is on; every outbound action requires operator approval.",
+          });
+        } catch (approvalErr) {
+          // createApproval is the gate itself. If it throws (RLS, table
+          // missing, write failure) we MUST NOT fall through to the
+          // execute path - that bypasses approvals_gate_all entirely.
+          // Abort the tool call and surface the failure to the caller.
+          console.error(
+            `composio_use_tool: createApproval failed under approvals_gate_all, aborting tool execution: ${(approvalErr as Error).message}`,
+          );
+          return textError(
+            `composio_use_tool ${app}/${action}: approval system failed; tool execution aborted (${(approvalErr as Error).message})`,
+          );
+        }
         return text(
           [
             `Queued for approval: ${app}/${action}.`,
@@ -340,11 +365,15 @@ registerTool({
         );
       }
     } catch (gateErr) {
-      // Don't block on the gate's own failure (e.g. RLS hiccup) - log
-      // and fall through to the existing execute path so the
-      // user-visible behaviour matches the pre-0067 baseline.
-      console.warn(
-        `composio_use_tool: approvals_gate_all check failed, falling through: ${(gateErr as Error).message}`,
+      // Fail closed: if the gate read throws (network, auth, schema
+      // mismatch) we can't tell whether approvals_gate_all is ON. A
+      // silent fall-through would bypass approvals for any org that
+      // opted in, so abort and let the caller retry.
+      console.error(
+        `composio_use_tool: approvals_gate_all check threw, aborting tool execution: ${(gateErr as Error).message}`,
+      );
+      return textError(
+        `composio_use_tool ${app}/${action}: approval system unavailable, retry in a moment`,
       );
     }
 

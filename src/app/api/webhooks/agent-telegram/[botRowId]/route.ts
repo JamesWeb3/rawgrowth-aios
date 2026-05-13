@@ -217,6 +217,8 @@ export async function POST(
       clearInterval(typingTimer);
     };
 
+    try {
+
     let placeholderId: number | null = null;
     try {
       const sent = await sendMessage(token, msg.chat.id, "💭 Thinking…");
@@ -378,6 +380,23 @@ export async function POST(
         placeholder_message_id: null,
       })
       .eq("id", inboxRowId ?? "");
+    } catch (err) {
+      clearTyping();
+      console.error("[agent-telegram] after() crashed", {
+        bot_row_id: botRowId,
+        error: (err as Error)?.message,
+        stack: (err as Error)?.stack,
+      });
+      try {
+        await sendMessage(
+          token,
+          msg.chat.id,
+          "I hit an internal error. Operator has been notified.",
+        );
+      } catch {
+        /* best-effort */
+      }
+    }
   });
 
   return NextResponse.json({ ok: true, inboxed: true, agent_id: agentId });
