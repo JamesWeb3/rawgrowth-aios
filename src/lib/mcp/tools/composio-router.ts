@@ -1,5 +1,7 @@
 import { registerTool, text, textError } from "../registry";
 import { composioAction } from "../proxy";
+import { createApproval } from "@/lib/approvals/queries";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 /**
  * Composio Tool Router MCP surface.
@@ -305,6 +307,46 @@ registerTool({
     // row first. ToolContext.userId is threaded by the MCP runtime
     // since PR 1 (commit 0149bb9).
     const callerUserId = ctx.userId ?? null;
+
+    // Org-wide approval gate (migration 0067, Chris bug 8). When
+    // `rgaios_organizations.approvals_gate_all = true`, every outbound
+    // composio_use_tool call queues into rgaios_approvals instead of
+    // executing. Operator decides at /approvals. Default false = zero
+    // behaviour change for clients that haven't opted in.
+    try {
+      const { data: orgRow } = await supabaseAdmin()
+        .from("rgaios_organizations")
+        .select("approvals_gate_all")
+        .eq("id", ctx.organizationId)
+        .maybeSingle();
+      const gateAll =
+        (orgRow as { approvals_gate_all?: boolean } | null)?.approvals_gate_all ===
+        true;
+      if (gateAll) {
+        await createApproval({
+          organizationId: ctx.organizationId,
+          routineRunId: null,
+          agentId: null,
+          toolName: `composio:${app}:${action}`,
+          toolArgs: rawInput as Record<string, unknown>,
+          reason: "Org policy approvals_gate_all is on; every outbound action requires operator approval.",
+        });
+        return text(
+          [
+            `Queued for approval: ${app}/${action}.`,
+            "An operator needs to approve this at /approvals before it runs.",
+            "When approved, the tool re-executes server-side with the same input.",
+          ].join("\n"),
+        );
+      }
+    } catch (gateErr) {
+      // Don't block on the gate's own failure (e.g. RLS hiccup) - log
+      // and fall through to the existing execute path so the
+      // user-visible behaviour matches the pre-0067 baseline.
+      console.warn(
+        `composio_use_tool: approvals_gate_all check failed, falling through: ${(gateErr as Error).message}`,
+      );
+    }
 
     let result: unknown;
     try {
