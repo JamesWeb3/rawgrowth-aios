@@ -329,6 +329,89 @@ export default async function DashboardPage() {
   const pillarData = ctx?.activeOrgId
     ? await getPillarData(ctx.activeOrgId)
     : { marketing: null, sales: null, fulfilment: null, finance: null };
+
+  // Per-dept agent + connection counts for the empty-state mini-cards
+  // (Chris bug 7, 2026-05-12). Even when there's no run/insight data,
+  // the dashboard surfaces real baselines for the operator instead of a
+  // pure placeholder.
+  const emptyStatsByDept = await (async () => {
+    const empty = {
+      marketing: { agents: 0, connections: 0, lastTickAt: null as string | null },
+      sales: { agents: 0, connections: 0, lastTickAt: null as string | null },
+      fulfilment: { agents: 0, connections: 0, lastTickAt: null as string | null },
+      finance: { agents: 0, connections: 0, lastTickAt: null as string | null },
+      customer: { agents: 0, connections: 0, lastTickAt: null as string | null },
+    };
+    if (!ctx?.activeOrgId) return empty;
+    const db = supabaseAdmin();
+    const orgId = ctx.activeOrgId;
+    const [{ data: agents }, { data: conns }] = await Promise.all([
+      db
+        .from("rgaios_agents")
+        .select("department, id")
+        .eq("organization_id", orgId),
+      db
+        .from("rgaios_connections")
+        .select("metadata, status")
+        .eq("organization_id", orgId)
+        .eq("status", "connected"),
+    ]);
+    for (const a of (agents ?? []) as Array<{ department: string | null }>) {
+      const k = (a.department ?? "").toLowerCase();
+      if (k in empty) {
+        (empty as Record<string, { agents: number; connections: number; lastTickAt: string | null }>)[
+          k
+        ].agents += 1;
+      }
+    }
+    // Each connected row contributes one count to its mapped dept.
+    // Marketing: gmail, slack, meta-ads, mailchimp, klaviyo, activecampaign, linkedin, twitter
+    // Sales: hubspot, pipedrive, attio, close, zoho-crm
+    // Fulfilment: notion, linear, airtable, asana, monday, trello, clickup
+    // Finance: stripe, shopify, mailchimp (mailchimp counts in marketing)
+    const DEPT_BY_PROVIDER: Record<string, keyof typeof empty> = {
+      "composio:hubspot": "sales",
+      "composio:pipedrive": "sales",
+      "composio:attio": "sales",
+      "composio:close": "sales",
+      "composio:salesforce": "sales",
+      "composio:gmail": "marketing",
+      "composio:slack": "marketing",
+      "composio:mailchimp": "marketing",
+      "composio:klaviyo": "marketing",
+      "composio:linkedin": "marketing",
+      "composio:meta-ads": "marketing",
+      "composio:google-calendar": "fulfilment",
+      "composio:notion": "fulfilment",
+      "composio:linear": "fulfilment",
+      "composio:github": "fulfilment",
+      "composio:stripe": "finance",
+      "composio:shopify": "finance",
+    };
+    for (const c of (conns ?? []) as Array<{ metadata: { composio_app?: string } | null }>) {
+      const app = c.metadata?.composio_app;
+      if (!app) continue;
+      const dept = DEPT_BY_PROVIDER[`composio:${app}`];
+      if (dept) {
+        empty[dept].connections += 1;
+      }
+    }
+    // Last-tick: last activity surrogate. Use most recent
+    // rgaios_routine_runs row across the whole org as proxy.
+    const { data: lastRun } = await db
+      .from("rgaios_routine_runs")
+      .select("created_at")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const tickIso =
+      (lastRun as { created_at: string | null } | null)?.created_at ?? null;
+    for (const k of Object.keys(empty) as Array<keyof typeof empty>) {
+      empty[k].lastTickAt = tickIso;
+    }
+    return empty;
+  })();
   return (
     <PageShell
       title="Dashboard"
@@ -389,6 +472,7 @@ export default async function DashboardPage() {
               : []
           }
           empty="No marketing activity"
+          emptyStats={emptyStatsByDept.marketing}
         />
 
         <BoardColumn
@@ -422,6 +506,7 @@ export default async function DashboardPage() {
               : []
           }
           empty="No pipeline yet"
+          emptyStats={emptyStatsByDept.sales}
         />
 
         <BoardColumn
@@ -459,6 +544,7 @@ export default async function DashboardPage() {
               : []
           }
           empty="No fulfilment runs"
+          emptyStats={emptyStatsByDept.fulfilment}
         />
 
         <BoardColumn
@@ -512,6 +598,7 @@ export default async function DashboardPage() {
               : []
           }
           empty="No routine runs"
+          emptyStats={emptyStatsByDept.finance}
         />
       </div>
 

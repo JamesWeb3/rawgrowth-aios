@@ -2,6 +2,18 @@ import type { ReactNode } from "react";
 
 import { Sparkline, TrendBadge } from "@/components/charts/sparkline";
 
+function relTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diff)) return "—";
+  if (diff < 60_000) return "just now";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 /**
  * BoardColumn - one vertical column on the dept-board dashboard.
  *
@@ -39,6 +51,7 @@ export function BoardColumn({
   hero,
   cards,
   empty,
+  emptyStats,
   footerCta,
   href,
 }: {
@@ -47,6 +60,16 @@ export function BoardColumn({
   hero?: ColumnHeroChart;
   cards?: ColumnMetricCard[];
   empty?: ReactNode;
+  /**
+   * Per-pillar baseline counts surfaced inside the empty state so the
+   * dashboard isn't blank on a fresh client (Chris's 2026-05-12 bug 7).
+   * Shows even when there's no LLM activity yet.
+   */
+  emptyStats?: {
+    agents: number;
+    connections: number;
+    lastTickAt?: string | null;
+  };
   footerCta?: ReactNode;
   href?: string;
 }) {
@@ -155,7 +178,7 @@ export function BoardColumn({
         ) : null}
 
         {!hero && (!cards || cards.length === 0) && (
-          <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-border/60 bg-card/20 px-3 py-6 text-center">
+          <div className="flex flex-1 flex-col items-stretch justify-center gap-2 rounded-md border border-dashed border-border/60 bg-card/20 px-3 py-5 text-center">
             <div>
               <p className="text-[11px] font-medium text-foreground">
                 {empty ?? "No data yet"}
@@ -164,6 +187,36 @@ export function BoardColumn({
                 Wire data → cards light up.
               </p>
             </div>
+            {emptyStats && (
+              <div className="mt-1 grid grid-cols-2 gap-1.5 text-left">
+                <div className="rounded border border-border/60 bg-card/30 px-2 py-1.5">
+                  <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                    Agents
+                  </p>
+                  <p className="mt-0.5 font-mono text-[13px] text-foreground">
+                    {emptyStats.agents}
+                  </p>
+                </div>
+                <div className="rounded border border-border/60 bg-card/30 px-2 py-1.5">
+                  <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                    Connections
+                  </p>
+                  <p className="mt-0.5 font-mono text-[13px] text-foreground">
+                    {emptyStats.connections}
+                  </p>
+                </div>
+                {emptyStats.lastTickAt && (
+                  <div className="col-span-2 rounded border border-border/60 bg-card/30 px-2 py-1.5">
+                    <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                      Last activity
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-foreground">
+                      {relTime(emptyStats.lastTickAt)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
