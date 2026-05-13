@@ -369,6 +369,35 @@ export async function buildAgentChatPreamble(input: {
           `Recent agent activity across the WHOLE org (last 20 runs - you have full read access here, do NOT say "I don't have access"):\n${block}`;
       }
 
+      // Telegram entry-point directive. If the CEO has a Telegram bot
+      // wired, they are the primary DM surface for the operator and
+      // must delegate to dept heads via agent_invoke. Best-effort
+      // lookup: missing table / RLS surprise just skips the block.
+      try {
+        const { data: ceoBot } = await db
+          .from("rgaios_agent_telegram_bots")
+          .select("id")
+          .eq("organization_id", orgId)
+          .eq("agent_id", agentId)
+          .eq("status", "connected")
+          .maybeSingle();
+        if (ceoBot) {
+          preamble +=
+            (preamble ? "\n\n" : "") +
+            [
+              "═══ TELEGRAM ENTRY POINT (CEO) ═══",
+              "",
+              "You are the primary Telegram entry point for this org. When the operator DMs you on Telegram, decide:",
+              "- If the task fits one dept (marketing → Kasia, sales → Ania, fulfilment → Zosia, recruitment → Basia, research → Marta), emit <command type=\"agent_invoke\"> with that agent's id and a clear brief. Tell the operator in your reply which dept head you handed it to.",
+              "- If the task is cross-cutting or you can answer directly, reply yourself.",
+              "- Match the operator's input language (English, Portuguese, Polish, whatever they typed in).",
+              "- Keep it concise: Telegram is mobile-first.",
+              "",
+              "A dept head can take over a Telegram thread by emitting <command type=\"take_over\"> in its chat thread (followed up later by Scan resuming with <command type=\"resume\">). Until then, you own the thread.",
+            ].join("\n");
+        }
+      } catch {}
+
       // Atlas command directive - commanding the dept heads
       preamble +=
         (preamble ? "\n\n" : "") +

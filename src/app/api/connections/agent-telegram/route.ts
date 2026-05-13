@@ -19,7 +19,11 @@ export const runtime = "nodejs";
  *        /api/webhooks/agent-telegram/[bot_row_id], persist encrypted
  *        token. Agent must be marked as a department head.
  *
- * One bot per agent. Sub-agents (is_department_head=false) are rejected.
+ * One bot per agent. Junior sub-agents (not a dept head, not the
+ * top-of-org / CEO) are rejected. The CEO (reports_to=null, or
+ * is_ceo=true if that column exists) is allowed because Scan is the
+ * primary Telegram entry point that delegates to dept heads via
+ * agent_invoke.
  */
 
 export async function GET() {
@@ -60,24 +64,54 @@ export async function POST(req: NextRequest) {
     const organizationId = await currentOrganizationId();
     const db = supabaseAdmin();
 
-    // Agent must exist + belong to this org + be a department head.
-    const { data: agent } = await db
-      .from("rgaios_agents")
-      .select("id, name, is_department_head, department")
-      .eq("id", agent_id)
-      .eq("organization_id", organizationId)
-      .maybeSingle();
+    // Agent must exist + belong to this org + be either a department
+    // head OR the CEO/top-of-org agent. CEO is detected as reports_to
+    // = null, with an optional is_ceo column override if the schema
+    // exposes it. Junior sub-agents (reports_to set, not a head) are
+    // rejected - bot wiring is dept-head + CEO only.
+    const baseCols = "id, name, is_department_head, department, reports_to";
+    let agent: {
+      id: string;
+      name: string;
+      is_department_head: boolean | null;
+      department: string | null;
+      reports_to: string | null;
+      is_ceo?: boolean | null;
+    } | null = null;
+    {
+      const withCeo = await db
+        .from("rgaios_agents")
+        .select(`${baseCols}, is_ceo`)
+        .eq("id", agent_id)
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      if (withCeo.error) {
+        // Column likely missing - fall back without is_ceo.
+        const { data } = await db
+          .from("rgaios_agents")
+          .select(baseCols)
+          .eq("id", agent_id)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        agent = (data as typeof agent) ?? null;
+      } else {
+        agent = (withCeo.data as typeof agent) ?? null;
+      }
+    }
     if (!agent) {
       return NextResponse.json(
         { error: "Agent not found" },
         { status: 404 },
       );
     }
-    if (!agent.is_department_head) {
+    const isHead = agent.is_department_head === true;
+    const isTopOfOrg = agent.reports_to === null;
+    const isCeoFlag = agent.is_ceo === true;
+    if (!isHead && !isTopOfOrg && !isCeoFlag) {
       return NextResponse.json(
         {
           error:
-            "Telegram bots can only be assigned to department heads. Mark this agent as a department head first.",
+            "Telegram bots can only be assigned to department heads or the CEO/top-of-org agent. Mark this agent as a department head or as the org's CEO first.",
         },
         { status: 400 },
       );
