@@ -100,7 +100,12 @@ async function loadClaudeMaxTokenPool(
  * the throttle. Map cleared on process restart.
  */
 const CHAT_TOKEN_COOLDOWN: Map<string, number> = new Map();
-const CHAT_COOLDOWN_MS = 60_000;
+// Claude Max quota window is 5h; 60s cooldown was too short and the
+// pool kept reusing a 429'd token before the upstream bucket cleared.
+// Bumped to 5min so a single 429 reliably routes traffic to a sibling
+// token until the quota actually resets. Pairs with oauth-anthropic.ts
+// pool rotation that uses the same cooldown semantics on the executor path.
+const CHAT_COOLDOWN_MS = 5 * 60_000;
 
 function isChatTokenCold(token: string): boolean {
   const until = CHAT_TOKEN_COOLDOWN.get(token);

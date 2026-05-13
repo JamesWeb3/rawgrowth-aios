@@ -160,13 +160,14 @@ export async function callAnthropicOauthOnce(
 // ─── Multi-turn tool loop with pool rotation ────────────────────────
 
 /**
- * 60s in-process cooldown on tokens we just saw 429 / 401 on. Same
- * window as chat.ts and oauth-first.ts because Anthropic's per-account
- * buckets recover on the same cadence regardless of which call site
- * triggered the throttle. Map cleared on process restart.
+ * 5min in-process cooldown on tokens we just saw 429 / 401 on.
+ * Anthropic Claude Max buckets reset on a ~5 minute cadence; the
+ * previous 60s window was too short - we'd rotate back to the same
+ * still-cold token and burn the retry budget hitting the same 429.
+ * Map keyed on the access_token string, cleared on process restart.
  */
 const TOKEN_COOLDOWN: Map<string, number> = new Map();
-const COOLDOWN_MS = 60_000;
+const COOLDOWN_MS = 5 * 60_000;
 
 function isTokenCold(token: string): boolean {
   const until = TOKEN_COOLDOWN.get(token);
@@ -365,7 +366,17 @@ export async function runOauthToolLoop(
     }
 
     if (!resp) {
-      // Whole pool exhausted on this turn.
+      // Whole pool exhausted on this turn. If the last failure was a
+      // 429 we surface the operator-actionable copy spec'd in the
+      // 2026-05-13 fix; otherwise propagate the underlying error so
+      // network / 5xx / validation failures stay debuggable.
+      const isRateLimited =
+        lastErr instanceof AnthropicHttpError && lastErr.status === 429;
+      if (isRateLimited) {
+        throw new Error(
+          "Claude Max quota exhausted - all OAuth tokens cooling down. Operator should add more accounts to /connections.",
+        );
+      }
       if (lastErr instanceof Error) throw lastErr;
       throw new Error(`${prefix} pool exhausted with no response`);
     }
