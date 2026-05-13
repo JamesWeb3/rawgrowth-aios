@@ -31,23 +31,46 @@ type ProviderHandler = {
   composioApp: string;
   action: string;
   source: string;
+  /**
+   * Build the Composio action input from the connection's metadata.
+   * Return null when a required field (channel_id, page_id) is absent so
+   * the cron skips this row gracefully instead of issuing a guaranteed
+   * 400 on Composio. Instagram defaults `ig_user_id` to the authed user
+   * so an empty-ish input is fine there.
+   */
+  buildInput: (
+    metadata: Record<string, unknown> | null,
+  ) => Record<string, unknown> | null;
   parse: (
     body: unknown,
   ) => Array<{ id: string; text: string; metadata: Record<string, unknown> }>;
 };
 
+/**
+ * Composio v3 tools/execute wraps every response in
+ *   { successful: boolean, data: <action-specific>, error?: string }
+ * For IG_GET_USER_MEDIA, `data` is itself the array of media items.
+ * For YT_LIST_CHANNEL_VIDEOS and FB_GET_PAGE_POSTS, `data` is
+ *   { response_data: <raw upstream API JSON> }
+ * so parsers below dig one extra level.
+ */
+
 const PROVIDERS: ProviderHandler[] = [
   {
     configKey: "composio:instagram",
     composioApp: "instagram",
-    // TODO: confirm Composio v3 action slug for Instagram recent posts.
-    action: "INSTAGRAM_LIST_RECENT_POSTS",
+    action: "INSTAGRAM_GET_USER_MEDIA",
     source: "instagram",
+    buildInput: () => ({ limit: 25 }),
     parse: (body) => {
-      const items =
-        ((body as { items?: unknown[] }).items ??
-          (body as { data?: unknown[] }).data ??
-          []) as Array<Record<string, unknown>>;
+      // v3 envelope: body.data is the media array. Older shape kept as
+      // fallback in case Composio collapses the envelope mid-call.
+      const data = (body as { data?: unknown }).data;
+      const items = (Array.isArray(data)
+        ? data
+        : ((body as { items?: unknown[] }).items ?? [])) as Array<
+        Record<string, unknown>
+      >;
       return items.map((p) => {
         const id = String(p.id ?? p.shortcode ?? p.permalink ?? Math.random());
         const caption = sanitize(p.caption ?? p.text ?? "", 800);
@@ -64,11 +87,21 @@ const PROVIDERS: ProviderHandler[] = [
   {
     configKey: "composio:youtube",
     composioApp: "youtube",
-    // TODO: confirm Composio v3 action slug for YouTube channel videos.
     action: "YOUTUBE_LIST_CHANNEL_VIDEOS",
     source: "youtube",
+    buildInput: (metadata) => {
+      const channelId = (metadata as { channel_id?: unknown } | null)
+        ?.channel_id;
+      if (typeof channelId !== "string" || channelId.length === 0) return null;
+      return { channelId, part: "snippet", maxResults: 25 };
+    },
     parse: (body) => {
-      const items = ((body as { items?: unknown[] }).items ?? []) as Array<
+      // v3 envelope -> data.response_data -> YouTube Data API search list
+      // resource with `items` at the top level.
+      const responseData = (
+        body as { data?: { response_data?: { items?: unknown[] } } }
+      ).data?.response_data;
+      const items = (responseData?.items ?? []) as Array<
         Record<string, unknown>
       >;
       return items.map((v) => {
@@ -90,11 +123,24 @@ const PROVIDERS: ProviderHandler[] = [
   {
     configKey: "composio:facebook-pages",
     composioApp: "facebook",
-    // TODO: confirm Composio v3 action slug for Facebook page posts.
-    action: "FACEBOOK_LIST_PAGE_POSTS",
+    action: "FACEBOOK_GET_PAGE_POSTS",
     source: "facebook",
+    buildInput: (metadata) => {
+      const pageId = (metadata as { page_id?: unknown } | null)?.page_id;
+      if (typeof pageId !== "string" || pageId.length === 0) return null;
+      return {
+        page_id: pageId,
+        limit: 25,
+        fields: "id,message,created_time,updated_time,permalink_url",
+      };
+    },
     parse: (body) => {
-      const items = ((body as { data?: unknown[] }).data ?? []) as Array<
+      // v3 envelope -> data.response_data -> Facebook Graph API page/posts
+      // edge response with `data` as the array of posts.
+      const responseData = (
+        body as { data?: { response_data?: { data?: unknown[] } } }
+      ).data?.response_data;
+      const items = (responseData?.data ?? []) as Array<
         Record<string, unknown>
       >;
       return items.map((p) => {
@@ -119,7 +165,7 @@ export async function GET(req: NextRequest) {
 
   const { data: conns, error } = await supabaseAdmin()
     .from("rgaios_connections")
-    .select("organization_id, provider_config_key")
+    .select("organization_id, provider_config_key, metadata")
     .in("provider_config_key", configKeys)
     .eq("status", "connected");
 
@@ -130,24 +176,43 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  type Conn = { organization_id: string; provider_config_key: string };
+  type Conn = {
+    organization_id: string;
+    provider_config_key: string;
+    metadata: Record<string, unknown> | null;
+  };
   const rows = (conns ?? []) as Conn[];
   const results: Array<{
     org: string;
     provider: string;
     synced: number;
     error?: string;
+    skipped?: string;
   }> = [];
 
   for (const c of rows) {
     const handler = PROVIDERS.find((p) => p.configKey === c.provider_config_key);
     if (!handler) continue;
 
+    const input = handler.buildInput(c.metadata);
+    if (!input) {
+      // YouTube needs channel_id, Facebook needs page_id stashed on the
+      // connection row's metadata. When absent, log a skip rather than
+      // letting Composio reject with a 400 we can't act on.
+      results.push({
+        org: c.organization_id,
+        provider: handler.source,
+        synced: 0,
+        skipped: "missing-required-metadata",
+      });
+      continue;
+    }
+
     try {
       const body = await composioCall(c.organization_id, {
         appKey: handler.composioApp,
         action: handler.action,
-        input: {},
+        input,
       });
       const items = handler.parse(body);
       let synced = 0;
