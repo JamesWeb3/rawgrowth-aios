@@ -209,6 +209,14 @@ export async function buildAgentChatPreamble(input: {
   // last 30 task spawns across the WHOLE org. Without this, Atlas
   // truthfully says "I don't have access to the run log" - which
   // looks like a broken bot to the user.
+  //
+  // canCommand is hoisted OUTSIDE the try block below because the
+  // JSON COMMANDS section at line ~362 reads it. Before this hoist,
+  // any agent chat after Claude Max was wired threw
+  // "ReferenceError: canCommand is not defined" - the const declared
+  // inside try {} was out of scope at the read site (Chris bug 4,
+  // 2026-05-12).
+  let canCommand = false;
   try {
     // Defense-in-depth: helper is called from chat route, telegram
     // webhook, executeChatTask. Each caller should pre-validate the
@@ -224,7 +232,7 @@ export async function buildAgentChatPreamble(input: {
     const agentMeta = (agentRow3 as { role?: string; is_department_head?: boolean } | null);
     const isCeo = agentMeta?.role === "ceo";
     const isDeptHead = agentMeta?.is_department_head === true;
-    const canCommand = isCeo || isDeptHead;
+    canCommand = isCeo || isDeptHead;
     if (isCeo) {
       // 1c-pre. Live agent roster. Atlas hallucinates "Marketing Manager"
       // / "Sales Manager" / "Finance Manager" because the seeded names
