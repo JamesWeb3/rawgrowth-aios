@@ -416,6 +416,14 @@ export default function AgentChatTab({
             });
           } else if (event.type === "error") {
             setError(event.message || "Stream error");
+          } else if (event.type === "commands_executed" && Array.isArray(event.results)) {
+            const summary = (event.results as Array<{ ok: boolean; type: string; summary?: string }>)
+              .map((r, i) => `${i + 1}. [${r.ok ? "ok" : "fail"}] ${r.type}${r.summary ? " - " + r.summary : ""}`)
+              .join("\n");
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: `Commands executed:\n${summary}` },
+            ]);
           } else if (event.type === "tasks_created" && Array.isArray(event.tasks)) {
             // Surface the just-created tasks as inline assistant chips
             // so the operator sees them land. We deliberately do NOT
