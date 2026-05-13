@@ -1,6 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { composioAction } from "@/lib/mcp/proxy";
-import { dispatchRun } from "@/lib/runs/dispatch";
 
 /**
  * Atlas / dept-head JSON command extraction. The chat reply may include
@@ -403,11 +402,17 @@ async function execAgentInvoke(
     .single();
   const runId = (run as { id: string } | null)?.id ?? null;
   if (runId) {
+    // Inline-execute the delegated run so the caller's reply can include
+    // the actual delegated output. dispatchRun used to fire-and-forget
+    // via after(), but Next.js 16 streaming responses don't reliably
+    // flush after() until the SSE closes, leaving runs pending past the
+    // poll deadline. Awaiting executeRun here blocks the agent_invoke
+    // command result by ~5-30s but makes the orchestration deterministic.
     try {
-      dispatchRun(runId, orgId);
+      await import("@/lib/runs/executor").then((m) => m.executeRun(runId));
     } catch (err) {
       console.warn(
-        `[agent-commands] dispatchRun failed for run ${runId}: ${(err as Error).message}`,
+        `[agent-commands] executeRun failed inline for run ${runId}: ${(err as Error).message}`,
       );
     }
   }
