@@ -13,32 +13,61 @@ import { extractAndExecuteCommands } from "@/lib/agent/agent-commands";
 import { badUuidResponse } from "@/lib/utils";
 
 /**
- * Single-shot Haiku call to summarise what the agent is about to do.
- * Surfaced as a `thinking` SSE event so operators see reasoning live
- * (chain-of-thought). Best-effort: any failure returns null and the
- * chat reply proceeds without a thinking bubble. Cheap (sub-cent),
- * fast (<1s) - no rate-limit impact on the main reply pool because
- * this hits the SDK directly, not via the OAuth pool.
+ * Generate a chain-of-thought "thinking" brief for the operator. Two-tier:
+ *
+ *   - Haiku-based (preferred, when ANTHROPIC_API_KEY is set): one short
+ *     sentence summarising the agent's plan. Tiny, sub-second, doesn't
+ *     touch the OAuth pool that powers the main reply.
+ *   - Heuristic fallback (when no API key): classify the user message by
+ *     verb + intent and emit a templated brief. Less smart, but always
+ *     fires so the operator sees SOMETHING above each reply.
+ *
+ * Best-effort: any failure returns null and the chat reply proceeds.
  */
 async function generateThinkingBrief(userMessage: string): Promise<string | null> {
-  if (!process.env.ANTHROPIC_API_KEY) return null; // no key configured
   if (!userMessage || userMessage.length < 3) return null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-    const result = await generateText({
-      model: anthropic("claude-haiku-4-5"),
-      system:
-        "You are summarising what an AI agent is about to do, before it answers. Reply with one short sentence under 100 characters starting with 'I will'. No quotes, no preamble. Be concrete.",
-      prompt: `User message: ${userMessage.slice(0, 400)}`,
-      abortSignal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    const brief = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 140);
-    return brief || null;
-  } catch {
-    return null;
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const result = await generateText({
+        model: anthropic("claude-haiku-4-5"),
+        system:
+          "You are summarising what an AI agent is about to do, before it answers. Reply with one short sentence under 100 characters starting with 'I will'. No quotes, no preamble. Be concrete.",
+        prompt: `User message: ${userMessage.slice(0, 400)}`,
+        abortSignal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      const brief = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 140);
+      if (brief) return brief;
+    } catch {
+      // fall through to heuristic
+    }
   }
+  // Heuristic fallback - works on every VPS regardless of API key
+  // configuration. Pattern-match the operator's intent and template.
+  const t = userMessage.toLowerCase().trim();
+  if (/^(agent_invoke|dispatch|delegate|ask)\s+/i.test(userMessage)) {
+    const m = userMessage.match(/(?:agent_invoke|dispatch|delegate|ask)\s+(\w+)/i);
+    const tgt = m?.[1] ?? "the right dept head";
+    return `I will dispatch ${tgt} via agent_invoke and surface the result inline.`;
+  }
+  if (/composio|tool|gmail|slack|calendar|google/i.test(t)) {
+    return "I will check what's wired in Composio and fire the appropriate tool call.";
+  }
+  if (/^(hi|hello|hey|oi|olá|cześć|ola)\b/i.test(t)) {
+    return "I will greet the operator in their input language and stand by for the real ask.";
+  }
+  if (/(?:bye|tchau|later|thanks|obrigad)/i.test(t)) {
+    return "I will close the turn briefly without spinning up new work.";
+  }
+  if (/^(list|show|what|how|why|when|where|who|qual|quem|onde|porque|como)/i.test(t)) {
+    return "I will answer directly from org context (RAG / memory), no delegation needed.";
+  }
+  if (/(?:status|update|progress|check|monitor)/i.test(t)) {
+    return "I will status-check open delegations and surface anything stuck.";
+  }
+  return `I will reply concisely in the operator's language, delegating only if the task fits one dept.`;
 }
 
 export const runtime = "nodejs";
