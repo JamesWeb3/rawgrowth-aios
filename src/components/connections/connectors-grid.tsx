@@ -142,11 +142,27 @@ export function ConnectorsGrid() {
       if (!res.ok) {
         throw new Error(json.error ?? "Failed to record interest");
       }
-      // Real Composio path returns a redirectUrl - send the operator to
-      // the OAuth screen.
+      // Real Composio path returns a redirectUrl. Open in a popup
+      // (Chris's bug 1 follow-up): Composio v3's "Successfully connected"
+      // static page doesn't auto-redirect back. If we send the user
+      // there via window.location.assign, our /connections tab is gone
+      // and the auto-poll can't update the badge. Popup keeps the main
+      // tab alive + polling; when the row flips status='connected'
+      // (server-side via /api/connections/composio/sync-pending), the
+      // badge updates without operator action. Popup-blocker fallback:
+      // if window.open returns null, fall back to same-tab redirect.
       if (json.redirectUrl) {
-        toast.success(`${entry.name} - opening OAuth`);
-        window.location.assign(json.redirectUrl);
+        toast.success(`${entry.name} - opening OAuth in new window`);
+        const w = window.open(
+          json.redirectUrl,
+          "rawgrowth-composio-oauth",
+          "width=480,height=720,noopener=no,noreferrer=no",
+        );
+        if (!w) {
+          // Popup blocked - degrade to same-tab redirect so OAuth
+          // still completes.
+          window.location.assign(json.redirectUrl);
+        }
         return;
       }
       // pending=true means the backend recorded interest but couldn't
