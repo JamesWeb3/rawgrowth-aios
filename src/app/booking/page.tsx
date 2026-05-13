@@ -3,17 +3,62 @@ import { redirect } from "next/navigation";
 
 import { PageShell } from "@/components/page-shell";
 import { getOrgContext } from "@/lib/auth/admin";
+import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   getCalendarBinding,
   listBookings,
   listEventTypes,
+  setCalendarBinding,
 } from "@/lib/booking/queries";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Chris's bug 6 (2026-05-12): operator authorised Google Calendar in
+ * /connections but /booking still shows the "Connect Google Calendar"
+ * amber banner. Root cause: the OAuth flow writes a row to
+ * rgaios_connections (provider_config_key=composio:google-calendar)
+ * but never touches rgaios_kalendly_calendar_bindings, which is what
+ * /booking actually reads.
+ *
+ * Fix: when the org has a connected Composio google-calendar row and
+ * no binding yet, auto-create a binding to the user's primary
+ * calendar. Operator can change which calendar on /booking/calendar
+ * later. This converts the 2-step flow (OAuth → bind) into a 1-step
+ * flow (OAuth → done) for the common case.
+ */
+async function maybeAutoBindCalendar(orgId: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("rgaios_connections")
+    .select("status")
+    .eq("organization_id", orgId)
+    .eq("provider_config_key", "composio:google-calendar")
+    .eq("status", "connected")
+    .limit(1)
+    .maybeSingle();
+  if (!data) return;
+  try {
+    await setCalendarBinding(orgId, {
+      calendarId: "primary",
+      calendarSummary: "Primary calendar",
+      defaultTimezone: "UTC",
+    });
+  } catch {
+    // setCalendarBinding throws on FK / RLS issues. Skip silently;
+    // operator can finish via /booking/calendar manually.
+  }
+}
+
 export default async function BookingHomePage() {
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId) redirect("/auth/signin");
+
+  // Auto-bind FIRST so the binding shows up in the parallel fetch below.
+  const existingBinding = await getCalendarBinding(ctx.activeOrgId);
+  if (!existingBinding) {
+    await maybeAutoBindCalendar(ctx.activeOrgId);
+  }
 
   const [eventTypes, bookings, binding] = await Promise.all([
     listEventTypes(ctx.activeOrgId),
