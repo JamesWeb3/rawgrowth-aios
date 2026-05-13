@@ -15,6 +15,8 @@ import "./agents";
 import "./routines";
 import "./approvals";
 import "./telegram";
+import "./telegram-send";
+import "./workspace-file-read";
 import "./slack";
 import "./skills";
 import "./supabase";

@@ -267,13 +267,40 @@ async function execToolCall(
     };
   }
   try {
-    const result = await composioAction(
-      orgId,
-      app,
-      action,
-      input as Record<string, unknown>,
-      callerUserId,
-    );
+    // Outer 45s hard ceiling. composioAction has its own 30s fetch
+    // timeout, but a stalled DNS lookup / TLS handshake / connection
+    // establishment can hang BEFORE that inner timer arms - leaving
+    // the chat reply path never returning to the operator. Race the
+    // call against AbortSignal.timeout so the outer path is guaranteed
+    // to surface a textError within 45s no matter what composio does.
+    const outerTimeout = new Promise<never>((_, reject) => {
+      const signal = AbortSignal.timeout(45_000);
+      signal.addEventListener("abort", () => {
+        reject(new Error("__OUTER_COMPOSIO_TIMEOUT__"));
+      });
+    });
+    let result: unknown;
+    try {
+      result = await Promise.race([
+        composioAction(
+          orgId,
+          app,
+          action,
+          input as Record<string, unknown>,
+          callerUserId,
+        ),
+        outerTimeout,
+      ]);
+    } catch (raceErr) {
+      if ((raceErr as Error).message === "__OUTER_COMPOSIO_TIMEOUT__") {
+        return {
+          ok: false,
+          type: "tool_call",
+          summary: `composio ${app}/${action} timed out after 45s; check Composio status or retry`,
+        };
+      }
+      throw raceErr;
+    }
     let preview: string;
     try {
       preview = JSON.stringify(result).slice(0, 400);
@@ -384,6 +411,87 @@ async function execAgentInvoke(
       );
     }
   }
+
+  // Mirror the delegated run's outcome onto the CALLER's chat thread so
+  // operator-side scrollback (and follow-up DMs from peer agents like
+  // Marti -> Scan) retains the context of what Scan just farmed out to
+  // Kasia. Without this, tasks.ts only writes to the assignee's thread
+  // and the caller's chat loses the result across turns.
+  if (runId) {
+    const pollDeadline = Date.now() + 60_000;
+    let finalStatus: string | null = null;
+    let runOutput: Record<string, unknown> | null = null;
+    let runError: string | null = null;
+    while (Date.now() < pollDeadline) {
+      const { data: polled } = await db
+        .from("rgaios_routine_runs")
+        .select("status, output, error")
+        .eq("id", runId)
+        .maybeSingle();
+      const row = polled as
+        | { status: string | null; output: unknown; error: string | null }
+        | null;
+      if (
+        row &&
+        row.status &&
+        row.status !== "pending" &&
+        row.status !== "running"
+      ) {
+        finalStatus = row.status;
+        runOutput =
+          row.output && typeof row.output === "object" && !Array.isArray(row.output)
+            ? (row.output as Record<string, unknown>)
+            : null;
+        runError = row.error ?? null;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    try {
+      if (finalStatus === "succeeded") {
+        const summaryRaw =
+          (runOutput?.summary as string | undefined) ??
+          (runOutput?.reply as string | undefined) ??
+          "";
+        await db.from("rgaios_agent_chat_messages").insert({
+          organization_id: orgId,
+          agent_id: speakerId,
+          user_id: null,
+          role: "system",
+          content: `Delegated to ${resolved.name}: ${summaryRaw.slice(0, 800)}`,
+          metadata: {
+            kind: "agent_invoke_completed",
+            delegated_to: resolved.id,
+            routine_run_id: runId,
+          },
+        } as never);
+      } else {
+        const errText =
+          runError ??
+          (finalStatus === null
+            ? "timeout waiting for delegated run"
+            : `run ended with status=${finalStatus}`);
+        await db.from("rgaios_agent_chat_messages").insert({
+          organization_id: orgId,
+          agent_id: speakerId,
+          user_id: null,
+          role: "system",
+          content: `Delegated to ${resolved.name} failed: ${errText.slice(0, 200)}`,
+          metadata: {
+            kind: "agent_invoke_failed",
+            delegated_to: resolved.id,
+            routine_run_id: runId,
+          },
+        } as never);
+      }
+    } catch (err) {
+      console.warn(
+        `[agent-commands] caller-thread mirror insert failed for run ${runId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   return {
     ok: true,
     type: "agent_invoke",
