@@ -36,6 +36,8 @@ export type Agent = {
   department: Department | null;
   isDepartmentHead: boolean;
   systemPrompt: string | null;
+  /** Per-agent reasoning token budget override; null = global default. */
+  maxTokens: number | null;
   createdAt: string;
 };
 
@@ -58,6 +60,7 @@ export function agentFromRow(row: AgentRow): Agent {
     department: (row.department ?? null) as Department | null,
     isDepartmentHead: row.is_department_head ?? false,
     systemPrompt: row.system_prompt ?? null,
+    maxTokens: row.max_tokens ?? null,
     createdAt: row.created_at,
   };
 }
@@ -80,6 +83,7 @@ export type AgentUpdateInput = Partial<AgentCreateInput> & {
   status?: AgentStatus;
   spentMonthlyUsd?: number;
   systemPrompt?: string | null;
+  maxTokens?: number | null;
   writePolicy?: Record<
     string,
     "direct" | "requires_approval" | "draft_only"
