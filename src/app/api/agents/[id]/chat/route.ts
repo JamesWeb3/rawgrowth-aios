@@ -544,15 +544,97 @@ export async function POST(
     content: m.content,
   }));
 
+  // 1b. Passive tool-result recall. The active two-pass path only
+  // re-feeds tool/command payloads when a <command> block ran THIS
+  // turn. So if the operator pulls emails on turn 1 then asks "what did
+  // the 2nd email say?" on turn 2 - no new command - the agent only
+  // sees its own short prior reply text, not the data. Fix: pull the
+  // last few persisted `chat_commands_executed` rows for this agent and
+  // fold a compact digest of their results into the preamble as a
+  // read-only "RECENT TOOL RESULTS" block. This does NOT touch the
+  // active two-pass path - it's grounding context only, capped tight so
+  // it can't balloon the preamble.
+  let recallBlock = "";
+  try {
+    const { data: recallRows } = await db
+      .from("rgaios_agent_chat_messages")
+      .select("metadata, created_at")
+      .eq("organization_id", orgId)
+      .eq("agent_id", agentId)
+      .eq("metadata->>kind", "chat_commands_executed")
+      .or("metadata->>archived.is.null,metadata->>archived.eq.false")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    type RecallResult = {
+      ok?: boolean;
+      type?: string;
+      summary?: string;
+      detail?: Record<string, unknown> | null;
+    };
+    const RECALL_CAP = 3000;
+    const PER_RESULT_CAP = 600;
+    const lines: string[] = [];
+    // Oldest-first so the digest reads chronologically.
+    for (const row of [...(recallRows ?? [])].reverse()) {
+      const meta = (row as { metadata: Record<string, unknown> | null })
+        .metadata;
+      const results = Array.isArray(meta?.results)
+        ? (meta!.results as RecallResult[])
+        : [];
+      for (const r of results) {
+        const d = r.detail ?? {};
+        let payload: string;
+        if (
+          typeof d.delegated_output === "string" &&
+          d.delegated_output
+        ) {
+          payload = d.delegated_output;
+        } else if (
+          typeof d.result_preview === "string" &&
+          d.result_preview
+        ) {
+          payload = `${r.summary ?? ""}\n${d.result_preview}`.trim();
+        } else {
+          payload = r.summary ?? "";
+        }
+        const type = r.type ?? "command";
+        const status = r.ok === false ? " (failed)" : "";
+        const entry = `- ${type}${status}: ${payload}`.slice(
+          0,
+          PER_RESULT_CAP,
+        );
+        if (entry.trim().length > 2) lines.push(entry);
+      }
+    }
+    if (lines.length > 0) {
+      let body = lines.join("\n");
+      if (body.length > RECALL_CAP) {
+        body = body.slice(0, RECALL_CAP) + "\n[...truncated]";
+      }
+      recallBlock =
+        "\n\n═══ RECENT TOOL RESULTS IN THIS THREAD ═══\n" +
+        "Tool calls / delegations you ran on EARLIER turns and their results. " +
+        "Use this to answer follow-up questions about that data (\"what did the 2nd email say?\") " +
+        "without re-running anything. This is recall context only - do NOT emit new <command> blocks just to re-fetch it.\n\n" +
+        body;
+    }
+  } catch (err) {
+    console.warn(
+      "[chat] tool-result recall load failed:",
+      (err as Error).message,
+    );
+  }
+
   // 2. Build the full preamble (persona + org place + memories + brand
   // + RAG over agent files + company corpus). Helper is shared with the
   // per-agent Telegram webhook so both surfaces see the same grounding.
-  const extraPreamble = await buildAgentChatPreamble({
-    orgId,
-    agentId,
-    orgName: ctx.activeOrgName,
-    queryText: lastContent,
-  });
+  const extraPreamble =
+    (await buildAgentChatPreamble({
+      orgId,
+      agentId,
+      orgName: ctx.activeOrgName,
+      queryText: lastContent,
+    })) + recallBlock;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

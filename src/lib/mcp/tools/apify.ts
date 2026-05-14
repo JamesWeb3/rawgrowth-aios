@@ -138,7 +138,32 @@ registerTool({
       return textError(`apify_run_actor: bad JSON - ${(err as Error).message}`);
     }
 
-    const items = Array.isArray(parsed) ? parsed.slice(0, limit) : [];
+    // Sort newest-first BEFORE slicing. The Instagram scraper returns a
+    // profile's PINNED posts at the top of the grid (they can be years
+    // old) followed by the rest in roughly feed order - a plain
+    // slice(0,limit) therefore returned a mix of pinned + recent and
+    // missed the actual latest posts. Sort by the post timestamp
+    // descending so "latest N" means latest N. Items with no timestamp
+    // sort last rather than poisoning the order.
+    const postTime = (o: unknown): number => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      const raw =
+        r.timestamp ??
+        r.takenAt ??
+        r.taken_at_timestamp ??
+        r.takenAtTimestamp ??
+        r.created_time;
+      if (typeof raw === "number") {
+        // Instagram epoch fields are seconds; ISO strings parse to ms.
+        return raw > 1e12 ? raw : raw * 1000;
+      }
+      const parsedTs = Date.parse(String(raw ?? ""));
+      return Number.isFinite(parsedTs) ? parsedTs : 0;
+    };
+    const allItems = Array.isArray(parsed) ? parsed : [];
+    const items = [...allItems]
+      .sort((a, b) => postTime(b) - postTime(a))
+      .slice(0, limit);
 
     // Human-readable list instead of a raw JSON dump. Most scrape actors
     // (Instagram, web) return items with some recognisable subset of

@@ -119,6 +119,15 @@ async function snapshotForDept(
     // any move as an anomaly. Mirrors the total<3 guard in ratePct.
     const MIN_BASELINE = 3;
     if (prior < MIN_BASELINE) return null;
+    // Absolute-movement floor. The MIN_BASELINE check alone still lets
+    // through e.g. prior=3 failed runs -> current=5 (+66%, rendered
+    // "critical") - a 2-run wobble dressed up as an emergency, which
+    // is the same class of garbage Marti flagged. A percentage move
+    // is only worth a notification if the underlying count actually
+    // shifted by a human-meaningful amount. Require >= MIN_ABS_DELTA
+    // events of movement on top of the >= 20% relative threshold.
+    const MIN_ABS_DELTA = 5;
+    if (Math.abs(current - prior) < MIN_ABS_DELTA) return null;
     const deltaPct = (current - prior) / prior;
     const worse = higherIsBetter ? deltaPct < 0 : deltaPct > 0;
     if (Math.abs(deltaPct) < ANOMALY_THRESHOLD) return null;
@@ -389,13 +398,24 @@ export async function generateInsightsForDept(input: {
 
   for (const s of snapshots) {
     // Dedup: skip if this (dept, metric) already has an open insight
-    // OR was dismissed in the last 24h
-    const { data: existing } = await db
+    // OR was dismissed in the last 24h.
+    //
+    // Atlas-level rows are inserted with department = NULL (see the
+    // insert below: `department: input.department`). The old dedup
+    // matched `.eq("department", "")` for the null case, which never
+    // matches a NULL column - so every cross-dept Atlas anomaly
+    // dodged dedup and re-fired a fresh insight + proactive chat
+    // message on every cron tick. Match NULL with `.is()` instead.
+    let dedupQ = db
       .from("rgaios_insights")
       .select("id, status")
       .eq("organization_id", input.orgId)
-      .eq("department", input.department ?? "")
-      .eq("metric", s.metric)
+      .eq("metric", s.metric);
+    dedupQ =
+      input.department === null
+        ? dedupQ.is("department", null)
+        : dedupQ.eq("department", input.department);
+    const { data: existing } = await dedupQ
       .or(`status.eq.open,dismissed_at.gte.${since24h}`)
       .limit(1)
       .maybeSingle();
