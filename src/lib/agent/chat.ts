@@ -18,7 +18,15 @@ import { tryDecryptSecret } from "@/lib/crypto";
  */
 
 const MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_TOKENS = 1024;
+// Raised 1024 -> 4096. The agent now opens every reply with a real
+// <thinking> ReAct block (see preamble.ts REASONING PROTOCOL) on top of
+// the visible answer. At 1024 the thinking trace + a full reply routinely
+// collided with the cap, truncating one or the other mid-sentence. 4096
+// gives genuine headroom for "real reasoning + full reply" without
+// touching the code-generation paths, which pass their own larger
+// `maxTokens` override (8192) explicitly. Callers that want a tighter
+// budget can still override downward via the `maxTokens` input.
+const DEFAULT_MAX_TOKENS = 4096;
 const RECENT_HISTORY = 6;
 
 type AgentChatResult =
@@ -619,9 +627,10 @@ export async function chatReply(input: {
    */
   noHandoff?: boolean;
   /**
-   * Optional: override Anthropic max_tokens. Default 1024 (chat reply
-   * length). Mini-SaaS generator + other code-generation paths set this
-   * higher (8192) so the model has room for a full HTML doc + assets.
+   * Optional: override Anthropic max_tokens. Default 4096 (room for the
+   * <thinking> ReAct block + a full chat reply). Mini-SaaS generator +
+   * other code-generation paths set this higher (8192) so the model has
+   * room for a full HTML doc + assets.
    */
   maxTokens?: number;
   /**

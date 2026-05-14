@@ -77,6 +77,7 @@ export async function buildAgentChatPreamble(input: {
     "- See API keys after they're saved (they're encrypted at rest).\n" +
     "- Modify the running VPS or Docker containers.\n" +
     "- Change an agent's role, department, title, or archive/create/delete agents. There is no tool for that - it is operator UI work at /agents and /departments.\n\n" +
+    "INFRASTRUCTURE IS NOT MY CONCERN AND I HAVE ZERO VISIBILITY INTO IT. I do NOT know - and must NEVER guess, invent, diagnose, or escalate - anything about: the model runtime, OAuth token pools, API quotas / 429s / rate limits, the executor, the drain server, deploy status, the database, ports, or 'Path A vs Path B'. If a tool call or a delegated run does not come back with a result, I state ONLY the plain observable fact ('the Gmail call did not return a result' / 'that delegated run did not finish') and offer to retry or hand it to the operator - I do NOT diagnose WHY, I do NOT name an infra cause, I do NOT create a task or send a message to 'escalate an outage', and I do NOT invent failure counts or a history of prior escalations. Inventing an infra incident is a hallucination, not proactivity. If the operator explicitly asks about infra, the honest answer is 'I have no visibility into that - ask whoever has deploy access.'\n\n" +
     "If you need a server action: ping Pedro or whoever has deploy access. If you need a new Composio app wired: go to /connections and click Connect, no server work needed.\n\n" +
     "NEVER claim you did something you have no tool for. If an operator asks you to change a role/department/archive an agent, do NOT reply 'updating now' or 'done' - say plainly: 'I can't change that myself - do it at /agents (or /departments) and I'll work with the updated roster.' The live roster below is your source of truth; trust it over any memory of who does what.\n\n" +
     "NEVER ask the operator to paste passwords, API keys, or SSH credentials into chat. If they offer, refuse and tell them to revoke whatever they pasted.\n\n" +
@@ -971,6 +972,50 @@ export async function buildAgentChatPreamble(input: {
   } catch (err) {
     console.warn(
       "[preamble] past memories skipped:",
+      (err as Error).message,
+    );
+  }
+
+  // 2b. Recent reasoning. Every reply opens with a <thinking> ReAct block
+  //   that thinking.ts extracts and persists to rgaios_audit_log
+  //   (kind chat_thinking, detail->>brief = the trace text, actor_id =
+  //   the agent). Until now those traces were write-only - the model
+  //   never saw its own prior reasoning, so every turn restarted cold.
+  //   Feed the last few back in so reasoning COMPOUNDS across turns: the
+  //   agent can see what it just decided and build on it instead of
+  //   re-deriving the same plan. Capped tight like the memory/signals
+  //   blocks; best-effort - a failed query just skips the block.
+  try {
+    const { data: traces } = await db
+      .from("rgaios_audit_log")
+      .select("ts, detail")
+      .eq("organization_id", orgId)
+      .eq("kind", "chat_thinking")
+      .eq("actor_id", agentId)
+      .order("ts", { ascending: false })
+      .limit(4);
+    const traceRows = (traces ?? []) as Array<{
+      ts: string;
+      detail: { brief?: string };
+    }>;
+    const block = traceRows
+      .map((t) => (t.detail?.brief ?? "").trim())
+      .filter((b) => b.length > 0)
+      .reverse()
+      .map((b, i) => `${i + 1}. ${b}`)
+      .join("\n");
+    if (block) {
+      preamble +=
+        (preamble ? "\n\n" : "") +
+        "═══ YOUR RECENT REASONING (last few turns) ═══\n\n" +
+        "These are the <thinking> traces from your own most recent replies in this thread, oldest first. Use them to stay consistent and build on what you already decided - do NOT re-derive a plan you just made, and do NOT contradict a conclusion you already landed on without a new reason.\n" +
+        block +
+        "\n";
+    }
+  } catch (err) {
+    // best-effort - a reasoning-lookup failure never blocks the reply
+    console.warn(
+      "[preamble] recent reasoning skipped:",
       (err as Error).message,
     );
   }
