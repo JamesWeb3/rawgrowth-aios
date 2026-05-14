@@ -139,13 +139,40 @@ registerTool({
     }
 
     const items = Array.isArray(parsed) ? parsed.slice(0, limit) : [];
-    const preview = items
-      .slice(0, 5)
-      .map((it, i) => `[${i}] ${JSON.stringify(it).slice(0, 300)}`)
-      .join("\n");
+
+    // Human-readable list instead of a raw JSON dump. Most scrape actors
+    // (Instagram, web) return items with some recognisable subset of
+    // caption/title/text + url + an author + engagement counts. Pull
+    // those out per item; fall back to a short JSON slice only when an
+    // item has none of the known fields.
+    const s = (v: unknown): string =>
+      typeof v === "string" ? v : v == null ? "" : String(v);
+    const lines = items.slice(0, 15).map((raw, i) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const title =
+        s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";
+      const url = s(o.url) || s(o.link) || s(o.postUrl);
+      const who = s(o.ownerUsername) || s(o.username) || s(o.author);
+      const likes = o.likesCount ?? o.likeCount ?? o.likes;
+      const comments = o.commentsCount ?? o.commentCount ?? o.comments;
+      const meta = [
+        who && `@${who}`,
+        likes != null && `${likes} likes`,
+        comments != null && `${comments} comments`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const head =
+        title.replace(/\s+/g, " ").slice(0, 120) ||
+        (url ? "(no caption)" : JSON.stringify(o).slice(0, 120));
+      return `• ${head}${meta ? ` (${meta})` : ""}${url ? `\n  ${url}` : ""}`;
+    });
+    const more = items.length > 15 ? `\n…and ${items.length - 15} more` : "";
 
     return text(
-      `Actor ${actorId} returned ${items.length} item(s).\n${preview}`,
+      items.length === 0
+        ? `Actor ${actorId} ran - 0 items returned.`
+        : `Actor ${actorId} returned ${items.length} item(s):\n${lines.join("\n")}${more}`,
     );
   },
 });
