@@ -426,8 +426,12 @@ test("all rows cold + sibling fresh row -> fresh fires first", async () => {
         "user-cold",
       ),
     );
-    // Both rows tried twice (fresh pass + cold pass) = 4 calls.
-    assert.equal(composioCalls.length, 4);
+    // Each row tried exactly ONCE: pass 1 attempts both fresh rows,
+    // both 429, both marked cold + recorded in `attempted`; pass 2's
+    // filter skips already-attempted rows so it re-runs nothing and
+    // the pool fails fast = 2 calls. (Pre-fix this was 4 - pass 2's
+    // `() => true` filter re-ran the rows pass 1 already failed.)
+    assert.equal(composioCalls.length, 2);
 
     // Pass 2: still both cold (60s TTL). But now we add a third row
     // that's brand-new (fresh). Fresh row should fire first.

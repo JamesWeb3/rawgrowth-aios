@@ -459,9 +459,19 @@ export async function composioCall<T = unknown>(
   // Multi-row pool. Two-pass: fresh tokens first, then warm-up cold
   // ones if every fresh row failed. Avoids burning cycles on a row we
   // just saw 429 on while a sibling row is idle.
+  //
+  // Pass 1 attempts only rows not currently on cooldown (the "fresh"
+  // tokens). Pass 2 is the fallback for the rows pass 1 skipped - the
+  // ones that were already cold when the call started. It must NOT
+  // re-run rows pass 1 already attempted-and-failed: that just doubles
+  // the wasted calls + latency on a fully-broken pool. We track every
+  // connId we actually attempted in pass 1 and have pass 2 exclude
+  // them, so when pass 1 already covered the whole pool pass 2 is a
+  // no-op and we fail fast on the real upstream error below.
+  const attempted = new Set<string>();
   const passes: Array<(connId: string) => boolean> = [
     (id) => !isOnCooldown(id),
-    () => true,
+    (id) => !attempted.has(id),
   ];
 
   let lastErr: unknown = null;
@@ -469,6 +479,7 @@ export async function composioCall<T = unknown>(
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (!filter(row.nango_connection_id)) continue;
+      attempted.add(row.nango_connection_id);
       try {
         return await executeOnce<T>(
           row,
