@@ -75,7 +75,7 @@ export function BoardColumn({
 }) {
   return (
     <article
-      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card/40 backdrop-blur-sm transition-all duration-200 hover:border-border hover:bg-card/60"
+      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card/40 backdrop-blur-sm transition-colors duration-200 hover:border-border hover:bg-card/60"
       style={{ minHeight: 380 }}
     >
       {/* Column header with accent dot */}

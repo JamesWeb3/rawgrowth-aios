@@ -12,7 +12,6 @@ import { useConnections } from "@/lib/connections/use-connections";
 import {
   CATALOG_CATEGORIES,
   CONNECTOR_CATALOG,
-  type CatalogCategory,
   type CatalogEntry,
 } from "@/lib/connections/catalog";
 import { AllAppsModal } from "@/components/connections/all-apps-modal";
@@ -290,7 +289,7 @@ function ConnectorCard({
   return (
     <Card
       className={
-        "group relative overflow-hidden border bg-card/40 transition-all duration-150 hover:bg-card/70 " +
+        "group relative overflow-hidden border bg-card/40 transition-colors duration-150 hover:bg-card/70 " +
         (connected ? "border-primary/30" : "border-border hover:border-border")
       }
     >

@@ -103,6 +103,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Stale subagent worktrees - the harness creates .claude/worktrees/<id>
+    // for isolated agents. They are untracked copies, not source, so
+    // eslint should never lint them.
+    ".claude/**",
     // Brand-rule source files reference the banned strings literally;
     // exempting them here avoids self-referential lint errors.
     "src/lib/brand/eslint-banned-classes.mjs",
