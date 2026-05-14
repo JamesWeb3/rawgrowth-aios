@@ -348,13 +348,20 @@ export async function executeChatTask(input: {
   // Claim the row: only flip pending → running once. Skip if a drain
   // worker already moved it. Org-scoped so a runId from another org
   // can never be claimed through this path.
+  //
+  // Also pull input_payload off the claimed row: the delegating side
+  // (extractAndCreateTasks here, execAgentInvoke in agent-commands.ts)
+  // writes context / constraints / peer positions onto input_payload,
+  // and without reading it back this path ran the assignee on a bare
+  // title + EMPTY history - blind to the framing that produced the
+  // task, and (for a council) blind to the other heads' positions.
   const { data: claimed } = await db
     .from("rgaios_routine_runs")
     .update({ status: "running", started_at: startedAt } as never)
     .eq("id", input.runId)
     .eq("organization_id", input.orgId)
     .eq("status", "pending")
-    .select("id, routine_id")
+    .select("id, routine_id, input_payload")
     .maybeSingle();
   if (!claimed) return;
 
@@ -381,10 +388,52 @@ export async function executeChatTask(input: {
     .maybeSingle();
   const orgName = (org as { name: string } | null)?.name ?? null;
 
+  // Surface whatever prior context the delegating side wrote onto the
+  // run's input_payload. Before this, executeChatTask ran with
+  // `historyOverride: []` + a bare title - a delegated agent (and every
+  // head of a council) ran on a blank slate, never seeing the framing
+  // that produced the task or the sibling heads' positions. We don't
+  // redesign orchestration here; we just stop dropping context that is
+  // already (or can be) on the input.
+  const payload =
+    (claimed as { input_payload?: Record<string, unknown> | null })
+      .input_payload ?? {};
+  const ctx = extractTaskContext(payload);
+
   // Build preamble with task framing - lead with the actual task,
-  // then attach the standard agent preamble underneath.
-  const userMessage =
-    `[Task assigned to you]\nTitle: ${input.title}\n\nDescription: ${input.description}\n\nProduce the deliverable now. Be concrete - no "I'll get on it" language.`;
+  // then attach the standard agent preamble underneath. Any constraints
+  // / output-format / explicit context fields get folded into the task
+  // message so the assignee sees its boundaries inline.
+  const userMessageParts = [
+    `[Task assigned to you]\nTitle: ${input.title}\n\nDescription: ${input.description}`,
+  ];
+  if (ctx.context) {
+    userMessageParts.push(`Context from the delegating agent:\n${ctx.context}`);
+  }
+  if (ctx.constraints) {
+    userMessageParts.push(`Constraints:\n${ctx.constraints}`);
+  }
+  if (ctx.outputFormat) {
+    userMessageParts.push(`Output format:\n${ctx.outputFormat}`);
+  }
+  if (ctx.peerPositions.length > 0) {
+    // Council path: this head is one voice of several dispatched on the
+    // SAME question. Hand it the other heads' positions so it can
+    // actually RESPOND to them instead of writing a parallel monologue.
+    userMessageParts.push(
+      "Peer positions so far (other heads on this same question):\n" +
+        ctx.peerPositions
+          .map((p, idx) => `${idx + 1}. ${p}`)
+          .join("\n") +
+        "\n\nArgue your own angle. Say explicitly where you AGREE and " +
+        "where you DISAGREE with the peer positions above - do not just " +
+        "restate them.",
+    );
+  }
+  userMessageParts.push(
+    'Produce the deliverable now. Be concrete - no "I\'ll get on it" language.',
+  );
+  const userMessage = userMessageParts.join("\n\n");
 
   let extraPreamble = "";
   try {
@@ -396,6 +445,26 @@ export async function executeChatTask(input: {
     });
   } catch {}
 
+  // Thread the originating operator ask / delegating-agent framing as
+  // real conversation history instead of a blank slate. When the input
+  // carries the originating ask, the assignee sees the conversation it
+  // is joining (operator question -> delegating agent -> "now you");
+  // when it doesn't, history stays empty - same as before, just no
+  // longer unconditionally so.
+  const priorTurns: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }> = [];
+  if (ctx.operatorAsk) {
+    priorTurns.push({ role: "user", content: ctx.operatorAsk });
+  }
+  if (ctx.delegatingFraming) {
+    priorTurns.push({
+      role: "assistant",
+      content: ctx.delegatingFraming,
+    });
+  }
+
   const result = await chatReply({
     organizationId: input.orgId,
     organizationName: orgName,
@@ -403,7 +472,7 @@ export async function executeChatTask(input: {
     userMessage,
     publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
     agentId: input.assigneeAgentId,
-    historyOverride: [],
+    historyOverride: priorTurns,
     extraPreamble,
     noHandoff: true,
   });
@@ -488,4 +557,89 @@ export async function executeChatTask(input: {
       );
     }
   }
+}
+
+/**
+ * Pull the optional prior-context fields off a chat-task run's
+ * input_payload. extractAndCreateTasks (this file) and execAgentInvoke
+ * (agent-commands.ts) own the WRITE side; this is the read side, kept
+ * tolerant so a missing/oddly-shaped field just yields "no context"
+ * rather than throwing inside the executor.
+ *
+ * Recognised fields (all optional, all string unless noted):
+ *   - context              : free-form framing from the delegating agent
+ *   - constraints          : boundaries / scope limits for the assignee
+ *   - output_format        : the exact reply shape the delegator wants
+ *   - operator_ask /
+ *     origin_operator_ask  : the original operator question that kicked
+ *                            off the delegation chain - threaded as a
+ *                            `user` history turn
+ *   - delegating_framing /
+ *     framing              : how the delegating agent framed the handoff
+ *                            - threaded as an `assistant` history turn
+ *   - peer_positions /
+ *     council_peers /
+ *     peer_outputs         : string | string[]; the OTHER council heads'
+ *                            positions on the same question, so this
+ *                            head can argue against them (real debate
+ *                            instead of parallel monologue)
+ *
+ * NOTE for the orchestration side: extractAndCreateTasks currently only
+ * writes `{ delegated_by_agent_id, title }` onto input_payload, so for
+ * <task>-block delegations these fields are absent and behaviour is
+ * unchanged (bare title, empty history) until the write side starts
+ * populating them. The council case (peer_positions) needs the
+ * dispatcher - whatever stacks the council heads - to write each head's
+ * sibling positions onto its run's input_payload; the read plumbing is
+ * now here and ready for it.
+ */
+function extractTaskContext(payload: Record<string, unknown>): {
+  context: string;
+  constraints: string;
+  outputFormat: string;
+  operatorAsk: string;
+  delegatingFraming: string;
+  peerPositions: string[];
+} {
+  const str = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = payload[k];
+      if (typeof v === "string" && v.trim()) return v.trim().slice(0, 4000);
+    }
+    return "";
+  };
+  const peers: string[] = [];
+  for (const k of ["peer_positions", "council_peers", "peer_outputs"]) {
+    const v = payload[k];
+    if (typeof v === "string" && v.trim()) {
+      peers.push(v.trim().slice(0, 4000));
+    } else if (Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === "string" && item.trim()) {
+          peers.push(item.trim().slice(0, 4000));
+        } else if (
+          item &&
+          typeof item === "object" &&
+          typeof (item as { position?: unknown }).position === "string"
+        ) {
+          // tolerate { agent, position } shaped entries
+          const o = item as { agent?: unknown; position: string };
+          const who =
+            typeof o.agent === "string" && o.agent.trim()
+              ? `${o.agent.trim()}: `
+              : "";
+          peers.push(`${who}${o.position.trim()}`.slice(0, 4000));
+        }
+      }
+    }
+    if (peers.length > 0) break;
+  }
+  return {
+    context: str("context"),
+    constraints: str("constraints"),
+    outputFormat: str("output_format", "outputFormat"),
+    operatorAsk: str("operator_ask", "origin_operator_ask"),
+    delegatingFraming: str("delegating_framing", "framing"),
+    peerPositions: peers,
+  };
 }

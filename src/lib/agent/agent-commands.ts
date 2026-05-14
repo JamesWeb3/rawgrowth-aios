@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { composioAction } from "@/lib/mcp/proxy";
 import { extractThinking } from "@/lib/agent/thinking";
+import { chatComplete } from "@/lib/llm/provider";
 
 /**
  * Atlas / dept-head JSON command extraction. The chat reply may include
@@ -654,6 +655,69 @@ async function loadIncomingChain(
   return { chain: [], depth: 0 };
 }
 
+/**
+ * Independent critic pass on a delegated agent's deliverable. The gap
+ * this closes: without it, the orchestrator (Atlas / a dept head) that
+ * dispatched the work is the same agent that judges the work, in the
+ * same turn, in prose - a confident-but-wrong deliverable ships
+ * unchecked. This runs ONE cheap LLM call with a tight critic prompt
+ * that only knows the task + the returned output, so its verdict is
+ * not coloured by the dispatcher's own framing.
+ *
+ * Returns { verdict: "pass" } or { verdict: "refine", note }. Best
+ * effort: any failure (no model, parse miss, thrown error) resolves to
+ * "pass" with a logged warning - the critic must NEVER break or stall
+ * the delegation it is grading. It does NOT auto-retry or re-dispatch;
+ * a "refine" verdict is surfaced to the orchestrator + operator so they
+ * decide what to do (auto-retry would risk delegation loops - separate
+ * concern).
+ */
+async function verifyDelegatedOutput(
+  task: string,
+  output: string,
+): Promise<{ verdict: "pass" | "refine"; note?: string }> {
+  try {
+    const res = await chatComplete({
+      system:
+        "You are an independent QA critic. You did NOT do the work and " +
+        "did NOT delegate it - you only check whether a delegated " +
+        "deliverable actually satisfies the task it was given. Be " +
+        "strict but fair: judge substance, not length or tone. Reply " +
+        "with EXACTLY one line, either `PASS` or `REFINE: <one-line " +
+        "reason>`. No other text.",
+      messages: [
+        {
+          role: "user",
+          content:
+            `TASK THAT WAS DELEGATED:\n${task.slice(0, 2000)}\n\n` +
+            `WHAT THE DELEGATED AGENT RETURNED:\n${output.slice(0, 4000)}\n\n` +
+            "Does the returned output actually satisfy the task? " +
+            "Reply PASS or REFINE: <one-line reason>.",
+        },
+      ],
+      temperature: 0,
+    });
+    const line = (res.text ?? "").trim();
+    // Tolerant parse: model may prefix/wrap. Look for REFINE first
+    // (the actionable verdict); anything else - including a bare PASS
+    // or an empty / unparseable reply - is treated as pass so a flaky
+    // critic never blocks a genuinely-good deliverable.
+    const refineMatch = line.match(/REFINE\s*[:\-]?\s*(.*)/i);
+    if (refineMatch) {
+      const note =
+        refineMatch[1].trim().replace(/\s+/g, " ").slice(0, 240) ||
+        "critic flagged the output but gave no reason";
+      return { verdict: "refine", note };
+    }
+    return { verdict: "pass" };
+  } catch (err) {
+    console.warn(
+      `[agent-commands] verification critic call failed - proceeding as pass: ${(err as Error).message}`,
+    );
+    return { verdict: "pass" };
+  }
+}
+
 async function execAgentInvoke(
   orgId: string,
   speakerId: string,
@@ -938,10 +1002,32 @@ async function execAgentInvoke(
     : null;
   const delegationOk = finalStatus === "succeeded";
 
+  // Independent verification / critic pass. The orchestrator that
+  // dispatched this work would otherwise grade its own delegated output
+  // in-prose, in the same turn - no real check. Run ONE cheap critic
+  // call on a SUCCESSFUL deliverable before it is presented as done.
+  // Only on success + non-empty output: a failed/timed-out run has
+  // nothing to verify, and the failure is already surfaced. The call is
+  // best-effort - verifyDelegatedOutput swallows its own errors and
+  // resolves to "pass", so this never breaks or stalls the delegation.
+  let verification: { verdict: "pass" | "refine"; note?: string } | null =
+    null;
+  if (delegationOk && delegatedOutput) {
+    verification = await verifyDelegatedOutput(taskText, delegatedOutput);
+  }
+  const needsRefine = verification?.verdict === "refine";
+
   // summary: on success, lead with the actual result so even the flat
-  // text fallback (legacy bubble / Telegram) carries real content.
+  // text fallback (legacy bubble / Telegram) carries real content. When
+  // the critic flagged it, append a one-line verification note so the
+  // orchestrator + operator see the deliverable is contested - we do
+  // NOT auto-retry here, surfacing the verdict is the fix.
   const summary = delegationOk && delegatedOutput
-    ? `${resolved.name} delivered: ${delegatedOutput.slice(0, 400)}`
+    ? `${resolved.name} delivered: ${delegatedOutput.slice(0, 400)}${
+        needsRefine
+          ? `\n(verification: needs refinement - ${verification?.note})`
+          : ""
+      }`
     : finalStatus && !delegationOk
       ? `${resolved.name} run ${finalStatus}: ${(runError ?? "no error text").slice(0, 200)}`
       : `Dispatched to ${resolved.name}: ${taskText.slice(0, 120)}`;
@@ -960,6 +1046,16 @@ async function execAgentInvoke(
       delegated_status: finalStatus ?? "timeout",
       delegated_output: delegatedOutput,
       delegated_error: runError,
+      // Independent critic verdict on the deliverable. Absent (null)
+      // when there was nothing to verify (failed / timed-out / empty
+      // run). { verdict: "pass" } or { verdict: "refine", note } - the
+      // chat route + orchestration card read this to flag a contested
+      // handoff instead of shipping it silently.
+      verification: verification
+        ? verification.verdict === "refine"
+          ? { verdict: "refine", note: verification.note }
+          : { verdict: "pass" }
+        : null,
     },
   };
 }
