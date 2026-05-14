@@ -56,23 +56,41 @@ function humanizeToolResult(
     result && typeof result === "object" && "data" in result
       ? (result as { data?: unknown }).data
       : result;
-  const countOf = (v: unknown): number | null => {
-    if (Array.isArray(v)) return v.length;
+  // Pull the array of items out of whatever wrapper Composio used.
+  const listOf = (v: unknown): unknown[] | null => {
+    if (Array.isArray(v)) return v;
     if (v && typeof v === "object") {
       const o = v as Record<string, unknown>;
       for (const k of ["messages", "items", "events", "data", "results"]) {
-        if (Array.isArray(o[k])) return (o[k] as unknown[]).length;
+        if (Array.isArray(o[k])) return o[k] as unknown[];
       }
     }
     return null;
   };
+  const countOf = (v: unknown): number | null => {
+    const l = listOf(v);
+    return l ? l.length : null;
+  };
+  const str = (v: unknown): string =>
+    typeof v === "string" ? v : v == null ? "" : String(v);
   // Gmail
   if (app === "gmail" || a.startsWith("GMAIL")) {
     if (a.includes("FETCH") || a.includes("LIST")) {
-      const n = countOf(data);
-      return n === null
-        ? "Checked Gmail - got a response."
-        : `Fetched ${n} email${n === 1 ? "" : "s"} from the inbox.`;
+      const list = listOf(data);
+      if (!list) return "Checked Gmail - got a response.";
+      if (list.length === 0) return "Inbox is empty - no emails matched.";
+      // List the actual emails so the operator sees the inbox content
+      // in chat, not just a count. subject + sender, one per line.
+      const lines = list.slice(0, 10).map((m) => {
+        const o = (m ?? {}) as Record<string, unknown>;
+        const subject =
+          str(o.subject) || str(o.snippet) || str(o.preview) || "(no subject)";
+        const from =
+          str(o.sender) || str(o.from) || str(o.fromEmail) || "(unknown sender)";
+        return `• "${subject.slice(0, 90)}" - ${from.slice(0, 60)}`;
+      });
+      const more = list.length > 10 ? `\n…and ${list.length - 10} more` : "";
+      return `Fetched ${list.length} email${list.length === 1 ? "" : "s"}:\n${lines.join("\n")}${more}`;
     }
     if (a.includes("SEND")) return "Sent the email.";
     if (a.includes("DRAFT")) return "Created an email draft.";
@@ -97,10 +115,22 @@ function humanizeToolResult(
   }
   // Instagram
   if (app === "instagram" || a.startsWith("INSTAGRAM")) {
-    const n = countOf(data);
-    return n === null
-      ? "Pulled Instagram data."
-      : `Pulled ${n} Instagram post${n === 1 ? "" : "s"}.`;
+    const list = listOf(data);
+    if (!list) return "Pulled Instagram data.";
+    if (list.length === 0) return "No Instagram posts matched.";
+    const lines = list.slice(0, 10).map((p) => {
+      const o = (p ?? {}) as Record<string, unknown>;
+      const cap =
+        str(o.caption) || str(o.text) || str(o.title) || "(no caption)";
+      const who = str(o.ownerUsername) || str(o.username) || str(o.owner);
+      const likes = o.likesCount ?? o.likeCount ?? o.likes;
+      const meta = [who && `@${who}`, likes != null && `${likes} likes`]
+        .filter(Boolean)
+        .join(" · ");
+      return `• ${cap.slice(0, 100).replace(/\s+/g, " ")}${meta ? ` (${meta})` : ""}`;
+    });
+    const more = list.length > 10 ? `\n…and ${list.length - 10} more` : "";
+    return `Pulled ${list.length} Instagram post${list.length === 1 ? "" : "s"}:\n${lines.join("\n")}${more}`;
   }
   // Slack
   if (app === "slack" || a.startsWith("SLACK")) {
@@ -291,11 +321,16 @@ async function execToolCall(
     };
   }
   const { tool, args } = payload as { tool?: string; args?: unknown };
-  if (tool !== "composio_use_tool") {
+  // Chat tool_call surface supports composio_use_tool plus the native
+  // Apify actor tools (Apify isn't a Composio app - it's wired as its
+  // own MCP tool in src/lib/mcp/tools/apify.ts). Anything else is
+  // refused: the dashboard chat path has no MCP drain handoff.
+  const APIFY_TOOLS = new Set(["apify_run_actor", "apify_list_actor_runs"]);
+  if (tool !== "composio_use_tool" && !APIFY_TOOLS.has(tool ?? "")) {
     return {
       ok: false,
       type: "tool_call",
-      summary: `tool_call: only composio_use_tool is supported from chat (got "${tool ?? "(missing)"}")`,
+      summary: `tool_call: supported tools are composio_use_tool, apify_run_actor, apify_list_actor_runs (got "${tool ?? "(missing)"}")`,
     };
   }
   if (!args || typeof args !== "object") {
@@ -304,6 +339,42 @@ async function execToolCall(
       type: "tool_call",
       summary: "tool_call: args must be a JSON object",
     };
+  }
+
+  // Apify branch: route straight through the MCP registry. The apify
+  // tools own their key lookup + actor run; we just adapt the MCP
+  // ToolResult shape into a CommandResult so the orchestration card
+  // renders the scraped posts the same way a composio result does.
+  if (APIFY_TOOLS.has(tool ?? "")) {
+    try {
+      await import("@/lib/mcp/tools"); // side-effect: register all MCP tools
+      const { callTool } = await import("@/lib/mcp/registry");
+      const res = await callTool(
+        tool as string,
+        args as Record<string, unknown>,
+        { organizationId: orgId, userId: callerUserId },
+      );
+      const out = res.content?.map((c) => c.text).join("\n").trim() ?? "";
+      if (res.isError) {
+        return {
+          ok: false,
+          type: "tool_call",
+          summary: `${tool} failed: ${out.slice(0, 240) || "unknown error"}`,
+        };
+      }
+      return {
+        ok: true,
+        type: "tool_call",
+        summary: out.slice(0, 1200) || `${tool} ran - no items returned.`,
+        detail: { tool, result_preview: out.slice(0, 4000) },
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        type: "tool_call",
+        summary: `${tool} failed: ${(err as Error).message.slice(0, 200)}`,
+      };
+    }
   }
   const a = args as {
     app?: string;
@@ -442,6 +513,16 @@ async function execAgentInvoke(
     };
   }
   const db = supabaseAdmin();
+  // Resolve the speaker's display name for the delegation card. The
+  // function only receives `speakerId`; `delegated_by_name` needs the
+  // human-readable name so the operator sees who farmed the task out.
+  const { data: speakerRow } = await db
+    .from("rgaios_agents")
+    .select("name")
+    .eq("id", speakerId)
+    .maybeSingle();
+  const speakerName =
+    (speakerRow as { name: string } | null)?.name ?? "an agent";
   // Create a routine + a pending run scoped to the assignee. The chat
   // task pipeline (tasks.ts executeChatTask) runs the assignee's chat
   // reply against this task description and stores the output. Same
@@ -502,11 +583,17 @@ async function execAgentInvoke(
   // Marti -> Scan) retains the context of what Scan just farmed out to
   // Kasia. Without this, tasks.ts only writes to the assignee's thread
   // and the caller's chat loses the result across turns.
+  //
+  // Hoisted to function scope (not the `if (runId)` block) so the final
+  // return can carry the real delegated output + status in `detail` -
+  // the chat route streams that straight into the orchestration card so
+  // the operator sees the dept head's ACTUAL result live, not just
+  // "dispatched" + a refresh-only DB row.
+  let finalStatus: string | null = null;
+  let runOutput: Record<string, unknown> | null = null;
+  let runError: string | null = null;
   if (runId) {
     const pollDeadline = Date.now() + 60_000;
-    let finalStatus: string | null = null;
-    let runOutput: Record<string, unknown> | null = null;
-    let runError: string | null = null;
     while (Date.now() < pollDeadline) {
       const { data: polled } = await db
         .from("rgaios_routine_runs")
@@ -577,15 +664,38 @@ async function execAgentInvoke(
     }
   }
 
+  // The real delegated output (the dept head's actual reply), pulled
+  // from the polled run. This is what makes the orchestration "real" on
+  // the operator's screen - the handoff card shows what the agent
+  // produced, not just that a dispatch happened.
+  const delegatedOutput =
+    (runOutput?.summary as string | undefined) ??
+    (runOutput?.reply as string | undefined) ??
+    null;
+  const delegationOk = finalStatus === "succeeded";
+
+  // summary: on success, lead with the actual result so even the flat
+  // text fallback (legacy bubble / Telegram) carries real content.
+  const summary = delegationOk && delegatedOutput
+    ? `${resolved.name} delivered: ${delegatedOutput.slice(0, 400)}`
+    : finalStatus && !delegationOk
+      ? `${resolved.name} run ${finalStatus}: ${(runError ?? "no error text").slice(0, 200)}`
+      : `Dispatched to ${resolved.name}: ${taskText.slice(0, 120)}`;
+
   return {
     ok: true,
     type: "agent_invoke",
-    summary: `Dispatched to ${resolved.name}: ${taskText.slice(0, 120)}`,
+    summary,
     detail: {
       routine_id: routineId,
       run_id: runId,
       assignee_agent_id: resolved.id,
       assignee_name: resolved.name,
+      delegated_by_name: speakerName,
+      task: taskText.slice(0, 400),
+      delegated_status: finalStatus ?? "timeout",
+      delegated_output: delegatedOutput,
+      delegated_error: runError,
     },
   };
 }

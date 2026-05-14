@@ -3,15 +3,22 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import {
   ArrowUp,
+  ArrowRightLeft,
   Bot,
+  Brain,
+  Check,
   ClipboardList,
   Code,
   Cpu,
   Crown,
+  Eye,
   Megaphone,
   Palette,
   Paperclip,
   PhoneCall,
+  Plug,
+  Wrench,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,9 +26,28 @@ import { Response } from "@/components/ui/response";
 import { Button } from "@/components/ui/button";
 import { AGENT_ROLES } from "@/lib/agents/constants";
 
+// One executed <command> block: a Composio tool call, an agent
+// delegation, or a routine creation. Carried on the system ChatMessage
+// so Bubble can render a structured orchestration card instead of a
+// flat "Commands executed:" text line. `detail` holds the structured
+// payload the card renders (composio result, the delegated agent's real
+// output + status, etc.).
+type CommandResult = {
+  ok: boolean;
+  type: string;
+  summary: string;
+  detail?: Record<string, unknown>;
+};
+
 type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  // System-message variant. When unset, Bubble falls back to parsing
+  // the legacy string prefixes ("Thinking: ", "Commands executed:")
+  // so DB-loaded history still renders as rich cards.
+  kind?: "thinking" | "commands" | "tasks" | "secret" | "plain";
+  // Structured payload for kind==="commands".
+  commands?: CommandResult[];
 };
 
 // Rotating thinking-frame phrases shown in the pending assistant
@@ -423,7 +449,8 @@ export default function AgentChatTab({
               const last = copy[copy.length - 1];
               const note: ChatMessage = {
                 role: "system",
-                content: `Thinking: ${brief}`,
+                kind: "thinking",
+                content: brief,
               };
               if (last && last.role === "assistant" && firstDelta) {
                 copy.splice(copy.length - 1, 0, note);
@@ -453,6 +480,7 @@ export default function AgentChatTab({
               const last = copy[copy.length - 1];
               const warning: ChatMessage = {
                 role: "system",
+                kind: "secret",
                 content: `⚠ Detected ${hits.length} secret(s) in your message: ${hits.join(", ")}. Redacted before processing. Rotate them now.`,
               };
               if (last && last.role === "assistant" && firstDelta) {
@@ -463,12 +491,21 @@ export default function AgentChatTab({
               return copy;
             });
           } else if (event.type === "commands_executed" && Array.isArray(event.results)) {
-            const summary = (event.results as Array<{ ok: boolean; type: string; summary?: string }>)
-              .map((r, i) => `${i + 1}. [${r.ok ? "ok" : "fail"}] ${r.type}${r.summary ? " - " + r.summary : ""}`)
-              .join("\n");
+            // Structured orchestration payload - the Bubble renders each
+            // entry as a tool-call / delegation card with the real
+            // content (emails listed, the dept head's actual output).
+            const commands = (event.results as CommandResult[]).map((r) => ({
+              ok: !!r.ok,
+              type: String(r.type),
+              summary: typeof r.summary === "string" ? r.summary : "",
+              detail:
+                r.detail && typeof r.detail === "object"
+                  ? (r.detail as Record<string, unknown>)
+                  : undefined,
+            }));
             setMessages((prev) => [
               ...prev,
-              { role: "system", content: `Commands executed:\n${summary}` },
+              { role: "system", kind: "commands", content: "", commands },
             ]);
           } else if (event.type === "tasks_created" && Array.isArray(event.tasks)) {
             // Surface the just-created tasks as inline assistant chips
@@ -485,6 +522,7 @@ export default function AgentChatTab({
               ...prev,
               {
                 role: "system",
+                kind: "tasks",
                 content: `Created ${event.tasks.length} task${event.tasks.length === 1 ? "" : "s"}:\n${lines}`,
               },
             ]);
@@ -881,31 +919,7 @@ function Bubble({
   }
 
   if (message.role === "system") {
-    const isSecret = message.content.startsWith("⚠ Detected ");
-    const isThinking = message.content.startsWith("Thinking: ");
-    return (
-      <div className="flex justify-center" data-role="system">
-        <div
-          aria-label={
-            isSecret
-              ? "Secret redacted warning"
-              : isThinking
-                ? "Agent thinking brief"
-                : undefined
-          }
-          className={
-            "rounded-full border px-3 py-1 text-[11px] " +
-            (isSecret
-              ? "border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-300"
-              : isThinking
-                ? "border-t border-[var(--line)] bg-transparent italic text-[10px] text-[var(--text-muted)]/80"
-                : "border-[var(--line)] bg-[var(--brand-surface)]/60 text-[var(--text-muted)]")
-          }
-        >
-          {message.content}
-        </div>
-      </div>
-    );
+    return <SystemBlock message={message} />;
   }
 
   return (
@@ -951,6 +965,318 @@ function Bubble({
           </span>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// ── Orchestration display ─────────────────────────────────────────────
+// System messages used to render as a single flat pill. Now each variant
+// is a structured card so the operator can SEE the agent reasoning, the
+// tool calls (with their actual result content - emails listed, posts
+// scraped), and the CEO → dept-head delegation handoffs. "Orchestration,
+// visible" - the Anthropic Managed Agents / Nous Hermes pattern.
+
+function sysStr(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+
+type SystemKind =
+  | "thinking"
+  | "commands"
+  | "tasks"
+  | "secret"
+  | "delegation"
+  | "plain";
+
+// Resolve a system ChatMessage into a render kind. Structured (live SSE)
+// messages carry an explicit `kind`; DB-loaded history is classified by
+// string prefix so old threads still render as cards (best-effort - no
+// structured command payload survives a page reload).
+function classifySystem(message: ChatMessage): {
+  kind: SystemKind;
+  text: string;
+  commands?: CommandResult[];
+} {
+  if (message.kind === "thinking")
+    return { kind: "thinking", text: message.content };
+  if (message.kind === "commands")
+    return { kind: "commands", text: "", commands: message.commands ?? [] };
+  if (message.kind === "tasks") return { kind: "tasks", text: message.content };
+  if (message.kind === "secret")
+    return { kind: "secret", text: message.content };
+
+  const c = message.content;
+  if (c.startsWith("Thinking: "))
+    return { kind: "thinking", text: c.slice("Thinking: ".length) };
+  if (c.startsWith("⚠ Detected ")) return { kind: "secret", text: c };
+  if (c.startsWith("Created ") && /\btask/i.test(c))
+    return { kind: "tasks", text: c };
+  if (c.startsWith("Commands executed:"))
+    return { kind: "commands", text: c.replace(/^Commands executed:\s*/, "") };
+  if (c.startsWith("Delegated to "))
+    return { kind: "delegation", text: c };
+  return { kind: "plain", text: c };
+}
+
+function SystemBlock({ message }: { message: ChatMessage }) {
+  const { kind, text, commands } = classifySystem(message);
+
+  if (kind === "thinking") {
+    return (
+      <div
+        className="flex justify-center"
+        data-role="system"
+        data-kind="thinking"
+      >
+        <div
+          aria-label="Agent reasoning"
+          className="w-full max-w-[88%] rounded-lg border-l-2 border-[var(--brand-primary)]/45 bg-[var(--brand-surface)]/40 px-3 py-2"
+        >
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
+            <Brain className="size-3" /> Reasoning
+          </div>
+          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-muted)]">
+            {text}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "secret") {
+    return (
+      <div className="flex justify-center" data-role="system" data-kind="secret">
+        <div
+          aria-label="Secret redacted warning"
+          className="rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-600 dark:text-amber-300"
+        >
+          {text}
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "tasks") {
+    return (
+      <div className="flex justify-center" data-role="system" data-kind="tasks">
+        <div className="w-full max-w-[88%] rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+            <ClipboardList className="size-3" /> Tasks
+          </div>
+          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+            {text}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "delegation") {
+    return (
+      <div
+        className="flex justify-center"
+        data-role="system"
+        data-kind="delegation"
+      >
+        <div className="w-full max-w-[92%] rounded-lg border border-[var(--brand-primary)]/30 bg-[var(--brand-surface)]/60 px-3 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
+            <ArrowRightLeft className="size-3" /> Delegation
+          </div>
+          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+            {text}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "commands") {
+    if (commands && commands.length > 0) {
+      return (
+        <div
+          className="flex justify-center"
+          data-role="system"
+          data-kind="commands"
+        >
+          <div className="w-full max-w-[92%] space-y-1.5">
+            {commands.map((cmd, i) => (
+              <OrchestrationCard key={i} cmd={cmd} />
+            ))}
+          </div>
+        </div>
+      );
+    }
+    // Legacy history: no structured array, render the text block.
+    return (
+      <div
+        className="flex justify-center"
+        data-role="system"
+        data-kind="commands"
+      >
+        <div className="w-full max-w-[92%] rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+            <Cpu className="size-3" /> Orchestration
+          </div>
+          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+            {text}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex justify-center" data-role="system" data-kind="plain">
+      <div className="rounded-full border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-1 text-[11px] text-[var(--text-muted)]">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function StatusDot({ ok }: { ok: boolean }) {
+  return ok ? (
+    <span className="inline-flex items-center gap-1 rounded-full bg-[var(--brand-primary)]/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-[var(--brand-primary)]">
+      <Check className="size-2.5" /> ok
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-amber-600 dark:text-amber-300">
+      <X className="size-2.5" /> failed
+    </span>
+  );
+}
+
+// One executed <command> rendered as a card. agent_invoke → a handoff
+// card showing CEO → dept head, the task, the dept head's ACTUAL output,
+// and a "CEO is monitoring" footer. tool_call → a tool card with the
+// Composio/MCP badge + the real result content (emails, posts).
+function OrchestrationCard({ cmd }: { cmd: CommandResult }) {
+  const detail = (cmd.detail ?? {}) as Record<string, unknown>;
+
+  if (cmd.type === "agent_invoke") {
+    const to = sysStr(detail.assignee_name) || "another agent";
+    const from = sysStr(detail.delegated_by_name) || "CEO";
+    const task = sysStr(detail.task);
+    const output = sysStr(detail.delegated_output);
+    const status =
+      sysStr(detail.delegated_status) || (cmd.ok ? "succeeded" : "failed");
+    const delivered = status === "succeeded";
+    return (
+      <div
+        className="rounded-lg border border-[var(--brand-primary)]/30 bg-[var(--brand-surface)]/60 px-3 py-2.5"
+        data-card="delegation"
+      >
+        <div className="flex items-center gap-2">
+          <ArrowRightLeft className="size-3.5 text-[var(--brand-primary)]" />
+          <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-body)]">
+            {from}
+            <span className="text-[var(--text-muted)]">→</span>
+            {to}
+          </span>
+          <span className="ml-auto">
+            <StatusDot ok={delivered} />
+          </span>
+        </div>
+        {task ? (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">
+            <span className="font-medium text-[var(--text-body)]">Task:</span>{" "}
+            {task}
+          </p>
+        ) : null}
+        {output ? (
+          <div className="mt-1.5 rounded-md border border-[var(--line)] bg-[var(--brand-surface-2)] px-2.5 py-1.5">
+            <div className="mb-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
+              {to} delivered
+            </div>
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+              {output}
+            </p>
+          </div>
+        ) : !delivered ? (
+          <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-300">
+            {sysStr(detail.delegated_error) || cmd.summary}
+          </p>
+        ) : null}
+        <div className="mt-1.5 flex items-center gap-1 border-t border-[var(--line)] pt-1.5 text-[9px] text-[var(--text-muted)]">
+          <Eye className="size-2.5" /> {from} is monitoring this handoff
+        </div>
+      </div>
+    );
+  }
+
+  if (cmd.type === "tool_call") {
+    const tool = sysStr(detail.tool);
+    const app = sysStr(detail.app);
+    const action = sysStr(detail.action);
+    const isApify = tool.startsWith("apify");
+    const label = isApify
+      ? tool
+      : app && action
+        ? `${app} · ${action}`
+        : "tool call";
+    return (
+      <div
+        className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
+        data-card="tool"
+      >
+        <div className="flex items-center gap-2">
+          <Wrench className="size-3.5 text-[var(--brand-primary)]" />
+          <span className="text-[11px] font-medium text-[var(--text-body)]">
+            {label}
+          </span>
+          <span className="rounded bg-[var(--brand-surface-2)] px-1.5 py-0.5 text-[9px] font-medium uppercase text-[var(--text-muted)]">
+            {isApify ? "MCP" : "Composio"}
+          </span>
+          <span className="ml-auto">
+            <StatusDot ok={cmd.ok} />
+          </span>
+        </div>
+        <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+          {cmd.summary}
+        </p>
+      </div>
+    );
+  }
+
+  if (cmd.type === "routine_create") {
+    return (
+      <div
+        className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
+        data-card="routine"
+      >
+        <div className="flex items-center gap-2">
+          <ClipboardList className="size-3.5 text-[var(--brand-primary)]" />
+          <span className="text-[11px] font-medium text-[var(--text-body)]">
+            Routine created
+          </span>
+          <span className="ml-auto">
+            <StatusDot ok={cmd.ok} />
+          </span>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-body)]">
+          {cmd.summary}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
+      data-card="generic"
+    >
+      <div className="flex items-center gap-2">
+        <Cpu className="size-3.5 text-[var(--brand-primary)]" />
+        <span className="text-[11px] font-medium text-[var(--text-body)]">
+          {cmd.type}
+        </span>
+        <span className="ml-auto">
+          <StatusDot ok={cmd.ok} />
+        </span>
+      </div>
+      <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+        {cmd.summary}
+      </p>
     </div>
   );
 }

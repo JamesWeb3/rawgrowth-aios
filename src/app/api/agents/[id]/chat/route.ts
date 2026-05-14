@@ -705,7 +705,16 @@ export async function POST(
         // is the response-side substitute for the MCP wire-protocol
         // that Anthropic's OAuth gate refuses to combine with on-call
         // tool_use today.
-        let commandResults: Array<{ ok: boolean; type: string; summary: string }> = [];
+        // `detail` carries the structured payload the orchestration
+        // cards render: composio result_preview, the delegated agent's
+        // real output + status, etc. Keep it on the wire so the client
+        // shows the actual content, not just "dispatched".
+        let commandResults: Array<{
+          ok: boolean;
+          type: string;
+          summary: string;
+          detail?: Record<string, unknown>;
+        }> = [];
         try {
           const ext = await extractAndExecuteCommands({
             orgId,
