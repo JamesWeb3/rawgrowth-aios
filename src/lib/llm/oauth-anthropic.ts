@@ -80,11 +80,30 @@ export type AnthropicMessageResponse = {
 export class AnthropicHttpError extends Error {
   readonly status: number;
   readonly body: string;
-  constructor(status: number, body: string) {
+  /**
+   * Seconds the server told us to wait before retrying. Parsed from the
+   * `retry-after` header. Null when the header is absent (some 5xx) or
+   * malformed. Callers should prefer this over a fixed cooldown.
+   */
+  readonly retryAfterSec: number | null;
+  /**
+   * Reset hints from anthropic-ratelimit-* headers when present. Lets
+   * us schedule a token's "warm at" time precisely rather than guess
+   * with a flat 5-min cooldown that was too aggressive in practice.
+   */
+  readonly resetAt: number | null;
+  constructor(
+    status: number,
+    body: string,
+    retryAfterSec: number | null = null,
+    resetAt: number | null = null,
+  ) {
     super(`Anthropic ${status}: ${body.slice(0, 300)}`);
     this.name = "AnthropicHttpError";
     this.status = status;
     this.body = body;
+    this.retryAfterSec = retryAfterSec;
+    this.resetAt = resetAt;
   }
 }
 
@@ -152,7 +171,28 @@ export async function callAnthropicOauthOnce(
 
   if (!r.ok) {
     const text = await r.text().catch(() => "");
-    throw new AnthropicHttpError(r.status, text);
+    // Capture the server's actual hint instead of guessing with a fixed
+    // cooldown. retry-after is in seconds (RFC 7231 §7.1.3). The
+    // anthropic-ratelimit-*-reset headers carry RFC 3339 timestamps for
+    // when each bucket resets - we pick the soonest non-null one.
+    const retryAfterRaw = r.headers.get("retry-after");
+    const retryAfterSec = retryAfterRaw && /^\d+$/.test(retryAfterRaw)
+      ? Number(retryAfterRaw)
+      : null;
+    const resetTimestamps: number[] = [];
+    for (const h of [
+      "anthropic-ratelimit-requests-reset",
+      "anthropic-ratelimit-input-tokens-reset",
+      "anthropic-ratelimit-output-tokens-reset",
+      "anthropic-ratelimit-tokens-reset",
+    ]) {
+      const v = r.headers.get(h);
+      if (!v) continue;
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) resetTimestamps.push(t);
+    }
+    const resetAt = resetTimestamps.length > 0 ? Math.min(...resetTimestamps) : null;
+    throw new AnthropicHttpError(r.status, text, retryAfterSec, resetAt);
   }
   return (await r.json()) as AnthropicMessageResponse;
 }
@@ -160,14 +200,22 @@ export async function callAnthropicOauthOnce(
 // ─── Multi-turn tool loop with pool rotation ────────────────────────
 
 /**
- * 5min in-process cooldown on tokens we just saw 429 / 401 on.
- * Anthropic Claude Max buckets reset on a ~5 minute cadence; the
- * previous 60s window was too short - we'd rotate back to the same
- * still-cold token and burn the retry budget hitting the same 429.
- * Map keyed on the access_token string, cleared on process restart.
+ * Per-token cooldown driven by the server's actual hint, not a guess.
+ *
+ * Anthropic returns:
+ *   - retry-after: <seconds>     ← RFC 7231 standard, exact wait time
+ *   - anthropic-ratelimit-*-reset: <ISO ts>  ← bucket reset times
+ *
+ * We use the soonest of those when present. Falls back to a 30s floor
+ * when both are missing. A flat 5min was wrong: most 429s on Claude
+ * Max OAuth resolve in seconds (RPM bucket), not minutes (daily quota).
+ *
+ * Cap on the high end keeps a misbehaving header from parking a token
+ * for a literal day. Map keyed on the access_token, cleared on restart.
  */
 const TOKEN_COOLDOWN: Map<string, number> = new Map();
-const COOLDOWN_MS = 5 * 60_000;
+const DEFAULT_COOLDOWN_MS = 30_000;
+const MAX_COOLDOWN_MS = 60 * 60_000;
 
 function isTokenCold(token: string): boolean {
   const until = TOKEN_COOLDOWN.get(token);
@@ -179,8 +227,25 @@ function isTokenCold(token: string): boolean {
   return true;
 }
 
-function markTokenCold(token: string): void {
-  TOKEN_COOLDOWN.set(token, Date.now() + COOLDOWN_MS);
+function markTokenCold(
+  token: string,
+  retryAfterSec: number | null = null,
+  resetAt: number | null = null,
+): void {
+  // Pick the most informative hint we got. retry-after is server's
+  // direct instruction; reset header is the bucket clock; fall back
+  // to a short default. Bounded to MAX_COOLDOWN_MS so a buggy header
+  // can't take a token offline indefinitely.
+  let waitMs: number;
+  if (typeof retryAfterSec === "number" && retryAfterSec > 0) {
+    waitMs = retryAfterSec * 1000;
+  } else if (typeof resetAt === "number" && resetAt > Date.now()) {
+    waitMs = resetAt - Date.now();
+  } else {
+    waitMs = DEFAULT_COOLDOWN_MS;
+  }
+  waitMs = Math.min(Math.max(waitMs, 5_000), MAX_COOLDOWN_MS);
+  TOKEN_COOLDOWN.set(token, Date.now() + waitMs);
 }
 
 export type OauthToolDef = {
@@ -360,7 +425,11 @@ export async function runOauthToolLoop(
           }
           const c = classifyAndLog(err, prefix, i, ordered.length);
           if (!c.rotate) throw err;
-          markTokenCold(tok);
+          // Use server's actual retry-after / reset hint instead of a
+          // fixed cooldown. err is AnthropicHttpError here (rotate=true
+          // implies status was 401 or 429).
+          const httpErr = err instanceof AnthropicHttpError ? err : null;
+          markTokenCold(tok, httpErr?.retryAfterSec ?? null, httpErr?.resetAt ?? null);
         }
       }
     }

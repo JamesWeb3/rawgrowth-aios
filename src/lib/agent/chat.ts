@@ -94,18 +94,19 @@ async function loadClaudeMaxTokenPool(
 }
 
 /**
- * 60s in-process cooldown on tokens we just saw 429 / 401 on. Same
- * window as oauth-first.ts because Anthropic's per-account buckets
- * recover on the same cadence regardless of which call site triggered
- * the throttle. Map cleared on process restart.
+ * Per-token cooldown driven by the server's actual retry-after / reset
+ * hint, not a guessed fixed window. Most 429s on Claude Max OAuth are
+ * the RPM bucket and clear in seconds, not minutes; a flat 5min cooldown
+ * was parking healthy tokens uselessly. We now read `retry-after`
+ * (RFC 7231) and `anthropic-ratelimit-*-reset` headers per response.
+ *
+ * Same semantics as oauth-anthropic.ts:markTokenCold so both call sites
+ * (chat web surface + executor) behave consistently. Map keyed on the
+ * decrypted access_token; cleared on process restart.
  */
 const CHAT_TOKEN_COOLDOWN: Map<string, number> = new Map();
-// Claude Max quota window is 5h; 60s cooldown was too short and the
-// pool kept reusing a 429'd token before the upstream bucket cleared.
-// Bumped to 5min so a single 429 reliably routes traffic to a sibling
-// token until the quota actually resets. Pairs with oauth-anthropic.ts
-// pool rotation that uses the same cooldown semantics on the executor path.
-const CHAT_COOLDOWN_MS = 5 * 60_000;
+const CHAT_DEFAULT_COOLDOWN_MS = 30_000;
+const CHAT_MAX_COOLDOWN_MS = 60 * 60_000;
 
 function isChatTokenCold(token: string): boolean {
   const until = CHAT_TOKEN_COOLDOWN.get(token);
@@ -117,8 +118,21 @@ function isChatTokenCold(token: string): boolean {
   return true;
 }
 
-function markChatTokenCold(token: string): void {
-  CHAT_TOKEN_COOLDOWN.set(token, Date.now() + CHAT_COOLDOWN_MS);
+function markChatTokenCold(
+  token: string,
+  retryAfterSec: number | null = null,
+  resetAt: number | null = null,
+): void {
+  let waitMs: number;
+  if (typeof retryAfterSec === "number" && retryAfterSec > 0) {
+    waitMs = retryAfterSec * 1000;
+  } else if (typeof resetAt === "number" && resetAt > Date.now()) {
+    waitMs = resetAt - Date.now();
+  } else {
+    waitMs = CHAT_DEFAULT_COOLDOWN_MS;
+  }
+  waitMs = Math.min(Math.max(waitMs, 5_000), CHAT_MAX_COOLDOWN_MS);
+  CHAT_TOKEN_COOLDOWN.set(token, Date.now() + waitMs);
 }
 
 /**
@@ -600,9 +614,27 @@ export async function chatReply(input: {
       lastStatus = r.status;
       lastBody = await r.text().catch(() => "");
       if (r.status === 429 || r.status === 401) {
-        markChatTokenCold(tok);
+        // Server's actual hint - retry-after seconds or reset timestamp.
+        // Most 429s are RPM bucket and clear in seconds, not minutes.
+        const retryAfterRaw = r.headers.get("retry-after");
+        const retryAfterSec = retryAfterRaw && /^\d+$/.test(retryAfterRaw) ? Number(retryAfterRaw) : null;
+        const resets: number[] = [];
+        for (const h of [
+          "anthropic-ratelimit-requests-reset",
+          "anthropic-ratelimit-input-tokens-reset",
+          "anthropic-ratelimit-output-tokens-reset",
+          "anthropic-ratelimit-tokens-reset",
+        ]) {
+          const v = r.headers.get(h);
+          if (!v) continue;
+          const t = Date.parse(v);
+          if (!Number.isNaN(t)) resets.push(t);
+        }
+        const resetAt = resets.length > 0 ? Math.min(...resets) : null;
+        markChatTokenCold(tok, retryAfterSec, resetAt);
+        const waitMs = CHAT_TOKEN_COOLDOWN.get(tok)! - Date.now();
         console.warn(
-          `[chat] Claude Max token ${i + 1}/${claudeEntries.length} ${r.status}, cooling ${CHAT_COOLDOWN_MS / 1000}s, rotating`,
+          `[chat] Claude Max token ${i + 1}/${claudeEntries.length} ${r.status}, cooling ${Math.round(waitMs / 1000)}s (retry-after=${retryAfterSec ?? "n/a"}, reset=${resetAt ? new Date(resetAt).toISOString() : "n/a"}), rotating`,
         );
       } else {
         console.warn(
