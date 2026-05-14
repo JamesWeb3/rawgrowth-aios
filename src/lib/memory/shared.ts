@@ -161,7 +161,12 @@ export async function listSharedMemoryForAgent(input: {
   // to test.
   const visible = all.filter((r) => {
     const sc = (r.scope ?? []).map((s) => s.toLowerCase());
-    if (sc.length === 0) return true;
+    // Universal: an empty scope OR the literal "all" (the value the
+    // <shared_memory scope="all"> XML and operator-seeded org facts
+    // use) is visible to every agent regardless of department. Without
+    // the "all" check a CEO/Atlas with no department would never see
+    // org-wide facts.
+    if (sc.length === 0 || sc.includes("all")) return true;
     if (!dept) return false;
     return sc.includes(dept);
   });

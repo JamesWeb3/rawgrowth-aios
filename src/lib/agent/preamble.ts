@@ -106,6 +106,40 @@ export async function buildAgentChatPreamble(input: {
     "\n═══ BE PROACTIVE ═══\n\n" +
     "Do not stop at the literal ask. After you answer, anticipate the obvious next move and offer it - one concrete option, not a vague 'let me know'. If a tool result reveals something worth acting on (a stuck lead, a failed payment, an unanswered ticket, a content gap), flag it without being asked. If you can see the operator will need step N+1, name it. A sharp operator-facing agent is one step ahead, not one step behind - but stay tight: one proactive suggestion, the most useful one, not a list.\n";
 
+  // 0-pre. Shared org memory. Facts every agent should "just know" -
+  //   client uses Shopify, the operator's Instagram is @x, decided to
+  //   drop feature Y - live in rgaios_shared_memory (operator-seeded or
+  //   emitted by peers via <shared_memory>). listSharedMemoryForAgent
+  //   existed but had ZERO callers, so the table was write-only and the
+  //   facts never reached the model. Inject the top facts here so e.g.
+  //   "my Instagram" resolves without the operator typing the handle.
+  try {
+    const { listSharedMemoryForAgent } = await import("@/lib/memory/shared");
+    const { data: deptRow } = await db
+      .from("rgaios_agents")
+      .select("department")
+      .eq("id", agentId)
+      .eq("organization_id", orgId)
+      .maybeSingle();
+    const agentDept = (deptRow as { department?: string | null } | null)
+      ?.department ?? null;
+    const facts = await listSharedMemoryForAgent({
+      orgId,
+      agentId,
+      agentDept,
+      limit: 12,
+    });
+    if (facts.length > 0) {
+      preamble +=
+        "\n\n═══ SHARED ORG MEMORY (facts you already know) ═══\n\n" +
+        "These are established facts about this org and operator. Treat them as ground truth - do NOT ask the operator for something already here, and resolve references against them (e.g. 'my Instagram' -> the handle below).\n" +
+        facts.map((f) => `  - ${f.fact}`).join("\n") +
+        "\n";
+    }
+  } catch {
+    // best-effort - a memory-lookup failure never blocks the reply
+  }
+
   // 0. Authority override (must come BEFORE persona). The seeded
   //    `system_prompt` for some dept heads contains stale "I am a
   //    sub-agent / I cannot emit command blocks" text from an earlier
