@@ -18,15 +18,19 @@ import { tryDecryptSecret } from "@/lib/crypto";
  */
 
 const MODEL = "claude-sonnet-4-6";
-// Raised 1024 -> 4096. The agent now opens every reply with a real
-// <thinking> ReAct block (see preamble.ts REASONING PROTOCOL) on top of
-// the visible answer. At 1024 the thinking trace + a full reply routinely
-// collided with the cap, truncating one or the other mid-sentence. 4096
-// gives genuine headroom for "real reasoning + full reply" without
-// touching the code-generation paths, which pass their own larger
-// `maxTokens` override (8192) explicitly. Callers that want a tighter
-// budget can still override downward via the `maxTokens` input.
-const DEFAULT_MAX_TOKENS = 4096;
+// Raised 1024 -> 32768. The agent now opens every reply with a real
+// <thinking> ReAct block (see preamble.ts REASONING PROTOCOL) and is
+// expected to reason in multiple compounding steps on top of the
+// visible answer. 1024 (and even 4096) routinely collided with the cap,
+// truncating the reasoning or the reply mid-sentence. 32k is the real
+// headroom for genuine multi-step reasoning + a full reply - and
+// max_tokens only caps output, it is not pre-paid, so the ceiling is
+// free until the model actually uses it. Sonnet 4.6 supports a 64k
+// output ceiling; 32k is the safe default that needs no extra beta
+// header. The code-generation paths pass their own `maxTokens`
+// override (8192) explicitly; callers wanting a tighter budget can
+// still override downward.
+const DEFAULT_MAX_TOKENS = 32768;
 const RECENT_HISTORY = 6;
 
 type AgentChatResult =
