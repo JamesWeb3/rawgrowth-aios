@@ -84,6 +84,7 @@ export const NATIVE_INTEGRATION_IDS = new Set<string>([
   "vercel",
   "fathom",
   "meta",
+  "apify",
 ]);
 
 export const CONNECTOR_CATALOG: CatalogEntry[] = [
@@ -118,6 +119,11 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   { key: "tiktok", name: "TikTok Ads", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/tiktok" },
   { key: "tiktok-business", name: "TikTok Business", category: "Marketing", brandColor: "#000000", hasNativeIntegration: false, composioAppName: "tiktok_business", logoUrl: "https://logos.composio.dev/api/tiktok_business" },
   { key: "instagram", name: "Instagram", category: "Marketing", brandColor: "#E4405F", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/instagram" },
+  // apify: bespoke standalone API (api.apify.com), not a Composio app.
+  // Connected via the Workspace API keys card (key stored as 'apify-key').
+  // Intentionally omits logoUrl - keeps the letter avatar like the other
+  // bespoke entries (telegram, supabase, vercel).
+  { key: "apify", name: "Apify", category: "Marketing", brandColor: "#FF9013", hasNativeIntegration: true },
   { key: "youtube", name: "YouTube", category: "Marketing", brandColor: "#FF0000", hasNativeIntegration: false, logoUrl: "https://logos.composio.dev/api/youtube" },
   { key: "facebook-pages", name: "Facebook Pages", category: "Marketing", brandColor: "#1877F2", hasNativeIntegration: false, composioAppName: "facebook", logoUrl: "https://logos.composio.dev/api/facebook" },
 

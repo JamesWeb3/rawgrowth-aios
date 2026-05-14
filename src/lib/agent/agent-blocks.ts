@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { createAgent, deleteAgent } from "@/lib/agents/queries";
+import { DEFAULT_AGENT_RUNTIME, type AgentRole } from "@/lib/agents/constants";
 
 /**
  * `<agent>` block extraction. Lets Atlas (and any dept-head with the
@@ -41,6 +42,27 @@ function parseAttrs(raw: string): Record<string, string> {
     out[m[1].toLowerCase()] = m[2];
   }
   return out;
+}
+
+type TargetAgent = {
+  id: string;
+  is_department_head: boolean | null;
+  name: string;
+};
+
+/** Resolve an existing agent by case-insensitive name within the org. */
+async function resolveTargetAgent(
+  db: ReturnType<typeof supabaseAdmin>,
+  orgId: string,
+  name: string,
+): Promise<TargetAgent | null> {
+  const { data } = await db
+    .from("rgaios_agents")
+    .select("id, is_department_head, name")
+    .eq("organization_id", orgId)
+    .ilike("name", name)
+    .maybeSingle();
+  return data as TargetAgent | null;
 }
 
 export async function extractAndApplyAgentBlocks(input: {
@@ -143,15 +165,25 @@ export async function extractAndApplyAgentBlocks(input: {
         }
         const created = await createAgent(orgId, {
           name,
-          title: attrs.title || attrs.role || null,
-          role: attrs.role || "general",
+          // title/description columns are NOT NULL-tolerant in the DTO -
+          // an absent attr means "no title yet", stored as empty string.
+          title: attrs.title || attrs.role || "",
+          // attrs come from free-form chat markup; the agent is instructed
+          // to emit one of the AGENT_ROLES values, fall back to "general".
+          // The DTO union is the app contract, so narrow here at the boundary.
+          role: (attrs.role || "general") as AgentRole,
           reportsTo: p.id,
-          description: attrs.description || null,
-          runtime: "anthropic-cli",
+          description: attrs.description || "",
+          // runtime is the MODEL the agent runs on, not a provider id.
+          // "anthropic-cli" was a provider/runtime mixup; sub-agents get
+          // the same default model as a normal hire.
+          runtime: DEFAULT_AGENT_RUNTIME,
           budgetMonthlyUsd: 50,
           department: p.department,
           isDepartmentHead: false, // PEDRO RULE: agents can never spawn heads
-          writePolicy: "advisory",
+          // writePolicy omitted: sub-agents start with the default empty
+          // policy (no integration grants). It is a per-tool map, not a
+          // scalar - the old "advisory" string was never a valid value.
         });
         results.push({
           ok: true,
@@ -161,17 +193,7 @@ export async function extractAndApplyAgentBlocks(input: {
           agentId: created.id,
         });
       } else if (action === "archive") {
-        const { data: target } = await db
-          .from("rgaios_agents")
-          .select("id, is_department_head, name")
-          .eq("organization_id", orgId)
-          .ilike("name", name)
-          .maybeSingle();
-        const t = target as {
-          id: string;
-          is_department_head: boolean | null;
-          name: string;
-        } | null;
+        const t = await resolveTargetAgent(db, orgId, name);
         if (!t) {
           results.push({
             ok: false,
@@ -199,17 +221,7 @@ export async function extractAndApplyAgentBlocks(input: {
           agentId: t.id,
         });
       } else if (action === "update") {
-        const { data: target } = await db
-          .from("rgaios_agents")
-          .select("id, is_department_head, name")
-          .eq("organization_id", orgId)
-          .ilike("name", name)
-          .maybeSingle();
-        const t = target as {
-          id: string;
-          is_department_head: boolean | null;
-          name: string;
-        } | null;
+        const t = await resolveTargetAgent(db, orgId, name);
         if (!t) {
           results.push({
             ok: false,

@@ -76,6 +76,72 @@ type ListCacheEntry = { actions: ComposioActionListItem[]; until: number };
 const LIST_CACHE_TTL_MS = 300_000;
 const composioListCache = new Map<string, ListCacheEntry>();
 
+// ─── Connection-scoping for composio_list_tools ─────────────────────
+//
+// Why: composio_list_tools used to call GET /api/v3/tools with ONLY the
+// x-api-key header. composio_use_tool's working path (composioCall ->
+// listComposioTokensForUser) always resolves the org's rgaios_connections
+// rows first, so Composio sees which toolkits the org actually wired and
+// the call succeeds. The discovery call had no equivalent scoping, so for
+// some orgs Composio answered the unscoped /api/v3/tools request with an
+// "isn't connected ... for this org" error body - even though Gmail was
+// genuinely connected and composio_use_tool worked fine. The divergence
+// was: use_tool resolves the connection, list_tools did not.
+//
+// Composio v3's /api/v3/tools accepts an `auth_config_ids` query param
+// to scope the listing to specific connected auth configs. We resolve
+// the org's connected auth_config_ids from the same rgaios_connections
+// table the working path reads, then pass them through. This mirrors
+// composio_use_tool's connection resolution for the discovery surface.
+//
+// The connect flow (src/app/api/connections/composio/route.ts) stores
+// the auth_config_id in two places per connected toolkit:
+//   - a synthetic row `provider_config_key='composio-auth-config:<slug>'`
+//     with the id in `nango_connection_id` (resolveOrCreateAuthConfig).
+//   - the connected-account row's `metadata.composio_auth_config_id`.
+// We read both so a connection wired before either path existed still
+// resolves. Returns [] when the org has no Composio connections at all
+// (e.g. catalog-only browse) so the caller falls back to the unscoped
+// global catalog call - that keeps pure discovery working.
+async function resolveComposioAuthConfigIds(
+  organizationId: string,
+): Promise<string[]> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from("rgaios_connections")
+      .select("provider_config_key, nango_connection_id, metadata")
+      .eq("organization_id", organizationId)
+      .eq("status", "connected");
+    if (error || !data) return [];
+    const ids = new Set<string>();
+    for (const row of data as Array<{
+      provider_config_key: string;
+      nango_connection_id: string | null;
+      metadata: Record<string, unknown> | null;
+    }>) {
+      // Synthetic auth-config cache row: id lives in nango_connection_id.
+      if (
+        row.provider_config_key.startsWith("composio-auth-config:") &&
+        row.nango_connection_id?.startsWith("ac_")
+      ) {
+        ids.add(row.nango_connection_id);
+      }
+      // Connected-account row for a real toolkit: id lives in metadata.
+      if (row.provider_config_key.startsWith("composio:")) {
+        const metaId = (row.metadata as { composio_auth_config_id?: string } | null)
+          ?.composio_auth_config_id;
+        if (typeof metaId === "string" && metaId.startsWith("ac_")) {
+          ids.add(metaId);
+        }
+      }
+    }
+    return [...ids];
+  } catch {
+    // Table missing / RLS surprise. Fall through to unscoped catalog.
+    return [];
+  }
+}
+
 // ─── Tool: composio_list_tools (discovery) ──────────────────────────
 
 registerTool({
@@ -121,6 +187,20 @@ registerTool({
       const baseParams = new URLSearchParams();
       if (filter) baseParams.set("toolkit_slug", filter);
       baseParams.set("limit", String(COMPOSIO_PAGE_LIMIT));
+
+      // Scope the discovery call to the org's connected auth configs,
+      // the same way composio_use_tool resolves the org's connection
+      // before executing. Without this, Composio answered the unscoped
+      // request with "isn't connected ... for this org" for some orgs
+      // even though the toolkit was genuinely wired. When the org has
+      // no Composio connections we leave the param off and fall back to
+      // the global catalog so pure discovery / browse still works.
+      const authConfigIds = await resolveComposioAuthConfigIds(
+        ctx.organizationId,
+      );
+      if (authConfigIds.length > 0) {
+        baseParams.set("auth_config_ids", authConfigIds.join(","));
+      }
 
       const aggregated: ComposioActionListItem[] = [];
       let cursor: string | null = null;

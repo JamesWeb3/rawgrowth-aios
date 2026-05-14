@@ -50,8 +50,11 @@ export function agentFromRow(row: AgentRow): Agent {
     runtime: row.runtime as AgentRuntime,
     budgetMonthlyUsd: row.budget_monthly_usd,
     spentMonthlyUsd: row.spent_monthly_usd,
-    status: row.status,
-    writePolicy: row.write_policy,
+    // DB columns are plain text/jsonb (no Postgres enums). The runtime
+    // value is always one of these unions; the regenerated types just
+    // can't express that, so narrow at the row->DTO boundary.
+    status: row.status as AgentStatus,
+    writePolicy: row.write_policy as Agent["writePolicy"],
     department: (row.department ?? null) as Department | null,
     isDepartmentHead: row.is_department_head ?? false,
     systemPrompt: row.system_prompt ?? null,

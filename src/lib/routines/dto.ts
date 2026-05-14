@@ -36,7 +36,10 @@ export function routineFromRows(
     title: row.title,
     description: row.description ?? "",
     assigneeAgentId: row.assignee_agent_id,
-    status: row.status,
+    // rgaios_routines.status is plain text in Postgres (no enum), so the
+    // regenerated types widen it to string. The stored value is always
+    // a RoutineStatus - narrow at the row->DTO boundary.
+    status: row.status as RoutineStatus,
     lastRunAt: row.last_run_at,
     createdAt: row.created_at,
     triggers: triggers.map(triggerFromRow),

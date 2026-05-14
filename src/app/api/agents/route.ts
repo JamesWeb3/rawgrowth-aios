@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAgent, listAgentsForOrg } from "@/lib/agents/queries";
-import { DEFAULT_AGENT_RUNTIME } from "@/lib/agents/constants";
+import {
+  DEFAULT_AGENT_RUNTIME,
+  type AgentRole,
+  type AgentRuntime,
+} from "@/lib/agents/constants";
+import type { Agent } from "@/lib/agents/dto";
 import { currentOrganizationId } from "@/lib/supabase/constants";
 import { autoTrainAgent } from "@/lib/agents/auto-train";
 import { getOrgContext } from "@/lib/auth/admin";
@@ -73,19 +78,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // body is untyped parsed JSON. Narrow each enum-ish field at this
+    // request boundary: the DTO unions are the app contract, the DB
+    // columns are plain text. roleLabel above already pulled a trimmed
+    // string from body.role; reuse it so role and the autoTrain label
+    // stay in sync.
     const agent = await createAgent(orgId, {
       name,
       title: String(body.title ?? "").trim().slice(0, 200),
-      role: body.role,
-      reportsTo: body.reportsTo ?? null,
+      role: (roleLabel || "general") as AgentRole,
+      reportsTo: typeof body.reportsTo === "string" ? body.reportsTo : null,
       description: String(body.description ?? "").trim().slice(0, 5000),
-      runtime: body.runtime ?? DEFAULT_AGENT_RUNTIME,
+      runtime:
+        typeof body.runtime === "string"
+          ? (body.runtime as AgentRuntime)
+          : DEFAULT_AGENT_RUNTIME,
       budgetMonthlyUsd: Number(body.budgetMonthlyUsd ?? 500),
       writePolicy:
         body.writePolicy &&
         typeof body.writePolicy === "object" &&
         !Array.isArray(body.writePolicy)
-          ? (body.writePolicy as Record<string, unknown>)
+          ? (body.writePolicy as Agent["writePolicy"])
           : undefined,
       department: (body.department as string | null | undefined) ?? null,
       isDepartmentHead: Boolean(body.isDepartmentHead ?? false),

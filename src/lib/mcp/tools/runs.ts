@@ -113,6 +113,17 @@ registerTool({
       );
     }
 
+    // why: this is the execution chokepoint for the v3 drain + self_hosted
+    // Claude Code paths (the in-process executor stamps last_run_at in
+    // claimRun, but those modes never reach claimRun). Without this, a
+    // routine driven entirely through MCP would show "Last run: Never" on
+    // the Routines page even after Claude Code completed it.
+    await db
+      .from("rgaios_routines")
+      .update({ last_run_at: new Date().toISOString() })
+      .eq("id", claimed.routine_id)
+      .eq("organization_id", ctx.organizationId);
+
     const { data: routine } = await db
       .from("rgaios_routines")
       .select("title, description")

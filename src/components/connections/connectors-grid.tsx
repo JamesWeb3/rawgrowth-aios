@@ -34,7 +34,7 @@ export function ConnectorsGrid() {
   const [requesting, setRequesting] = useState<string | null>(null);
 
   /**
-   * Three buckets per catalog entry (Chris's bugs 1 + 5, 2026-05-12):
+   * Two buckets per catalog entry (Chris's bugs 1 + 5, 2026-05-12):
    *   - connectedKeys     → status='connected'
    *   - pendingKeys       → status='pending_token' (user clicked Connect
    *                         but hasn't finished OAuth on Composio side)
@@ -66,7 +66,10 @@ export function ConnectorsGrid() {
   const isCardConnected = (entry: CatalogEntry): boolean => {
     return (
       connectedKeys.has(entry.key) ||
-      connectedKeys.has(`composio:${entry.key}`)
+      connectedKeys.has(`composio:${entry.key}`) ||
+      // Bespoke API-key connectors store their row under `${key}-key`
+      // (e.g. apify → apify-key) via the Workspace API keys card.
+      connectedKeys.has(`${entry.key}-key`)
     );
   };
 
@@ -113,14 +116,16 @@ export function ConnectorsGrid() {
   }, [query, category]);
 
   const handleConnect = async (entry: CatalogEntry) => {
-    // Bespoke connectors (Telegram, Stripe key, Supabase PAT) live on
-    // dedicated cards elsewhere on /connections - bounce the operator
-    // there instead of running through the Composio OAuth path that
-    // doesn't apply to them.
+    // Bespoke connectors (Telegram, Stripe key, Supabase PAT, Apify
+    // token) live on dedicated cards elsewhere on /connections - bounce
+    // the operator there instead of running through the Composio OAuth
+    // path that doesn't apply to them. Apify in particular is a
+    // standalone API (api.apify.com), not a Composio app.
     if (
       entry.key === "telegram" ||
       entry.key === "stripe" ||
-      entry.key === "supabase"
+      entry.key === "supabase" ||
+      entry.key === "apify"
     ) {
       toast.message(
         `Use the dedicated ${entry.name} card on this page to connect.`,

@@ -7,6 +7,10 @@ import {
 } from "@/lib/scrape/sources";
 import { fetchSource } from "@/lib/scrape/fetcher";
 import { isApifyEnabled } from "@/lib/scrape/apify-client";
+import type { Database } from "@/lib/supabase/types";
+
+type ScrapeSnapshotInsert =
+  Database["public"]["Tables"]["rgaios_scrape_snapshots"]["Insert"];
 
 /**
  * Drains a queued scrape job for an organization. Called from
@@ -150,24 +154,21 @@ async function drainFacebookAds(
     .eq("kind", "ads");
   const seen = new Set((existingAds ?? []).map((r) => r.url));
 
+  // rgaios_scrape_snapshots (migration 0023) has no `metrics` / `metadata`
+  // columns - the apify ad metrics + metadata fields the actor returns
+  // have nowhere to land in the live schema, so they are not persisted.
+  // See REPORT: this is a real schema gap (the referenced "migration 0041"
+  // that was meant to add them does not exist in supabase/migrations).
   const rows = ads
     .filter((ad) => !seen.has(ad.url))
-    .map((ad) => ({
+    .map<ScrapeSnapshotInsert>((ad) => ({
       organization_id: organizationId,
       url: ad.url,
-      kind: "ads" as const,
-      status: "succeeded" as const,
+      kind: "ads",
+      status: "succeeded",
       title: ad.page_name,
       content: ad.ad_text ?? "",
       scraped_at: new Date().toISOString(),
-      metrics: ad.metrics,
-      metadata: {
-        ad_text: ad.ad_text,
-        start_date: ad.start_date,
-        end_date: ad.end_date,
-        platforms: ad.platforms,
-        page_name: ad.page_name,
-      },
     }));
 
   if (rows.length === 0) return;
@@ -216,25 +217,18 @@ async function drainYoutubeTop(
     .eq("kind", "yt_top");
   const seen = new Set((existing ?? []).map((r) => r.url));
 
+  // No `metrics` / `metadata` columns on rgaios_scrape_snapshots - the
+  // per-video view/like/comment metrics are not persisted. See REPORT.
   const rows = videos
     .filter((v) => !seen.has(v.url))
-    .map((v) => ({
+    .map<ScrapeSnapshotInsert>((v) => ({
       organization_id: organizationId,
       url: v.url,
-      kind: "yt_top" as const,
-      status: "succeeded" as const,
+      kind: "yt_top",
+      status: "succeeded",
       title: v.title,
       content: v.title ?? "",
       scraped_at: new Date().toISOString(),
-      metrics: v.metrics,
-      metadata: {
-        view_count: v.view_count,
-        like_count: v.like_count,
-        comment_count: v.comment_count,
-        duration_seconds: v.duration_seconds,
-        published_at: v.published_at,
-        channel_name: v.channel_name,
-      },
     }));
 
   if (rows.length === 0) return;
@@ -285,25 +279,18 @@ async function drainInstagramTop(
     .eq("kind", "ig_top");
   const seen = new Set((existing ?? []).map((r) => r.url));
 
+  // No `metrics` / `metadata` columns on rgaios_scrape_snapshots - the
+  // per-post engagement metrics are not persisted. See REPORT.
   const rows = posts
     .filter((p) => !seen.has(p.url))
-    .map((p) => ({
+    .map<ScrapeSnapshotInsert>((p) => ({
       organization_id: organizationId,
       url: p.url,
-      kind: "ig_top" as const,
-      status: "succeeded" as const,
+      kind: "ig_top",
+      status: "succeeded",
       title: null,
       content: p.caption ?? "",
       scraped_at: new Date().toISOString(),
-      metrics: p.metrics,
-      metadata: {
-        caption: p.caption,
-        like_count: p.like_count,
-        comment_count: p.comment_count,
-        type: p.type,
-        posted_at: p.posted_at,
-        display_url: p.display_url,
-      },
     }));
 
   if (rows.length === 0) return;

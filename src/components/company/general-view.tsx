@@ -14,6 +14,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { OrgOverview } from "@/lib/organizations/overview";
+import type { DeployMode } from "@/lib/deploy-mode";
 import { ClientTime } from "@/components/client-time";
 
 export function CompanyGeneralView({
@@ -23,7 +24,7 @@ export function CompanyGeneralView({
 }: {
   org: OrgOverview;
   domain: string;
-  deployMode: "hosted" | "self_hosted";
+  deployMode: DeployMode;
 }) {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -82,7 +83,7 @@ function OpsCard({
 }: {
   org: OrgOverview;
   domain: string;
-  deployMode: "hosted" | "self_hosted";
+  deployMode: DeployMode;
 }) {
   return (
     <section className="rounded-2xl border border-border bg-card/40 p-6">

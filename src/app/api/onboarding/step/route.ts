@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 
 const STEP_NAMES: Record<number, string> = {
   1: "Welcome",
@@ -26,14 +27,17 @@ export async function POST(req: NextRequest) {
     }
 
     const nextStep = Math.min(step + 1, 8);
-    const updateFields: Record<string, unknown> = {
-      onboarding_step: nextStep,
-      updated_at: new Date().toISOString(),
-    };
+    const updateFields: Database["public"]["Tables"]["rgaios_organizations"]["Update"] =
+      {
+        onboarding_step: nextStep,
+        updated_at: new Date().toISOString(),
+      };
 
-    // Save slack channel if provided in step 1
+    // Save slack channel if provided in step 1. The org row's column is
+    // `slack_channel_name` (migration 0017); `slack_channel_id` only exists
+    // on rgaios_slack_bindings, so the old key silently wrote nothing.
     if (step === 1 && data?.slack_channel) {
-      updateFields.slack_channel_id = data.slack_channel;
+      updateFields.slack_channel_name = data.slack_channel;
     }
 
     // Onboarding complete at step 8  -  flip flag on the org row

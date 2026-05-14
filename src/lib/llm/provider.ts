@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import OpenAI from "openai";
 import type {
+  ChatCompletionFunctionTool,
   ChatCompletionMessageParam,
-  ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { anthropic } from "@ai-sdk/anthropic";
 import { gateway } from "@ai-sdk/gateway";
@@ -62,7 +62,11 @@ export type ChatMessage = {
  * anthropic-cli we serialize the schema into the system prompt and parse
  * tool calls back out of fenced ```tool_call``` blocks.
  */
-export type OpenAITool = ChatCompletionTool;
+// The codebase only ever emits function tools - every call site reads
+// `.function`. The OpenAI SDK widened `ChatCompletionTool` into a union
+// that also covers custom tools, which dropped `.function` off the bare
+// type. Pin to the function-tool variant.
+export type OpenAITool = ChatCompletionFunctionTool;
 
 export type ChatToolCall = {
   /** Stable per-turn id (used to correlate tool result on the next step). */

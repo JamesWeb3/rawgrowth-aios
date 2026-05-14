@@ -16,6 +16,10 @@ import {
   SiSupabase,
   SiVercel,
 } from "react-icons/si";
+// Apify has no react-icons/si brand glyph; fall back to a lucide
+// "bot" icon (Apify actors are scraping bots). lucide-react is
+// already a project dependency used across the connections UI.
+import { Bot as ApifyIcon } from "lucide-react";
 
 export type AuthMethod = "api_key" | "oauth" | "webhook";
 
@@ -300,6 +304,27 @@ export const INTEGRATIONS: IntegrationEntry[] = [
       docsUrl: "https://core.telegram.org/bots/tutorial",
       where:
         "Telegram → talk to @BotFather → /newbot → copy the bot token it returns",
+    },
+  },
+  {
+    // Apify is a standalone scraping API, not a Composio app. The key
+    // is saved + persisted by the "Workspace API keys" card on
+    // /connections (provider 'apify' → row 'apify-key'); this catalog
+    // entry exists so the agent Tools picker renders a proper name +
+    // icon for the apify connector instead of the raw id.
+    id: "apify",
+    name: "Apify",
+    description:
+      "Run Apify actors to scrape YouTube / Instagram / Facebook Ads and other public sources.",
+    category: "Marketing",
+    Icon: ApifyIcon,
+    brand: "#FF9013",
+    methods: ["api_key"],
+    apiKey: {
+      placeholder: "apify_api_••••••••••••••••••••••••••••",
+      docsUrl: "https://console.apify.com/account/integrations",
+      where:
+        "Apify Console → Settings → Integrations → API token, then paste it in the Workspace API keys card on /connections",
     },
   },
 ];

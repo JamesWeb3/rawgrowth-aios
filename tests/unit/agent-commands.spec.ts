@@ -193,9 +193,16 @@ test("extractAndExecuteCommands: Atlas tool_call invokes Composio v3 execute", a
   assert.equal(out.results[0].ok, true, `got: ${out.results[0].summary}`);
   assert.equal(out.results[0].type, "tool_call");
   assert.ok(composioHit, "Composio v3 endpoint must have been called");
-  assert.equal(composioBody?.user_id, "user-atlas");
-  assert.equal(composioBody?.connected_account_id, "nango-slack-1");
-  assert.deepEqual(composioBody?.arguments, {
+  // `composioBody` is only assigned inside the fetch-router callback, so
+  // TS control-flow narrows it away here. Re-bind through an explicit type.
+  const body = composioBody as {
+    user_id?: string;
+    connected_account_id?: string;
+    arguments?: unknown;
+  } | null;
+  assert.equal(body?.user_id, "user-atlas");
+  assert.equal(body?.connected_account_id, "nango-slack-1");
+  assert.deepEqual(body?.arguments, {
     channel: "#general",
     text: "hi team",
   });

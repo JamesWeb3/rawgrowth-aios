@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 
-const SECTION_TO_COLUMN: Record<string, string> = {
+// Each value is a real JSONB column on rgaios_brand_intakes. Typing the map
+// values as that table's column keys lets `col` narrow to a valid column
+// name so the computed-key upsert below type-checks.
+type IntakeColumn = keyof Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"];
+
+const SECTION_TO_COLUMN: Record<string, IntakeColumn> = {
   basicInfo: "basic_info",
   socialPresence: "social_presence",
   originStory: "origin_story",
@@ -47,12 +53,15 @@ export async function POST(req: NextRequest) {
     const col = SECTION_TO_COLUMN[section_id];
     if (!col) return NextResponse.json({ error: "Invalid section" }, { status: 400 });
 
+    const upsertRow: Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"] =
+      {
+        organization_id: user.id,
+        [col]: data,
+      };
+
     await supabaseAdmin()
       .from("rgaios_brand_intakes")
-      .upsert(
-        { organization_id: user.id, [col]: data },
-        { onConflict: "organization_id" }
-      );
+      .upsert(upsertRow, { onConflict: "organization_id" });
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

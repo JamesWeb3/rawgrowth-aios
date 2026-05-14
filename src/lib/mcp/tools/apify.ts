@@ -49,11 +49,27 @@ function clampLimit(raw: unknown, fallback: number, cap: number): number {
   return Math.min(Math.floor(n), cap);
 }
 
+async function readBodySafe(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch {
+    return "(no body)";
+  }
+}
+
 registerTool({
   name: "apify_run_actor",
   description:
     "Run an Apify actor synchronously and get its dataset items. Use for scraping tasks (Instagram Reels Scraper, etc.).",
   isWrite: true,
+  // Apify isn't a Composio app, so it gets its own integration id.
+  // Tagging it means the agent's write_policy can grant both apify
+  // tools with the single key "apify" (instead of per-tool-name
+  // entries), and the executor's explicit-mode filter keeps the
+  // tools visible whenever an agent has the apify connector enabled.
+  // It also makes registry.callTool() surface a "connect Apify"
+  // hint when the org has no apify-key row.
+  requiresIntegration: "apify",
   inputSchema: {
     type: "object",
     properties: {
@@ -104,12 +120,7 @@ registerTool({
     }
 
     if (res.status !== 200 && res.status !== 201) {
-      let respBody = "";
-      try {
-        respBody = await res.text();
-      } catch {
-        respBody = "(no body)";
-      }
+      const respBody = await readBodySafe(res);
       return textError(
         `apify_run_actor: ${res.status} ${respBody.slice(0, MAX_BODY)}`,
       );
@@ -138,6 +149,9 @@ registerTool({
   name: "apify_list_actor_runs",
   description:
     "List recent runs of an Apify actor to check status/results.",
+  // Same integration id as apify_run_actor - one connector grant
+  // ("apify") covers both tools in the agent write_policy.
+  requiresIntegration: "apify",
   inputSchema: {
     type: "object",
     properties: {
@@ -176,12 +190,7 @@ registerTool({
     }
 
     if (res.status !== 200) {
-      let respBody = "";
-      try {
-        respBody = await res.text();
-      } catch {
-        respBody = "(no body)";
-      }
+      const respBody = await readBodySafe(res);
       return textError(
         `apify_list_actor_runs: ${res.status} ${respBody.slice(0, MAX_BODY)}`,
       );

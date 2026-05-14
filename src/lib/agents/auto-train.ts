@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ingestAgentFile } from "@/lib/knowledge/ingest";
 import { getRoleTemplate } from "@/lib/agents/role-templates";
+import type { Database } from "@/lib/supabase/types";
+
+type AgentUpdate = Database["public"]["Tables"]["rgaios_agents"]["Update"];
 
 /**
  * Plan §3 + §4. Apply the role template (system_prompt + default
@@ -32,7 +35,9 @@ export async function autoTrainAgent(input: {
     // system_prompt makes a good 1-sentence public-facing summary, and
     // an empty description leaves the Vision tab + org-chart card
     // looking unfinished.
-    const update: Record<string, unknown> = { system_prompt: template.systemPrompt };
+    // Typed as the table Update shape so .update() accepts it without a
+    // RejectExcessProperties error - only real columns can be set here.
+    const update: AgentUpdate = { system_prompt: template.systemPrompt };
     const { data: row } = await db
       .from("rgaios_agents")
       .select("description")

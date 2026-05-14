@@ -22,10 +22,10 @@ export async function GET() {
   const [pastes, files] = await Promise.all([
     db
       .from("rgaios_audit_log")
-      .select("id, detail, created_at")
+      .select("id, detail, ts")
       .eq("organization_id", orgId)
       .eq("kind", "data_ingested")
-      .order("created_at", { ascending: false })
+      .order("ts", { ascending: false })
       .limit(15),
     db
       .from("rgaios_knowledge_files")
@@ -38,7 +38,8 @@ export async function GET() {
   type AuditRow = {
     id: string;
     detail: Record<string, unknown> | null;
-    created_at: string;
+    // rgaios_audit_log timestamps the row with `ts`, not `created_at`.
+    ts: string;
   };
   type FileRow = {
     id: string;
@@ -58,7 +59,7 @@ export async function GET() {
       source: ((d as { source?: string }).source ?? "manual_entry") as string,
       chunks: ((d as { chunks?: number }).chunks ?? 0) as number,
       tokens: ((d as { tokens?: number }).tokens ?? 0) as number,
-      created_at: r.created_at,
+      created_at: r.ts,
     };
   });
 

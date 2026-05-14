@@ -61,7 +61,11 @@ async function loadRoutineWithACL(
       .eq("id", r.assignee_agent_id)
       .eq("organization_id", ctx.activeOrgId!)
       .maybeSingle();
-    agent = (a as typeof agent) ?? null;
+    // supabase-js collapses this .maybeSingle() row to `never`; the
+    // select lists only real rgaios_agents columns, so a narrow typed
+    // cast back to the loaded shape is safe.
+    type AgentAclRow = { id: string; name: string; role: string | null; department: string | null };
+    agent = (a as unknown as AgentAclRow | null) ?? null;
     const allowed = await isDepartmentAllowed(
       {
         userId: ctx.userId!,

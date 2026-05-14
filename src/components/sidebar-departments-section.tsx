@@ -30,7 +30,7 @@ import type { Agent } from "@/lib/agents/dto";
 // sidebar entries visually match the dept cards on /departments.
 const DEPT_META: Record<
   string,
-  { label: string; icon: React.ComponentType<{ className?: string }> }
+  { label: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }> }
 > = {
   marketing: { label: "Marketing", icon: Megaphone },
   sales: { label: "Sales", icon: BadgeDollarSign },

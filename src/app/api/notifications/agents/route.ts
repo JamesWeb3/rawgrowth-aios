@@ -1,4 +1,4 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
@@ -99,4 +99,99 @@ export async function GET() {
       kind: (r.metadata as { kind?: string } | null)?.kind ?? "message",
     })),
   });
+}
+
+/**
+ * POST /api/notifications/agents
+ *
+ * Dismiss notifications. The bug this fixes: the GET handler already
+ * filtered on `metadata->>archived` and the route doc said "the
+ * operator hasn't dismissed yet" - but nothing ever SET archived, and
+ * the bell UI had no dismiss control. So the badge was permanently
+ * pinned to whatever proactive messages landed in the last 7 days
+ * (up to 20), counting down never, and tapping a notification just
+ * navigated away leaving it in the list. Operators learned to ignore
+ * the bell entirely.
+ *
+ * Body:
+ *   { id: "<uuid>" }  -> dismiss one notification
+ *   { all: true }     -> dismiss every currently-visible notification
+ *
+ * "Dismiss" = soft archive: merge metadata.archived=true +
+ * archived_at into the jsonb (same pattern as the chat "New chat"
+ * archive in /api/agents/[id]/chat DELETE). Nothing is deleted; the
+ * /updates page can still surface history.
+ */
+export async function POST(req: NextRequest) {
+  const ctx = await getOrgContext();
+  if (!ctx?.activeOrgId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const orgId = ctx.activeOrgId;
+
+  let body: { id?: string; all?: boolean };
+  try {
+    body = (await req.json()) as { id?: string; all?: boolean };
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!body.id && !body.all) {
+    return NextResponse.json(
+      { error: "Provide `id` or `all: true`" },
+      { status: 400 },
+    );
+  }
+
+  const db = supabaseAdmin();
+  // Same kind filter + non-archived guard as GET so `all` only touches
+  // rows the operator can actually see in the bell, and a stale `id`
+  // for a row from another kind / org is a no-op rather than an error.
+  let q = db
+    .from("rgaios_agent_chat_messages")
+    .select("id, metadata")
+    .eq("organization_id", orgId)
+    .eq("role", "assistant")
+    .or("metadata->>archived.is.null,metadata->>archived.eq.false")
+    .filter(
+      "metadata->>kind",
+      "in",
+      "(proactive_anomaly,data_ask,atlas_coordinate)",
+    );
+  if (body.id) q = q.eq("id", body.id);
+  const { data: rows, error: selErr } = await q;
+  if (selErr) {
+    return NextResponse.json({ error: selErr.message }, { status: 500 });
+  }
+
+  const stamp = new Date().toISOString();
+  const typedRows = (rows ?? []) as Array<{
+    id: string;
+    metadata: Record<string, unknown> | null;
+  }>;
+  // Parallel per-row updates - jsonb merge needs the existing metadata,
+  // and Supabase has no atomic jsonb-merge in the JS client, so we
+  // read-modify-write each row. Same approach as the chat archive path.
+  const settled = await Promise.all(
+    typedRows.map(async (r) => {
+      const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
+      const res = await db
+        .from("rgaios_agent_chat_messages")
+        .update({ metadata: next } as never)
+        .eq("id", r.id);
+      return { id: r.id, ok: !res.error, error: res.error?.message };
+    }),
+  );
+  const failed = settled.filter((s) => !s.ok);
+  if (failed.length > 0) {
+    console.error(
+      "[notifications] dismiss partial failure:",
+      failed.map((f) => `${f.id}:${f.error}`).join(", "),
+    );
+    const dismissed = settled.length - failed.length;
+    return NextResponse.json(
+      { ok: false, dismissed, failed: failed.map((f) => f.id) },
+      { status: dismissed > 0 ? 207 : 500 },
+    );
+  }
+  return NextResponse.json({ ok: true, dismissed: typedRows.length });
 }

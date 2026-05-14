@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 import { getOrgContext } from "@/lib/auth/admin";
 import { seedTelegramConnectionsForDefaults } from "@/lib/connections/telegram-seed";
@@ -7,7 +6,9 @@ import {
   chatComplete,
   resolveProvider,
   type ChatMessage,
+  type OpenAITool,
 } from "@/lib/llm/provider";
+import type { Database } from "@/lib/supabase/types";
 import { drainScrapeQueue } from "@/lib/scrape/worker";
 import { fetchSource } from "@/lib/scrape/fetcher";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -57,7 +58,7 @@ Meta-rules:
 
 The "Relevant playbook context" block injected into your context per turn contains the section-specific rules and tool documentation you need for the current step. Follow it. The "NEXT ACTION" block at the bottom of context tells you exactly what to do this turn.`;
 
-const TOOLS: ChatCompletionTool[] = [
+const TOOLS: OpenAITool[] = [
   {
     type: "function",
     function: {
@@ -373,7 +374,7 @@ async function completeSection1(
     slack_channel_name: string | null;
   }
 ) {
-  const update: Record<string, unknown> = {
+  const update: Database["public"]["Tables"]["rgaios_organizations"]["Update"] = {
     messaging_channel: args.messaging_channel,
     messaging_handle: args.messaging_handle,
     onboarding_step: 2,
@@ -419,12 +420,18 @@ async function saveQuestionnaireSection(
     ((existing as Record<string, unknown> | null)?.[section.column] as Record<string, unknown> | undefined) ?? {};
   const merged = { ...existingData, ...args.data };
 
+  // section.column is a runtime string keyed off QUESTIONNAIRE_SECTIONS;
+  // each entry maps to a JSONB column on rgaios_brand_intakes. The computed
+  // key can't be statically proven to be a valid column name, so build the
+  // payload then narrow it to the table's Insert shape.
+  const upsertRow = {
+    organization_id: userId,
+    [section.column]: merged,
+  } as Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"];
+
   const { error } = await supabaseAdmin()
     .from("rgaios_brand_intakes")
-    .upsert(
-      { organization_id: userId, [section.column]: merged },
-      { onConflict: "organization_id" }
-    );
+    .upsert(upsertRow, { onConflict: "organization_id" });
 
   if (error) {
     console.error(
@@ -722,14 +729,17 @@ async function completeOnboarding(
   // dashboard onboarding gate (src/app/page.tsx) checks - without it
   // the user gets bounced back to /onboarding even though every section
   // and the brand profile are done.
+  // rgaios_organizations has no `status` column - the dashboard onboarding
+  // gate keys off `onboarding_completed` (migration 0017). Flipping that
+  // boolean + bumping the step is the whole "client is active" signal.
+  const orgUpdate: Database["public"]["Tables"]["rgaios_organizations"]["Update"] = {
+    onboarding_step: 8,
+    onboarding_completed: true,
+    updated_at: new Date().toISOString(),
+  };
   const { error: clientErr } = await supabaseAdmin()
     .from("rgaios_organizations")
-    .update({
-      onboarding_step: 8,
-      onboarding_completed: true,
-      status: "active",
-      updated_at: new Date().toISOString(),
-    } as never)
+    .update(orgUpdate)
     .eq("id", userId);
   if (clientErr) return { ok: false, error: clientErr.message };
 
@@ -743,15 +753,17 @@ async function completeOnboarding(
     )
     .map((m) => ({ role: m.role, content: m.content }));
 
+  // full_transcript is a JSONB column; Postgres stores the array fine, but
+  // the generated type models JSONB as Record<string, unknown> | null and
+  // can't express "array OR object". Narrow the payload to the Insert shape.
+  const transcriptRow = {
+    organization_id: userId,
+    full_transcript: cleanTranscript,
+  } as Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"];
+
   const { error: transcriptErr } = await supabaseAdmin()
     .from("rgaios_brand_intakes")
-    .upsert(
-      {
-        organization_id: userId,
-        full_transcript: cleanTranscript,
-      },
-      { onConflict: "organization_id" }
-    );
+    .upsert(transcriptRow, { onConflict: "organization_id" });
   if (transcriptErr) {
     // Don't fail the whole completion over this  -  log and continue
     console.error(
@@ -808,10 +820,14 @@ export async function POST(req: NextRequest) {
     };
 
     // ---- Hydrate full onboarding state from the DB ----
+    // rgaios_organizations carries onboarding/messaging state plus `name`
+    // (the business name). There is no owner `email`/`company` column on
+    // the org row in v3 - one org == one trial client, so the owner's name
+    // and email come from the session (ctx -> `user`) instead.
     const { data: client } = await supabaseAdmin()
       .from("rgaios_organizations")
       .select(
-        "name, email, company, messaging_channel, messaging_handle, slack_workspace_url, slack_channel_name, onboarding_step"
+        "name, messaging_channel, messaging_handle, slack_workspace_url, slack_channel_name, onboarding_step, onboarding_completed"
       )
       .eq("id", user.id)
       .maybeSingle();
@@ -864,13 +880,9 @@ export async function POST(req: NextRequest) {
     );
     const scheduleCallsDone = currentStep >= 7;
 
-    // Section 8 state
-    const { data: clientDone } = await supabaseAdmin()
-      .from("rgaios_organizations")
-      .select("status")
-      .eq("id", user.id)
-      .maybeSingle();
-    const onboardingDone = clientDone?.status === "active";
+    // Section 8 state. The org row has no `status` column - completion is
+    // tracked by the `onboarding_completed` boolean, already hydrated above.
+    const onboardingDone = client?.onboarding_completed === true;
 
     // Which Section 2 sub-sections have any data, and what was captured.
     const subsectionState = QUESTIONNAIRE_SECTIONS.map((s) => {
@@ -880,11 +892,16 @@ export async function POST(req: NextRequest) {
     });
 
     // ---- Compute the NEXT ACTION ----
+    // Pre-fill the basicInfo hints from what we already know: the owner's
+    // name + email come from the session, and the org `name` is the
+    // business name. (The old portal `clients` table had separate
+    // name/email/company columns; v3's org row only carries the business
+    // name, so owner identity comes from `user`.)
     const knownLines: string[] = [];
-    if (client?.name) knownLines.push(`- full_name: ${JSON.stringify(client.name)}`);
-    if (client?.email) knownLines.push(`- email: ${JSON.stringify(client.email)}`);
-    if (client?.company)
-      knownLines.push(`- business_name: ${JSON.stringify(client.company)}`);
+    if (user.name) knownLines.push(`- full_name: ${JSON.stringify(user.name)}`);
+    if (user.email) knownLines.push(`- email: ${JSON.stringify(user.email)}`);
+    if (client?.name)
+      knownLines.push(`- business_name: ${JSON.stringify(client.name)}`);
 
     // Track the active section_id for the RAG retrieval bias. The
     // matcher (rgaios_match_onboarding_knowledge) prefers in-section
@@ -1558,6 +1575,14 @@ export async function POST(req: NextRequest) {
               throw err;
             }
             clearInterval(heartbeat);
+            // Every assignment path above either sets `step` or throws, so
+            // reaching here means it's set. The compiler can't see that
+            // through the nested try/catch + fallback loops, so assert it.
+            if (!step) {
+              throw new Error(
+                "chatComplete returned no result after all provider attempts",
+              );
+            }
             emit({
               type: "debug",
               phase: "chatComplete-returned",
@@ -1900,10 +1925,15 @@ export async function POST(req: NextRequest) {
                 result = { ok: false, error: message };
               }
 
+              // The conversation buffer is user/assistant-only (see the
+              // assistantSummary fold above) so any backend sees the same
+              // turn shape. Fold the tool result back as a synthetic user
+              // message tagged with the call name - a bare `role: "tool"`
+              // message would be dropped by the anthropic-cli/api paths,
+              // which only translate user/assistant turns.
               messages.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: JSON.stringify(result),
+                role: "user",
+                content: `[tool_result] ${tc.name}: ${JSON.stringify(result)}`,
               });
 
               // Close out the reasoning bubble with the extracted fields

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/utils";
+import type { Database } from "@/lib/supabase/types";
 import type {
   AvailabilityRow,
   BookingRow,
@@ -139,16 +140,20 @@ export async function upsertEventType(
   orgId: string,
   input: EventTypeInsert & { id?: string },
 ): Promise<EventTypeRow> {
-  const row = {
+  // App-side types (EventColor, LocationSpec, structured rules / questions)
+  // are runtime-valid for the DB columns (string / Record<string, unknown>)
+  // but nominally distinct, so type the row as the table Insert shape and
+  // cast the structured fields to Record at the boundary.
+  const row: Database["public"]["Tables"]["rgaios_kalendly_event_types"]["Insert"] = {
     organization_id: orgId,
     slug: input.slug,
     title: input.title,
     description: input.description,
     duration_minutes: input.durationMinutes,
     color: input.color,
-    location: input.location,
-    rules: input.rules,
-    custom_questions: input.customQuestions,
+    location: input.location as unknown as Record<string, unknown>,
+    rules: input.rules as unknown as Record<string, unknown>,
+    custom_questions: input.customQuestions as unknown as Record<string, unknown>,
     active: input.active,
     agent_id: input.agentId ?? null,
     updated_at: new Date().toISOString(),
@@ -196,15 +201,19 @@ export async function getAvailability(orgId: string): Promise<AvailabilityRow> {
   if (error) throw error;
   if (data) return dbToAvailability(data);
 
-  // Auto-create with default 9-5 weekday hours.
+  // Auto-create with default 9-5 weekday hours. weekly_hours /
+  // date_overrides are structured arrays at the app layer but plain
+  // Record<string, unknown> JSONB columns in the DB, so type the row as
+  // the table Insert shape and cast the structured fields at the boundary.
+  const insertRow: Database["public"]["Tables"]["rgaios_kalendly_availability"]["Insert"] = {
+    organization_id: orgId,
+    timezone: DEFAULT_AVAILABILITY.timezone,
+    weekly_hours: DEFAULT_AVAILABILITY.weeklyHours as unknown as Record<string, unknown>,
+    date_overrides: DEFAULT_AVAILABILITY.dateOverrides as unknown as Record<string, unknown>,
+  };
   const { data: created, error: insertError } = await supabaseAdmin()
     .from("rgaios_kalendly_availability")
-    .insert({
-      organization_id: orgId,
-      timezone: DEFAULT_AVAILABILITY.timezone,
-      weekly_hours: DEFAULT_AVAILABILITY.weeklyHours,
-      date_overrides: DEFAULT_AVAILABILITY.dateOverrides,
-    })
+    .insert(insertRow)
     .select("*")
     .single();
   if (insertError) throw insertError;
@@ -215,18 +224,18 @@ export async function updateAvailability(
   orgId: string,
   input: Pick<AvailabilityRow, "timezone" | "weeklyHours" | "dateOverrides">,
 ): Promise<AvailabilityRow> {
+  // Same app-vs-DB shape gap as getAvailability's insert above: typed
+  // arrays at the app layer, JSONB Record columns in the DB.
+  const upsertRow: Database["public"]["Tables"]["rgaios_kalendly_availability"]["Insert"] = {
+    organization_id: orgId,
+    timezone: input.timezone,
+    weekly_hours: input.weeklyHours as unknown as Record<string, unknown>,
+    date_overrides: input.dateOverrides as unknown as Record<string, unknown>,
+    updated_at: new Date().toISOString(),
+  };
   const { data, error } = await supabaseAdmin()
     .from("rgaios_kalendly_availability")
-    .upsert(
-      {
-        organization_id: orgId,
-        timezone: input.timezone,
-        weekly_hours: input.weeklyHours,
-        date_overrides: input.dateOverrides,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "organization_id" },
-    )
+    .upsert(upsertRow, { onConflict: "organization_id" })
     .select("*")
     .single();
   if (error) throw error;

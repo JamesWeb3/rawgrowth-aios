@@ -432,7 +432,11 @@ export async function POST(
       status: string;
     } | null;
   };
-  const match = (triggers as TriggerJoin[] | null)?.find((t) => {
+  // The generated types carry no FK relationships for rgaios_routine_triggers,
+  // so supabase-js collapses the embedded rgaios_routines join to a
+  // SelectQueryError. The select + !inner join is correct at runtime;
+  // cast through unknown to the known joined shape.
+  const match = (triggers as unknown as TriggerJoin[] | null)?.find((t) => {
     const cfg = (t.config ?? {}) as { command?: string };
     return cfg.command === commandKey;
   });

@@ -52,6 +52,18 @@ export async function claimRun(runId: string): Promise<RunContext | null> {
   if (rErr || !routine) throw new Error(`claimRun routine: ${rErr?.message}`);
   const trigger: TriggerRow | null = triggerRes.data;
 
+  // why: "Last run" must reflect when a run actually executed, not just
+  // when it was queued. Schedule-tick / manual-run / telegram each bump
+  // last_run_at at dispatch time, but a run created any other way (MCP
+  // routines_*, future trigger kinds) would leave the routine showing
+  // "Never" forever even after it ran. Stamping it here - the single
+  // chokepoint every in-process execution passes through - makes the
+  // field correct regardless of which path queued the run.
+  await db
+    .from("rgaios_routines")
+    .update({ last_run_at: new Date().toISOString() })
+    .eq("id", run.routine_id);
+
   let agent: AgentRow | null = null;
   if (routine.assignee_agent_id) {
     const { data } = await db

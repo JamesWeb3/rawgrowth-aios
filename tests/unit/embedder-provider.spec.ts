@@ -40,7 +40,7 @@ test("voyage path requires VOYAGE_API_KEY and surfaces a clear error", async () 
     process.env.EMBEDDING_PROVIDER = "voyage";
     delete process.env.VOYAGE_API_KEY;
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     await assert.rejects(
@@ -68,7 +68,7 @@ test("voyage path posts to the right endpoint with bearer auth and pads 1024d to
       );
     });
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     const out = await mod.embedBatch(["hello world"]);
@@ -81,11 +81,15 @@ test("voyage path posts to the right endpoint with bearer auth and pads 1024d to
     for (let i = 1024; i < 1536; i++) assert.equal(out[0][i], 0);
 
     assert.ok(captured, "fetch was invoked");
-    assert.equal(captured!.url, "https://api.voyageai.com/v1/embeddings");
-    const headers = captured!.init.headers as Record<string, string>;
+    // `captured` is only ever assigned inside the fetch-stub callback, so
+    // TS control-flow narrows it to `null` here and `asserts` collapses
+    // that to `never`. Re-bind through an explicit type.
+    const cap = captured as { url: string; init: RequestInit };
+    assert.equal(cap.url, "https://api.voyageai.com/v1/embeddings");
+    const headers = cap.init.headers as Record<string, string>;
     assert.equal(headers.Authorization, "Bearer vk-test-1234");
     assert.equal(headers["Content-Type"], "application/json");
-    const body = JSON.parse(String(captured!.init.body));
+    const body = JSON.parse(String(cap.init.body));
     assert.equal(body.model, "voyage-3-large");
     assert.equal(body.output_dimension, 1024);
     assert.deepEqual(body.input, ["hello world"]);
@@ -108,7 +112,7 @@ test("voyage path raises if Voyage returns the wrong dimension", async () => {
       ),
     );
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     await assert.rejects(
@@ -131,7 +135,7 @@ test("voyage path surfaces non-2xx HTTP errors with the response body", async ()
       new Response("invalid api key", { status: 401 }),
     );
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     await assert.rejects(
@@ -150,7 +154,7 @@ test("openai backend still fails loud when its key is missing (explicit opt-in)"
     process.env.EMBEDDING_PROVIDER = "openai";
     delete process.env.OPENAI_API_KEY;
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     await assert.rejects(
@@ -167,7 +171,7 @@ test("unknown EMBEDDING_PROVIDER value is rejected", async () => {
   try {
     process.env.EMBEDDING_PROVIDER = "cohere";
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     await assert.rejects(
@@ -187,7 +191,7 @@ test("empty input short-circuits without selecting a provider or hitting the net
     delete process.env.OPENAI_API_KEY;
     delete process.env.VOYAGE_API_KEY;
 
-    const mod = await import("../../src/lib/knowledge/embedder.ts");
+    const mod = await import("../../src/lib/knowledge/embedder");
     mod.__resetClientsForTests();
 
     const out = await mod.embedBatch([]);
@@ -198,7 +202,7 @@ test("empty input short-circuits without selecting a provider or hitting the net
 });
 
 test("toPgVector formats arrays as pgvector literal", async () => {
-  const mod = await import("../../src/lib/knowledge/embedder.ts");
+  const mod = await import("../../src/lib/knowledge/embedder");
   assert.equal(mod.toPgVector([0.1, 0.2, -0.3]), "[0.1,0.2,-0.3]");
   assert.equal(mod.toPgVector([]), "[]");
 });

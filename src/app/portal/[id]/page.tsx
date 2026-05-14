@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { PortalStatusClient } from "./PortalStatusClient";
+import { PortalStatusClient, type QueueStatus } from "./PortalStatusClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +55,7 @@ export default async function PortalPage({
 
         <PortalStatusClient
           id={row.id}
-          initialStatus={row.status}
+          initialStatus={row.status as QueueStatus}
           initialDashboardUrl={row.dashboard_url}
           initialError={row.error}
         />

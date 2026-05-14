@@ -599,14 +599,26 @@ export function AgentSheet(props: Props) {
               On edit-mode for department-head agents, the Telegram bot
               panel still surfaces here (it's per-head config, not
               tool config).
+
+              Why the CEO / top-of-org agent is included (2026-05-14,
+              Marti): the POST /api/connections/agent-telegram route
+              already accepts the CEO (reports_to === null or role
+              "ceo") because Scan is meant to be the single Telegram
+              entry point - but the panel was gated on
+              isDepartmentHead ONLY, so the operator had no way to wire
+              Scan's bot from the UI. The gate now matches the API's
+              own rule: department head OR CEO/top-of-org.
             */}
 
-            {isEdit && form.isDepartmentHead && (
-              <AgentTelegramBotPanel
-                agentId={props.agent.id}
-                agentName={form.name || props.agent.name}
-              />
-            )}
+            {isEdit &&
+              (form.isDepartmentHead ||
+                props.agent.role === "ceo" ||
+                props.agent.reportsTo === null) && (
+                <AgentTelegramBotPanel
+                  agentId={props.agent.id}
+                  agentName={form.name || props.agent.name}
+                />
+              )}
 
             {!isSelfHosted && (
               <Field label="Model" hint="Which Claude model powers this agent.">

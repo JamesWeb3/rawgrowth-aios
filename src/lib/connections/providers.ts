@@ -17,6 +17,12 @@ const BESPOKE_KEYS: Record<string, string> = {
   telegram: "telegram",
   stripe: "stripe",
   supabase: "supabase",
+  // Apify is a standalone API (api.apify.com), not a Composio app.
+  // Its key is stored by /api/connections/api-keys under the
+  // provider_config_key 'apify-key', so the apify tools'
+  // requiresIntegration guard resolves to that row instead of the
+  // wrong 'composio:apify' namespace.
+  apify: "apify-key",
 };
 
 export function providerConfigKeyFor(integrationId: string): string | null {

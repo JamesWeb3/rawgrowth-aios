@@ -252,7 +252,14 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // 3. Bump routine.last_run_at so the UI reflects immediately
+      // 3. Bump routine.last_run_at so the UI reflects the fire attempt
+      // immediately. why: keep this insert-time stamp even though the
+      // executor (claimRun) re-stamps on actual execution - when the
+      // executor is offline the run sits pending and never reaches
+      // claimRun, and a routine that has been firing on schedule for
+      // days should not still read "Last run: Never" just because the
+      // downstream executor is down. This is the floor; claimRun
+      // refines it to the real execution instant when a run does run.
       await db
         .from("rgaios_routines")
         .update({ last_run_at: now.toISOString() })

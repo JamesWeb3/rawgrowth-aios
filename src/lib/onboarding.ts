@@ -240,7 +240,11 @@ export async function computeOnboardingProgress(
 
   if (intake) {
     for (const section of QUESTIONNAIRE_SECTIONS) {
-      const value = (intake as Record<string, unknown>)[section.column];
+      // `columns` is a runtime-built select string, so supabase-js cannot
+      // statically infer the row shape and collapses `intake` to a
+      // GenericStringError. Every column is a real rgaios_brand_intakes
+      // JSONB column, so cast through unknown to the indexable shape.
+      const value = (intake as unknown as Record<string, unknown>)[section.column];
       if (value && typeof value === "object" && Object.keys(value).length > 0) {
         completed.push(section.id);
       }

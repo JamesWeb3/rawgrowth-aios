@@ -14,12 +14,20 @@ export const maxDuration = 120;
  *
  *   1. Counts open tasks, failed tasks (last 1h), pending insights,
  *      pending approvals, queued insight chats.
- *   2. If anything qualifies as actionable (failures, queue depth >0,
- *      stale-pending insights), Atlas drops ONE consolidated chat
- *      message into its own thread - "tickets snapshot" style.
- *   3. Dedupes via metadata.kind='atlas_coordinate' + a recency check
- *      (skips if a coordinate msg was written in the last 14 minutes
- *      so 15-min cron can't double-emit on overlap).
+ *   2. If - and ONLY if - something is genuinely new and actionable
+ *      (a failure / approval / queued chat / stale critical that
+ *      wasn't in the last posted state), Atlas drops ONE concise,
+ *      decision-focused chat message into its own thread.
+ *   3. When nothing is actionable, Atlas posts NOTHING. Silence beats
+ *      a "nothing in flight, re-check in 15" filler line every cycle
+ *      (Dilan, 2026-05-14: the routine was clogging Marti's scan
+ *      chat). The idle-nudge rotation was removed for the same reason.
+ *   4. Dedupes via metadata.kind='atlas_coordinate' + a recency check
+ *      (skips if a coordinate msg was written in the last 14 minutes)
+ *      AND a COARSE state signature: the signature keys on the SET of
+ *      insight root causes (department + metric), not the exact title
+ *      / percentage. So "Failed agent runs up 1400%" and "...1500%"
+ *      are the same root cause => same signature => no re-post.
  *
  * Auth: Bearer ${CRON_SECRET}.
  */
@@ -146,7 +154,11 @@ export async function GET(req: NextRequest) {
           .eq("status", "pending"),
         db
           .from("rgaios_insights")
-          .select("id, title, severity, created_at")
+          // `department` + `metric` are the STABLE root-cause identity
+          // of an insight. The `title` carries the volatile percentage
+          // ("up 1400%" vs "up 1500%") that caused the signature churn,
+          // so we sign on (department, metric) instead - see nextSig.
+          .select("id, title, severity, created_at, department, metric")
           .eq("organization_id", orgId)
           .in("status", ["open", "pending", "executing", "needs_approval"])
           .order("created_at", { ascending: false })
@@ -171,6 +183,8 @@ export async function GET(req: NextRequest) {
         title: string;
         severity: string;
         created_at: string;
+        department: string | null;
+        metric: string | null;
       }>;
       const queuedInsights = queuedInsightsRes.count ?? 0;
 
@@ -197,30 +211,66 @@ export async function GET(req: NextRequest) {
         queuedInsights,
       };
 
-      // Dedup signature. The previous code compared raw counts, but
-      // `failedRuns` is a sliding 1h window and `openRuns` ticks up and
-      // down constantly - the counts almost never matched twice, so the
-      // "skip unchanged" path basically never fired and Atlas re-posted
-      // a near-identical "Coordination check" every 15 min (Dilan,
-      // 2026-05-14: routine clogging the operator chat).
+      // Dedup signature - now COARSE, keyed on root causes only.
       //
-      // Instead, sign the STABLE identity of the state: which failed
-      // runs, which stale insights, how many approvals/queued. Same
-      // problems sitting there => same signature => skip. A genuinely
-      // new failure or insight changes the signature and posts.
+      // First attempt compared raw counts: `failedRuns` is a sliding 1h
+      // window and `openRuns` ticks constantly, so counts almost never
+      // matched twice and "skip unchanged" never fired.
+      //
+      // Second attempt signed exact insight IDs. But the insights
+      // themselves churn: a (fulfilment, runs_failed) anomaly resolves
+      // and a fresh row is created for the same root cause with a new
+      // percentage in the title ("up 1400%" -> "up 1500%"). New ID =>
+      // new signature => Atlas re-posted a near-identical "Coordination
+      // check" every cycle anyway (Dilan, 2026-05-14: clogging chat).
+      //
+      // Fix: sign the SET of insight root causes - (department, metric)
+      // pairs - not their IDs or titles. "Failed agent runs up 1400%"
+      // and "...1500%" are both (fulfilment, runs_failed): same root
+      // cause, same signature, no re-post. Failed runs are bucketed by
+      // routine_id (the recurring thing that's broken) rather than the
+      // per-run id for the same reason. A genuinely new root cause - a
+      // different metric, a different routine failing - changes the
+      // signature and posts.
+      const staleRootCauses = Array.from(
+        new Set(
+          stalePending.map(
+            (i) => `${i.department ?? "atlas"}:${i.metric ?? "?"}`,
+          ),
+        ),
+      ).sort();
+      const failedRoutines = Array.from(
+        new Set(failedRuns.map((f) => f.routine_id ?? "unknown")),
+      ).sort();
       const nextSig = JSON.stringify({
-        failed: failedRuns.map((f) => f.id).sort(),
-        stale: stalePending.map((i) => i.id).sort(),
-        approvals: pendingApprovals,
-        queued: queuedInsights,
-        openAny: openRuns > 0,
+        failedRoutines,
+        staleRootCauses,
+        // Approval / queue depth bucketed (0 / 1 / "few" / "many") so a
+        // single item arriving or clearing flips state, but routine
+        // count jitter inside a bucket does not.
+        approvals: bucketCount(pendingApprovals),
+        queued: bucketCount(queuedInsights),
         actionable,
       });
 
+      // Nothing actionable => post NOTHING. The old code dropped a
+      // canned idle nudge here every cycle ("Nothing on fire...",
+      // "Heartbeat...") which was pure noise. Silence is the better
+      // signal - the operator only hears from Atlas when there's a
+      // decision to make (Dilan, 2026-05-14). We still `continue`
+      // without writing, so no atlas_coordinate row, no bell badge.
+      if (!actionable) {
+        results.push({ org: orgId, name: o.name, skipped: "quiet" });
+        continue;
+      }
+
       // Unchanged state re-surfaces at most every REFRESH_WINDOW. Below
-      // that window an identical signature is skipped on BOTH the ticket
-      // and the idle-nudge path (the idle path had no dedup at all
-      // before this). A state change posts immediately regardless.
+      // that window an identical COARSE signature (same set of failing
+      // routines + same set of insight root causes + same approval /
+      // queue buckets) is skipped. Because the signature ignores the
+      // volatile percentage in insight titles and the per-run failed
+      // ids, churn alone no longer counts as "changed" - only a new
+      // root cause posts. A genuine state change posts immediately.
       const REFRESH_WINDOW_MS = 3 * 60 * 60 * 1000;
       const skipUnchanged =
         lastSig !== null &&
@@ -232,60 +282,9 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // Pedro's rule (2026-05-05): Atlas must be PROACTIVE - send a
-      // message even when nothing is actionable. Pick from a rotation
-      // of canned nudges based on what's in the system.
-      if (!actionable) {
-        const idleMsg = composeIdleNudge({
-          openRuns,
-          pendingInsights,
-          orgName: o.name,
-        });
-        const idleInsert = await db.from("rgaios_agent_chat_messages").insert({
-          organization_id: orgId,
-          agent_id: ceoId,
-          user_id: null,
-          role: "assistant",
-          content: idleMsg,
-          metadata: {
-            kind: "atlas_coordinate",
-            mode: "idle_nudge",
-            counts: nextCounts,
-            sig: nextSig,
-          },
-        } as never);
-        if (idleInsert.error?.code === "23505") {
-          results.push({
-            org: orgId,
-            name: o.name,
-            skipped: "race_dedup",
-          });
-        } else if (idleInsert.error) {
-          // Non-dedup failure - log so we don't silently miss a beat in
-          // the proactive cadence. Atlas going quiet is the kind of
-          // regression nobody notices for hours.
-          console.error(
-            `[atlas-coordinate] idle insert failed for org ${orgId}:`,
-            idleInsert.error.message,
-          );
-          results.push({
-            org: orgId,
-            name: o.name,
-            error: idleInsert.error.message,
-            mode: "idle_nudge",
-          });
-        } else {
-          results.push({
-            org: orgId,
-            name: o.name,
-            emitted: true,
-            mode: "idle_nudge",
-          });
-        }
-        continue;
-      }
-
-      // Compose ticket-style snapshot.
+      // Compose a concise, decision-focused snapshot. Only what
+      // changed and what needs a call - no "still running, re-check in
+      // 15" filler, no running-task count (that's not a decision).
       const lines: string[] = [
         `**Coordination check - ${new Date().toLocaleString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}**`,
         "",
@@ -311,10 +310,16 @@ export async function GET(req: NextRequest) {
         }
       }
       lines.push("");
+      // One action-oriented closer naming the decision, not a "re-check
+      // in 15" heartbeat. Whichever queue is the bottleneck leads.
       lines.push(
-        openRuns > 0
-          ? `${openRuns} task${openRuns === 1 ? "" : "s"} still running. I'll re-check in 15.`
-          : "Nothing in flight. I'll re-check in 15.",
+        pendingApprovals > 0
+          ? `Needs your call: ${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"} blocking work.`
+          : stalePending.length > 0
+            ? `Needs your call: ${stalePending.length} critical insight${stalePending.length === 1 ? "" : "s"} unactioned >30m.`
+            : queuedInsights > 0
+              ? `Needs your call: ${queuedInsights} insight question${queuedInsights === 1 ? "" : "s"} waiting for an answer.`
+              : `Needs your call: ${failedRuns.length} task${failedRuns.length === 1 ? "" : "s"} failed - retry or escalate?`,
       );
 
       const content = lines.join("\n");
@@ -425,60 +430,16 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Idle-state nudge content. Atlas is proactive even when there are no
- * tickets to surface - rotates between angles so the operator gets a
- * variety of starting points instead of the same string repeated.
+ * Bucket a queue depth into a coarse band for the dedup signature.
+ * Why: the exact count of pending approvals / queued chats jitters as
+ * background work drains the queue, and signing the raw number made
+ * every cycle look "changed". Bands change only on a meaningful move
+ * (empty -> non-empty, a handful -> a backlog), so unchanged state
+ * stays unchanged.
  */
-function composeIdleNudge(args: {
-  openRuns: number;
-  pendingInsights: Array<{ title: string; severity: string }>;
-  orgName: string;
-}): string {
-  const { openRuns, pendingInsights } = args;
-  const ts = new Date().toLocaleString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-
-  const angles: string[] = [];
-
-  if (openRuns > 0) {
-    angles.push(
-      `**Status check - ${ts}**\n\n` +
-        `${openRuns} task${openRuns === 1 ? "" : "s"} still running, no failures yet. I'll keep watching. ` +
-        `Want me to drill into a specific dept's KPI while we wait?`,
-    );
-  }
-
-  if (pendingInsights.length > 0) {
-    const i = pendingInsights[0];
-    angles.push(
-      `**Quick nudge - ${ts}**\n\n` +
-        `Still sitting on "${i.title.slice(0, 100)}" - it hasn't been acknowledged or actioned. ` +
-        `Want me to draft a hypothesis-test plan for it, or should we let it ride another cycle?`,
-    );
-  }
-
-  angles.push(
-    `**Heartbeat - ${ts}**\n\n` +
-      `Nothing on fire. I'm scanning every 15 min. Couple of things I could do while it's quiet: ` +
-      `(1) pull a weekly summary of what each dept-head shipped, ` +
-      `(2) audit which agents haven't been invoked in 7+ days, ` +
-      `(3) check if any KPI baselines drifted. Pick one or send me a different angle.`,
-  );
-  angles.push(
-    `**Dispatch - ${ts}**\n\n` +
-      `Quiet window. Want me to spin up a research routine on a competitor or a product angle? ` +
-      `Drop a name or topic and I'll route it to the right dept-head with a brief.`,
-  );
-  angles.push(
-    `**Standup - ${ts}**\n\n` +
-      `Caught up. If I were running this org, the next 30 minutes I'd spend reviewing ` +
-      `last week's CRM activity vs this week's pipeline movement. Want me to surface that as a chart?`,
-  );
-
-  // Rotate by minute-of-day so consecutive cycles pick different angles.
-  const idx = Math.floor(Date.now() / (15 * 60 * 1000)) % angles.length;
-  return angles[idx];
+function bucketCount(n: number): string {
+  if (n <= 0) return "0";
+  if (n === 1) return "1";
+  if (n <= 5) return "few";
+  return "many";
 }

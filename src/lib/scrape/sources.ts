@@ -97,12 +97,16 @@ function competitorsToUrls(competitors: Record<string, unknown> | null): ScrapeS
 export function buildScrapeSources(
   intake: Record<string, unknown>,
 ): ScrapeSource[] {
+  // intake columns are JSONB objects; index access is `unknown`, and
+  // `unknown ?? null` widens to `{} | null` which is not assignable to
+  // Record<string, unknown> | null. Narrow each section to the object
+  // shape the *ToUrls helpers expect.
   const social = intake[
     QUESTIONNAIRE_SECTIONS.find((s) => s.id === "socialPresence")!.column
-  ];
+  ] as Record<string, unknown> | null | undefined;
   const competitors = intake[
     QUESTIONNAIRE_SECTIONS.find((s) => s.id === "competitors")!.column
-  ];
+  ] as Record<string, unknown> | null | undefined;
   return [...socialPresenceToUrls(social ?? null), ...competitorsToUrls(competitors ?? null)];
 }
 

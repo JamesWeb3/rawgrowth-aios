@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type QueueStatus =
+export type QueueStatus =
   | "pending"
   | "provisioning"
   | "ready"
