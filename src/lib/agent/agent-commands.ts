@@ -624,9 +624,14 @@ async function execAgentInvoke(
 
     try {
       if (finalStatus === "succeeded") {
+        // Run output shape depends on the executor path:
+        //   executeRun (agent_invoke uses this) -> { text, stepCount, ... }
+        //   executeChatTask                     -> { reply, executed_inline }
+        // Read all three keys so the delegated output surfaces either way.
         const summaryRaw =
           (runOutput?.summary as string | undefined) ??
           (runOutput?.reply as string | undefined) ??
+          (runOutput?.text as string | undefined) ??
           "";
         await db.from("rgaios_agent_chat_messages").insert({
           organization_id: orgId,
@@ -673,6 +678,7 @@ async function execAgentInvoke(
   const delegatedOutput =
     (runOutput?.summary as string | undefined) ??
     (runOutput?.reply as string | undefined) ??
+    (runOutput?.text as string | undefined) ??
     null;
   const delegationOk = finalStatus === "succeeded";
 
