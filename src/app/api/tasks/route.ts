@@ -127,10 +127,20 @@ export async function GET() {
       runCount: taskRuns.length,
       latestStatus: lastRun?.status ?? "pending",
       latestRunAt: lastRun?.created_at ?? null,
-      latestOutput:
-        lastRun?.output?.reply && typeof lastRun.output.reply === "string"
-          ? String(lastRun.output.reply)
-          : null,
+      // The two executor paths write different output shapes:
+      // executeChatTask -> { reply }, executeRun (agent_invoke
+      // delegations + scheduled routines) -> { text }. Reading only
+      // .reply showed "No output recorded" on every executeRun task
+      // that actually succeeded. Read the tolerant shape execAgentInvoke
+      // already uses: reply ?? text ?? summary.
+      latestOutput: (() => {
+        const out = lastRun?.output as
+          | { reply?: unknown; text?: unknown; summary?: unknown }
+          | null
+          | undefined;
+        const v = out?.reply ?? out?.text ?? out?.summary;
+        return typeof v === "string" && v.trim() ? v : null;
+      })(),
       // Surface the error message for failed runs so /tasks gives the
       // operator a hint about WHY a routine failed instead of a blank
       // "Failed" badge. e2e audit found 87 failed runs with zero

@@ -29,7 +29,11 @@ type RunRow = {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
-  output: { reply?: string; executed_inline?: boolean } | null;
+  // executeChatTask writes { reply }, executeRun writes { text, ... },
+  // execAgentInvoke can write { summary }. Read all three.
+  output:
+    | { reply?: string; text?: string; summary?: string; executed_inline?: boolean }
+    | null;
   error: string | null;
 };
 
@@ -110,10 +114,10 @@ export async function GET(
       startedAt: r.started_at,
       completedAt: r.completed_at,
       createdAt: r.created_at,
-      output:
-        r.output?.reply && typeof r.output.reply === "string"
-          ? String(r.output.reply)
-          : null,
+      output: (() => {
+        const v = r.output?.reply ?? r.output?.text ?? r.output?.summary;
+        return typeof v === "string" && v.trim() ? v : null;
+      })(),
       error: r.error,
     })),
   });
