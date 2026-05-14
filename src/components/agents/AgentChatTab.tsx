@@ -431,9 +431,18 @@ export default function AgentChatTab({
               const copy = [...prev];
               const last = copy[copy.length - 1];
               if (last && last.role === "assistant") {
+                // Bulletproof placeholder swap: if the bubble still holds
+                // a rotating "Thinking…/Looking into it…" frame, the real
+                // text REPLACES it regardless of firstDelta state. The
+                // two-pass reply path emits text after a long gap (tool
+                // run + delegation poll), and an interleaved timer tick
+                // could otherwise leave the frame stuck above the answer.
+                const isPlaceholder = THINKING_FRAMES.includes(last.content);
                 copy[copy.length - 1] = {
                   role: "assistant",
-                  content: (isFirst ? "" : last.content) + event.delta,
+                  content:
+                    (isFirst || isPlaceholder ? "" : last.content) +
+                    event.delta,
                 };
               } else {
                 copy.push({ role: "assistant", content: event.delta });

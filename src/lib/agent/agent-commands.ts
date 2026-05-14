@@ -87,7 +87,27 @@ function humanizeToolResult(
           str(o.subject) || str(o.snippet) || str(o.preview) || "(no subject)";
         const from =
           str(o.sender) || str(o.from) || str(o.fromEmail) || "(unknown sender)";
-        return `• "${subject.slice(0, 90)}" - ${from.slice(0, 60)}`;
+        // Body snippet + date: templated mail (membership confirmations,
+        // form submissions) shares subject + sender, so subject alone
+        // makes 3 distinct emails look like one duplicate. The snippet
+        // is what tells them apart.
+        const bodyRaw =
+          str(o.messageText) ||
+          str(o.snippet) ||
+          str(o.preview) ||
+          str(o.body);
+        const snippet = bodyRaw
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 90);
+        const when = str(o.messageTimestamp) || str(o.date) || str(o.internalDate);
+        const tail = [
+          when && when.slice(0, 16),
+          snippet && `"${snippet}…"`,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return `• "${subject.slice(0, 80)}" - ${from.slice(0, 50)}${tail ? `\n  ${tail}` : ""}`;
       });
       const more = list.length > 10 ? `\n…and ${list.length - 10} more` : "";
       return `Fetched ${list.length} email${list.length === 1 ? "" : "s"}:\n${lines.join("\n")}${more}`;
