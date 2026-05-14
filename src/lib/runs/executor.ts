@@ -120,6 +120,7 @@ export async function executeRun(runId: string): Promise<void> {
           systemPrompt,
           userMessage,
           abortCtl.signal,
+          run.organization_id,
         );
         result = { text, stepCount: 0, toolCalls: [] };
       } else {
@@ -175,21 +176,65 @@ export async function executeRun(runId: string): Promise<void> {
  * just generates text. The wall-clock cap is shared with Path B via the
  * abort signal so a stuck CLI doesn't outlive the executor's timeout.
  */
-function generateViaClaudeCli(
+async function generateViaClaudeCli(
   systemPrompt: string,
   userMessage: string,
   signal: AbortSignal,
+  organizationId: string,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
+  // Wire the org's MCP server (this Next app's /api/mcp endpoint) into
+  // the CLI subprocess so spawned agents can fire `composio_use_tool`,
+  // `agent_invoke`, etc. via the same tool registry the dashboard uses.
+  // Without this, the CLI subprocess sees only Anthropic's built-in
+  // Claude Code tools (file ops, bash, web fetch) and reports "tool not
+  // available" when asked to invoke a Composio action.
+  let mcpConfigPath: string | null = null;
+  try {
+    const { data: org } = await supabaseAdmin()
+      .from("rgaios_organizations")
+      .select("mcp_token")
+      .eq("id", organizationId)
+      .maybeSingle();
+    const mcpToken = (org as { mcp_token?: string | null } | null)?.mcp_token;
+    const appUrl =
+      process.env.NEXTAUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    if (mcpToken) {
+      const cfg = {
+        mcpServers: {
+          rawgrowth: {
+            type: "http",
+            url: `${appUrl.replace(/\/$/, "")}/api/mcp`,
+            headers: { Authorization: `Bearer ${mcpToken}` },
+          },
+        },
+      };
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const fs = await import("node:fs/promises");
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-mcp-"));
+      mcpConfigPath = path.join(dir, "mcp.json");
+      await fs.writeFile(mcpConfigPath, JSON.stringify(cfg), { mode: 0o600 });
+    }
+  } catch (err) {
+    console.warn(
+      `[executor.cli] mcp-config setup failed for org ${organizationId}: ${(err as Error).message}`,
+    );
+  }
+
+  return new Promise<string>((resolve, reject) => {
     const bin = process.env.CLAUDE_CLI_PATH ?? "claude";
     // Force HOME so claude CLI finds ~/.claude/.credentials.json and
     // ~/.claude.json from the bind-mounted host paths. The Next.js
     // container runs as `nextjs` whose HOME is /nonexistent, so without
     // this the CLI looks at /nonexistent/.claude/* and silently exits.
     const home = process.env.CLAUDE_CLI_HOME ?? "/home/node";
+    // --dangerously-skip-permissions FIRST so MCP tool calls don't
+    // prompt for per-tool consent inside the headless subprocess.
+    const args = ["--dangerously-skip-permissions", "--print"];
+    if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
     const child = spawn(
       bin,
-      ["--print", "--dangerously-skip-permissions"],
+      args,
       {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, HOME: home },
@@ -219,6 +264,17 @@ function generateViaClaudeCli(
     });
     child.on("close", (code) => {
       signal.removeEventListener("abort", onAbort);
+      // Best-effort cleanup of the temp mcp config (contains the org's
+      // MCP bearer token). Fire-and-forget; never blocks the result.
+      if (mcpConfigPath) {
+        import("node:fs/promises")
+          .then(async (fs) => {
+            await fs.unlink(mcpConfigPath!).catch(() => {});
+            const path = await import("node:path");
+            await fs.rmdir(path.dirname(mcpConfigPath!)).catch(() => {});
+          })
+          .catch(() => {});
+      }
       if (code !== 0) {
         reject(
           new Error(
