@@ -1296,12 +1296,19 @@ export async function extractAndExecuteCommands(input: {
 
   let visibleReply = reply.replace(COMMAND_BLOCK_RE, "").trim();
 
-  if (pending.length === 0) {
-    const bare = extractBareJsonCommands(reply);
-    for (const b of bare) {
-      pending.push({ type: b.type, body: b.body, rawSpan: b.rawSpan });
-      visibleReply = visibleReply.replace(b.rawSpan, "").trim();
-    }
+  // Always also scan for BARE JSON command blocks (the model dropped
+  // the <command> wrapper). Run it on visibleReply - the wrapped blocks
+  // are already stripped, so this can never double-match the JSON
+  // inside a wrapped block, AND it catches a bare command even in a
+  // reply that MIXED a wrapped block with a bare one. The old
+  // `pending.length === 0` gate skipped the bare scan entirely whenever
+  // any wrapped block existed, so a bare { agent, task } block in a
+  // mixed reply leaked raw into the operator's chat - never stripped,
+  // never executed, never rendered as a card.
+  const bare = extractBareJsonCommands(visibleReply);
+  for (const b of bare) {
+    pending.push({ type: b.type, body: b.body, rawSpan: b.rawSpan });
+    visibleReply = visibleReply.replace(b.rawSpan, "").trim();
   }
 
   if (pending.length === 0) {
