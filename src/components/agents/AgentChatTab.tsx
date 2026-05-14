@@ -754,6 +754,25 @@ export default function AgentChatTab({
     }
   }
 
+  // "Discuss in main chat" - invoked from a proactive bubble. Switches
+  // to the main thread and seeds the input with a quoted reference of
+  // that proactive message so the operator types their question with
+  // the heads-up already in context. We seed the input (not auto-send)
+  // so the operator stays in control of what they actually ask.
+  function discussInMain(proactiveContent: string) {
+    const quote = proactiveContent.replace(/\s+/g, " ").trim().slice(0, 140);
+    setActiveThread("main");
+    setInput(`Re: ${quote}\n\n`);
+    // Focus + drop the caret at the end so the operator can type
+    // straight away after the seeded reference.
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }
+
   return (
     <div
       data-onboarding="agent-chat"
@@ -1045,6 +1064,16 @@ export default function AgentChatTab({
                 RoleIcon={RoleIcon}
                 railTop={onRail && prevOnRail}
                 railBottom={onRail && nextOnRail}
+                // In the proactive view only, each agent bubble gets a
+                // "Discuss in main chat" action. It carries THAT message
+                // into the main thread as a quoted reference so the
+                // operator can ask about the specific heads-up they were
+                // reading, not start from a blank main chat.
+                onDiscussInMain={
+                  activeThread === "proactive" && msg.role === "assistant"
+                    ? () => discussInMain(msg.content)
+                    : undefined
+                }
               />
             );
           })}
@@ -1176,6 +1205,7 @@ function Bubble({
   RoleIcon,
   railTop,
   railBottom,
+  onDiscussInMain,
 }: {
   message: ChatMessage;
   streaming: boolean;
@@ -1185,6 +1215,9 @@ function Bubble({
   // one continuous spine.
   railTop: boolean;
   railBottom: boolean;
+  // Set only for agent bubbles rendered in the proactive thread.
+  // Carries this message into the main chat as a quoted reference.
+  onDiscussInMain?: () => void;
 }) {
   if (message.role === "user") {
     return (
@@ -1205,9 +1238,15 @@ function Bubble({
   // Assistant reply: the conclusion of the run. Sits on the same rail as
   // the orchestration steps above it (railTop) so it reads as the answer
   // the timeline was building toward, not a disconnected block.
+  //
+  // showActions gates the inline "Open Updates" panel on the proactive
+  // anomaly heads-ups. The generator copy leads with the metric title
+  // then carries a "Root cause:" line and points at "in Updates" /
+  // "drafted plan in Updates" - match those so the panel still renders
+  // after the copy rewrite.
   const showActions =
     !!message.content &&
-    /Heads up.*flagged.*anomaly|Drafted plan.*approval needed in Updates/i.test(
+    /Root cause:[\s\S]*\bin Updates\b|drafted plan in Updates/i.test(
       message.content,
     );
   return (
@@ -1234,6 +1273,27 @@ function Bubble({
                 <span className="text-[10px] text-[var(--text-muted)]">
                   Approve / reject the plan from Updates, or reply here to debate the angle.
                 </span>
+              </div>
+            )}
+            {/* Proactive-thread-only: take THIS heads-up into the main
+                chat as a quoted reference. Sits below the anomaly panel
+                when both render; on its own for atlas_coordinate
+                bubbles that don't trip showActions. */}
+            {onDiscussInMain && (
+              <div
+                className={
+                  "flex " +
+                  (showActions ? "mt-2" : "mt-3 border-t border-[var(--line)] pt-2.5")
+                }
+              >
+                <button
+                  type="button"
+                  onClick={onDiscussInMain}
+                  className="inline-flex items-center gap-1 rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-2 py-1 text-[11px] text-[var(--text-body)] transition-colors hover:border-[var(--brand-primary)]/50 hover:text-[var(--brand-primary)]"
+                >
+                  <ArrowRightLeft className="h-3 w-3" />
+                  Discuss in main chat
+                </button>
               </div>
             )}
           </>

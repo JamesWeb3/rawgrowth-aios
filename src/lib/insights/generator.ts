@@ -633,10 +633,24 @@ No SaaS clichés. Concrete numbers. Brand voice on.`;
     // Plain prose, no emoji, links to /updates.
     try {
       if (insightId) {
+        // Sharper proactive copy: lead with the metric + the actual
+        // move, one line on why it matters (severity-scaled), then a
+        // single clear next step. Every field below - title, reason,
+        // severity, the worse flag - comes straight off the insight
+        // row; nothing here is invented.
+        const whyItMatters = s.worse
+          ? severity === "critical"
+            ? "Critical - this is moving against you fast enough to need a call now."
+            : "Worth a look before it compounds."
+          : "Positive move - worth locking in what worked.";
+        const nextStep = s.worse
+          ? `Next: review the drafted plan in Updates and approve or adjust it. Reply here if you want to challenge the root cause first.`
+          : `Next: skim the write-up in Updates so the win is on record. Reply here if you want to push on it.`;
         const proactiveMsg =
-          `Heads up - I just flagged a ${severity} anomaly: ${title}.\n\n` +
-          `Reason: ${reason.slice(0, 300)}${reason.length > 300 ? "..." : ""}\n\n` +
-          `Drafted plan + ${s.worse ? "approval needed" : "FYI"} in Updates. Open it via the sidebar or hit me here if you want to debate the angle.`;
+          `${title} (${severity}).\n\n` +
+          `${whyItMatters}\n\n` +
+          `Root cause: ${reason.slice(0, 280)}${reason.length > 280 ? "..." : ""}\n\n` +
+          nextStep;
         await db.from("rgaios_agent_chat_messages").insert({
           organization_id: input.orgId,
           agent_id: agent.id,

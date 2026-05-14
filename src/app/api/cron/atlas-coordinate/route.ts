@@ -282,45 +282,61 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // Compose a concise, decision-focused snapshot. Only what
-      // changed and what needs a call - no "still running, re-check in
-      // 15" filler, no running-task count (that's not a decision).
+      // Compose a tight, decision-first snapshot. Structure: ONE lead
+      // line naming the single thing that needs the operator's call,
+      // then a short evidence block per open queue. Every line is
+      // something the operator can act on - no running-task count, no
+      // "re-check in 15" filler. All numbers below are real counts
+      // pulled above; nothing is invented.
+      const clock = new Date().toLocaleString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+      // The lead: whichever queue is the bottleneck states the decision
+      // up front, before any detail. Priority: approvals block work
+      // outright > stale criticals are aging > queued questions wait on
+      // the operator > failed runs need a retry/escalate call.
+      const lead =
+        pendingApprovals > 0
+          ? `${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"} blocking work - clear ${pendingApprovals === 1 ? "it" : "them"} or work stays stuck.`
+          : stalePending.length > 0
+            ? `${stalePending.length} critical insight${stalePending.length === 1 ? "" : "s"} sat >30m unactioned - act or dismiss.`
+            : queuedInsights > 0
+              ? `${queuedInsights} insight question${queuedInsights === 1 ? "" : "s"} waiting on your answer.`
+              : `${failedRuns.length} task${failedRuns.length === 1 ? "" : "s"} failed in the last hour - retry or escalate?`;
+
       const lines: string[] = [
-        `**Coordination check - ${new Date().toLocaleString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}**`,
+        `**Coordination check - ${clock}**`,
         "",
+        lead,
       ];
-      if (failedRuns.length > 0) {
-        lines.push(`Failed tasks (last 1h): ${failedRuns.length}`);
-        for (const f of failedRuns.slice(0, 3)) {
-          const err = (f.error ?? "no error msg").slice(0, 120);
-          lines.push(`  - run ${f.id.slice(0, 8)}: ${err}`);
-        }
-        if (failedRuns.length > 3) lines.push(`  - +${failedRuns.length - 3} more`);
-      }
+
+      // Evidence block. Only queues with something in them show, each
+      // as one count line plus the few concrete items behind it.
       if (pendingApprovals > 0) {
-        lines.push(`Pending approvals: ${pendingApprovals}`);
-      }
-      if (queuedInsights > 0) {
-        lines.push(`Insight questions queued for chat: ${queuedInsights}`);
+        lines.push("", `Approvals pending: ${pendingApprovals}`);
       }
       if (stalePending.length > 0) {
-        lines.push(`Stale critical insights (>30m unactioned): ${stalePending.length}`);
+        lines.push("", `Stale critical insights (>30m): ${stalePending.length}`);
         for (const i of stalePending.slice(0, 2)) {
           lines.push(`  - ${i.title.slice(0, 100)}`);
         }
       }
-      lines.push("");
-      // One action-oriented closer naming the decision, not a "re-check
-      // in 15" heartbeat. Whichever queue is the bottleneck leads.
-      lines.push(
-        pendingApprovals > 0
-          ? `Needs your call: ${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"} blocking work.`
-          : stalePending.length > 0
-            ? `Needs your call: ${stalePending.length} critical insight${stalePending.length === 1 ? "" : "s"} unactioned >30m.`
-            : queuedInsights > 0
-              ? `Needs your call: ${queuedInsights} insight question${queuedInsights === 1 ? "" : "s"} waiting for an answer.`
-              : `Needs your call: ${failedRuns.length} task${failedRuns.length === 1 ? "" : "s"} failed - retry or escalate?`,
-      );
+      if (queuedInsights > 0) {
+        lines.push("", `Insight questions queued for chat: ${queuedInsights}`);
+      }
+      if (failedRuns.length > 0) {
+        lines.push("", `Failed tasks (last 1h): ${failedRuns.length}`);
+        for (const f of failedRuns.slice(0, 3)) {
+          const err = (f.error ?? "no error msg").slice(0, 120);
+          lines.push(`  - run ${f.id.slice(0, 8)}: ${err}`);
+        }
+        if (failedRuns.length > 3) {
+          lines.push(`  - +${failedRuns.length - 3} more`);
+        }
+      }
 
       const content = lines.join("\n");
       const ticketInsert = await db.from("rgaios_agent_chat_messages").insert({
