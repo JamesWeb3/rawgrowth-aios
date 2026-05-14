@@ -413,23 +413,32 @@ async function execToolCall(
     };
   }
   const { tool, args } = payload as { tool?: string; args?: unknown };
-  // Chat tool_call surface routes composio_use_tool plus a small set of
+  // Chat tool_call surface routes composio_use_tool plus a set of
   // native MCP tools straight through the registry: the Apify actor
-  // tools (Apify isn't a Composio app) and composio_list_tools (the
+  // tools (Apify isn't a Composio app), composio_list_tools (the
   // discovery tool - the model used to wrap it as
   // composio_use_tool({app:"composio",action:"composio_list_tools"})
-  // which failed with "composio isn't connected"). Anything else is
+  // which failed with "composio isn't connected"), web_search, the
+  // orchestrator plan store, and agent-to-agent messaging. All of
+  // these own their auth + execution and just need ctx.organizationId,
+  // which the MCP-direct branch already supplies. Anything else is
   // refused: the dashboard chat path has no MCP drain handoff.
   const MCP_DIRECT_TOOLS = new Set([
     "apify_run_actor",
     "apify_list_actor_runs",
     "composio_list_tools",
+    "web_search",
+    "plan_create",
+    "plan_update",
+    "plan_get",
+    "agent_message",
+    "agent_inbox",
   ]);
   if (tool !== "composio_use_tool" && !MCP_DIRECT_TOOLS.has(tool ?? "")) {
     return {
       ok: false,
       type: "tool_call",
-      summary: `tool_call: supported tools are composio_use_tool, composio_list_tools, apify_run_actor, apify_list_actor_runs (got "${tool ?? "(missing)"}")`,
+      summary: `tool_call: supported tools are composio_use_tool, composio_list_tools, apify_run_actor, apify_list_actor_runs, web_search, plan_create, plan_update, plan_get, agent_message, agent_inbox (got "${tool ?? "(missing)"}")`,
     };
   }
   if (!args || typeof args !== "object") {

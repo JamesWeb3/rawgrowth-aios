@@ -65,7 +65,9 @@ export async function buildAgentChatPreamble(input: {
     "## What I can and cannot do\n\n" +
     "I can:\n" +
     "- Call Composio tools (Gmail, Slack, HubSpot, Google Calendar, etc.) via composio_use_tool when the app is OAuth-connected at /connections.\n" +
-    "- Dispatch other agents (CEO/dept heads only) via agent_invoke.\n" +
+    "- Scrape the web + Instagram via apify_run_actor, and search the open web via web_search.\n" +
+    "- Dispatch other agents (CEO/dept heads only) via agent_invoke, or message them async via agent_message / agent_inbox.\n" +
+    "- Keep a durable multi-step plan via plan_create / plan_update / plan_get.\n" +
     "- Create routines via routine_create (CEO/dept heads only).\n" +
     "- Read the company corpus (CRM, sales calls, brand profile) for RAG.\n\n" +
     "I CANNOT:\n" +
@@ -710,6 +712,25 @@ export async function buildAgentChatPreamble(input: {
         "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
         "  - If the action genuinely doesn't need a tool / dispatch (pure conversation), DO NOT emit a command - just answer.",
         "",
+        "═══ ORCHESTRATOR TOOLS (web_search · plans · agent messaging) ═══",
+        "",
+        "tool_call also routes these native tools - same <command type=\"tool_call\"> wrapper, the system runs them server-side and posts the result back into chat:",
+        "",
+        "  web_search - live facts off the open web (news, docs, prices). Reach for it instead of guessing when the corpus + memory can't answer. Optional `recency` (\"day\"/\"week\"/\"month\"/\"year\"):",
+        "    <command type=\"tool_call\">",
+        "    { \"tool\": \"web_search\", \"args\": { \"query\": \"Instagram Reels algorithm change 2026\", \"recency\": \"month\" } }",
+        "    </command>",
+        "",
+        "  plan_create / plan_update / plan_get - a DURABLE plan store. On any multi-step job: plan_create the goal (+ optional steps) FIRST, keep the returned plan_id, plan_update steps as they finish, and plan_get at the top of a later turn to recover the plan after context compaction. Step status is pending|running|done|blocked. plan_get with no id returns the org's most recent active plan.",
+        "    <command type=\"tool_call\">",
+        "    { \"tool\": \"plan_create\", \"args\": { \"goal\": \"Launch the Dec 1 webinar\", \"steps\": [ { \"id\": \"s1\", \"desc\": \"Promo content - Kasia\", \"status\": \"pending\" }, { \"id\": \"s2\", \"desc\": \"CS reply templates - Zosia\", \"status\": \"pending\" } ] } }",
+        "    </command>",
+        "",
+        "  agent_message / agent_inbox - async agent-to-agent messaging. NON-blocking: agent_message drops a note in a peer's inbox and returns immediately - use agent_invoke instead when you need to WAIT for their answer. ToolContext carries no calling-agent id, so name yourself: agent_message needs from_agent + to_agent + body (+ optional thread_id to continue a thread); agent_inbox needs agent_id (your own name or uuid).",
+        "    <command type=\"tool_call\">",
+        "    { \"tool\": \"agent_message\", \"args\": { \"from_agent\": \"Atlas\", \"to_agent\": \"Kasia\", \"body\": \"Heads-up: webinar promo lands next week - keep some capacity free.\" } }",
+        "    </command>",
+        "",
         "═══ DATA-ASK PROTOCOL ═══",
         "",
         "If you genuinely cannot answer or plan without specific data the corpus doesn't have (e.g. real CTR numbers, AOV, customer count), end your reply with one or more <need> blocks:",
@@ -775,6 +796,10 @@ export async function buildAgentChatPreamble(input: {
         "      • Instagram reels -> actor_id \"apify/instagram-reel-scraper\", run_input { \"directUrls\": [\"https://www.instagram.com/<handle>/reels/\"], \"resultsLimit\": 30 }",
         "    If the scrape is not in this list, keep run_input minimal and only use fields you are sure the actor documents - do not guess.",
         "    Destructive actions (DELETE/PURGE/WIPE) are refused.",
+        "  - tool_call also routes `web_search` for live facts off the open web (news, docs, prices) - reach for it instead of guessing when the corpus + memory can't answer:",
+        "    <command type=\"tool_call\">",
+        "    { \"tool\": \"web_search\", \"args\": { \"query\": \"latest Instagram Reels best practices\", \"recency\": \"month\" } }",
+        "    </command>",
         "  - You are NOT authorised to emit agent_invoke or routine_create from this surface - those route through Atlas / a department head.",
         "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
         "  - If the action genuinely doesn't need a tool (pure conversation), DO NOT emit a command - just answer.",
