@@ -757,12 +757,27 @@ export async function POST(
           try {
             const resultsBlock = commandResults
               .map((r, i) => {
-                const out =
-                  r.detail &&
-                  typeof r.detail.delegated_output === "string" &&
-                  r.detail.delegated_output
-                    ? r.detail.delegated_output
-                    : r.summary;
+                const d = r.detail ?? {};
+                // agent_invoke: the dept head's real output. tool_call:
+                // the human summary PLUS the raw payload preview, so the
+                // agent can actually answer questions about it ("read
+                // the body", "which email is the payment one") instead
+                // of only seeing the one-line summary.
+                let out: string;
+                if (
+                  typeof d.delegated_output === "string" &&
+                  d.delegated_output
+                ) {
+                  out = d.delegated_output;
+                } else if (
+                  r.type === "tool_call" &&
+                  typeof d.result_preview === "string" &&
+                  d.result_preview
+                ) {
+                  out = `${r.summary}\n\nRaw payload (use this to answer detail questions):\n${d.result_preview}`;
+                } else {
+                  out = r.summary;
+                }
                 return `[${i + 1}] ${r.type} ${r.ok ? "(ok)" : "(failed)"}:\n${out}`;
               })
               .join("\n\n");

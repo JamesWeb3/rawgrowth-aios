@@ -147,7 +147,7 @@ registerTool({
     // item has none of the known fields.
     const s = (v: unknown): string =>
       typeof v === "string" ? v : v == null ? "" : String(v);
-    const lines = items.slice(0, 15).map((raw, i) => {
+    const lines = items.slice(0, 15).map((raw) => {
       const o = (raw ?? {}) as Record<string, unknown>;
       const title =
         s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";

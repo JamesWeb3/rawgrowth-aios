@@ -472,12 +472,14 @@ async function execToolCall(
     // operator-visible "Commands executed" row - Marti saw walls of
     // {"data":{"messages":[{"attachmentList":[]...}]}}. Now we render a
     // human line ("Fetched 3 emails", "Sent the message") and keep the
-    // raw payload only in `detail` for the expandable trace view.
+    // raw payload in `detail` for the trace view AND for the two-pass
+    // reply - the agent needs the full payload (e.g. email bodies) to
+    // actually answer questions about it, so 4000 chars not 1000.
     let preview: string;
     try {
-      preview = JSON.stringify(result).slice(0, 1000);
+      preview = JSON.stringify(result).slice(0, 4000);
     } catch {
-      preview = String(result).slice(0, 1000);
+      preview = String(result).slice(0, 4000);
     }
     return {
       ok: true,
