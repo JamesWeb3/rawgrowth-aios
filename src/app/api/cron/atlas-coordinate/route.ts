@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireCronAuth } from "@/lib/cron/auth";
-import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -34,7 +33,11 @@ export async function GET(req: NextRequest) {
   // operator's chat thread. OFF by default; flip
   // ATLAS_COORDINATE_ENABLED=1 to bring it back once the posting
   // target is moved off the main thread.
-  if (!env.ATLAS_COORDINATE_ENABLED) {
+  // Read process.env directly, NOT the strict `env` validator object.
+  // Importing `env` here ran its DEPLOY_MODE=hosted validation during
+  // `next build` page-data collection and failed the Docker image build
+  // ("Missing required variables..."). Runtime process.env read is safe.
+  if (process.env.ATLAS_COORDINATE_ENABLED !== "1") {
     return NextResponse.json({
       ok: true,
       processed: 0,
@@ -77,13 +80,12 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // Content-dedup: even past the 14-min window, don't re-post an
-      // IDENTICAL coordination state. A persistent unchanged state (same
-      // stale insights, same failed runs) was spamming the operator with
-      // a verbatim "Coordination check" every 15 min. We compare the
-      // `counts` snapshot against the most recent atlas_coordinate msg;
-      // if nothing moved AND it was posted within the last 60 min, skip.
-      // State change OR a 60-min refresh window still gets a fresh post.
+      // Dedup: even past the 14-min window, don't re-post an unchanged
+      // coordination state. We read the last atlas_coordinate message's
+      // stored `sig` (a stable signature of the state - see nextSig
+      // below) and its timestamp. The actual skip decision happens once
+      // the counters are in, and applies to BOTH the ticket and the
+      // idle-nudge path.
       const { data: lastCoord } = await db
         .from("rgaios_agent_chat_messages")
         .select("created_at, metadata")
@@ -92,10 +94,8 @@ export async function GET(req: NextRequest) {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      const lastCounts = (
-        (lastCoord?.metadata as { counts?: Record<string, number> } | null)
-          ?.counts ?? null
-      );
+      const lastSig =
+        (lastCoord?.metadata as { sig?: string } | null)?.sig ?? null;
       const lastCoordAtMs = lastCoord?.created_at
         ? Date.parse(lastCoord.created_at)
         : 0;
@@ -168,15 +168,63 @@ export async function GET(req: NextRequest) {
       }>;
       const queuedInsights = queuedInsightsRes.count ?? 0;
 
+      // Critical insights left unactioned for >30 min. Computed once
+      // here so the actionable check, the dedup signature and the
+      // ticket body all share the exact same set.
+      const stalePending = pendingInsights.filter(
+        (i) =>
+          i.severity === "critical" &&
+          new Date(i.created_at).getTime() < Date.now() - 30 * 60 * 1000,
+      );
+
       const actionable =
         failedRuns.length > 0 ||
         pendingApprovals > 0 ||
         queuedInsights > 0 ||
-        pendingInsights.some(
-          (i) =>
-            i.severity === "critical" &&
-            new Date(i.created_at).getTime() < Date.now() - 30 * 60 * 1000,
-        );
+        stalePending.length > 0;
+
+      const nextCounts = {
+        openRuns,
+        failedRuns: failedRuns.length,
+        pendingApprovals,
+        pendingInsights: pendingInsights.length,
+        queuedInsights,
+      };
+
+      // Dedup signature. The previous code compared raw counts, but
+      // `failedRuns` is a sliding 1h window and `openRuns` ticks up and
+      // down constantly - the counts almost never matched twice, so the
+      // "skip unchanged" path basically never fired and Atlas re-posted
+      // a near-identical "Coordination check" every 15 min (Dilan,
+      // 2026-05-14: routine clogging the operator chat).
+      //
+      // Instead, sign the STABLE identity of the state: which failed
+      // runs, which stale insights, how many approvals/queued. Same
+      // problems sitting there => same signature => skip. A genuinely
+      // new failure or insight changes the signature and posts.
+      const nextSig = JSON.stringify({
+        failed: failedRuns.map((f) => f.id).sort(),
+        stale: stalePending.map((i) => i.id).sort(),
+        approvals: pendingApprovals,
+        queued: queuedInsights,
+        openAny: openRuns > 0,
+        actionable,
+      });
+
+      // Unchanged state re-surfaces at most every REFRESH_WINDOW. Below
+      // that window an identical signature is skipped on BOTH the ticket
+      // and the idle-nudge path (the idle path had no dedup at all
+      // before this). A state change posts immediately regardless.
+      const REFRESH_WINDOW_MS = 3 * 60 * 60 * 1000;
+      const skipUnchanged =
+        lastSig !== null &&
+        lastSig === nextSig &&
+        lastCoordAtMs > 0 &&
+        Date.now() - lastCoordAtMs < REFRESH_WINDOW_MS;
+      if (skipUnchanged) {
+        results.push({ org: orgId, name: o.name, skipped: "unchanged" });
+        continue;
+      }
 
       // Pedro's rule (2026-05-05): Atlas must be PROACTIVE - send a
       // message even when nothing is actionable. Pick from a rotation
@@ -196,13 +244,8 @@ export async function GET(req: NextRequest) {
           metadata: {
             kind: "atlas_coordinate",
             mode: "idle_nudge",
-            counts: {
-              openRuns,
-              failedRuns: failedRuns.length,
-              pendingApprovals,
-              pendingInsights: pendingInsights.length,
-              queuedInsights,
-            },
+            counts: nextCounts,
+            sig: nextSig,
           },
         } as never);
         if (idleInsert.error?.code === "23505") {
@@ -255,11 +298,6 @@ export async function GET(req: NextRequest) {
       if (queuedInsights > 0) {
         lines.push(`Insight questions queued for chat: ${queuedInsights}`);
       }
-      const stalePending = pendingInsights.filter(
-        (i) =>
-          i.severity === "critical" &&
-          new Date(i.created_at).getTime() < Date.now() - 30 * 60 * 1000,
-      );
       if (stalePending.length > 0) {
         lines.push(`Stale critical insights (>30m unactioned): ${stalePending.length}`);
         for (const i of stalePending.slice(0, 2)) {
@@ -273,28 +311,6 @@ export async function GET(req: NextRequest) {
           : "Nothing in flight. I'll re-check in 15.",
       );
 
-      const nextCounts = {
-        openRuns,
-        failedRuns: failedRuns.length,
-        pendingApprovals,
-        pendingInsights: pendingInsights.length,
-        queuedInsights,
-      };
-      // Skip a verbatim re-post: same counts as last time AND last post
-      // was under 60 min ago. Unchanged state surfaces at most hourly.
-      const SIXTY_MIN_MS = 60 * 60 * 1000;
-      const countsUnchanged =
-        lastCounts !== null &&
-        JSON.stringify(lastCounts) === JSON.stringify(nextCounts);
-      if (
-        countsUnchanged &&
-        lastCoordAtMs > 0 &&
-        Date.now() - lastCoordAtMs < SIXTY_MIN_MS
-      ) {
-        results.push({ org: orgId, name: o.name, skipped: "unchanged" });
-        continue;
-      }
-
       const content = lines.join("\n");
       const ticketInsert = await db.from("rgaios_agent_chat_messages").insert({
         organization_id: orgId,
@@ -305,6 +321,7 @@ export async function GET(req: NextRequest) {
         metadata: {
           kind: "atlas_coordinate",
           counts: nextCounts,
+          sig: nextSig,
         },
       } as never);
 
