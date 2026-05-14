@@ -17,8 +17,52 @@ import type { McpTool, ToolContext, ToolResult } from "./types";
 
 const tools = new Map<string, McpTool>();
 
+// High-blast tools that ALWAYS queue for operator approval, regardless
+// of whether the org opted into approvals_gate_all. supabase_run_sql
+// runs arbitrary SQL against a project's Postgres; apply_migration and
+// create_project are similarly irreversible. An agent is prompt-
+// injectable (the reason crm-sync ships an injection guard), so these
+// must never execute unattended on a client's production database.
+const ALWAYS_GATE_TOOLS = new Set([
+  "supabase_run_sql",
+  "supabase_apply_migration",
+  "supabase_create_project",
+]);
+
 function keyFor(orgId: string | undefined, name: string): string {
   return orgId ? `${orgId}:${name}` : name;
+}
+
+/**
+ * Whether the org flipped the `approvals_gate_all` kill switch
+ * (migration 0067). Fails CLOSED: a transient read failure gates the
+ * call rather than silently dropping the protection - the caller gets
+ * a clear "approval system failed" error instead of an ungated write.
+ */
+async function orgGatesAllWrites(organizationId: string): Promise<boolean> {
+  try {
+    const { supabaseAdmin } = await import("@/lib/supabase/server");
+    const { data, error } = await supabaseAdmin()
+      .from("rgaios_organizations")
+      .select("approvals_gate_all")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (error) {
+      console.error(
+        `callTool: approvals_gate_all read failed, gating closed: ${error.message}`,
+      );
+      return true;
+    }
+    return (
+      (data as { approvals_gate_all?: boolean } | null)?.approvals_gate_all ===
+      true
+    );
+  } catch (err) {
+    console.error(
+      `callTool: approvals_gate_all check threw, gating closed: ${(err as Error).message}`,
+    );
+    return true;
+  }
 }
 
 export function registerTool(tool: McpTool): void {
@@ -85,6 +129,61 @@ export async function callTool(
     if (!conn) {
       return textError(
         `${tool.requiresIntegration} isn't connected for this organization. Connect it at /connections and retry.`,
+      );
+    }
+  }
+
+  // ── Write-action approval gate ──────────────────────────────────
+  // isWrite used to be metadata only: callTool went straight to the
+  // handler, so supabase_run_sql ("arbitrary SQL against Postgres")
+  // and every other isWrite tool executed with zero human review. The
+  // approvals_gate_all org flag (migration 0067) was advertised as the
+  // "gate every outbound action" kill switch but only ever covered
+  // composio_use_tool, because its check lived inside composio-router.
+  // Lift the gate into the central dispatch so it covers EVERY tool:
+  //   - ALWAYS_GATE_TOOLS queue regardless of org policy (high blast).
+  //   - any other isWrite tool queues when approvals_gate_all is on.
+  //   - composio_use_tool is exempt here - composio-router keeps its
+  //     own finer-grained (app/action + destructive-keyword) gate, and
+  //     double-gating would queue it twice.
+  //   - ctx.skipApprovalGate short-circuits the gate: that is the path
+  //     decideApproval re-executes an approved row through, which must
+  //     not re-queue itself.
+  if (
+    !ctx.skipApprovalGate &&
+    name !== "composio_use_tool" &&
+    (ALWAYS_GATE_TOOLS.has(name) || tool.isWrite === true)
+  ) {
+    const mustGate =
+      ALWAYS_GATE_TOOLS.has(name) ||
+      (await orgGatesAllWrites(ctx.organizationId));
+    if (mustGate) {
+      try {
+        const { createApproval } = await import("@/lib/approvals/queries");
+        await createApproval({
+          organizationId: ctx.organizationId,
+          routineRunId: null,
+          agentId: null,
+          toolName: name,
+          toolArgs: args,
+          reason: ALWAYS_GATE_TOOLS.has(name)
+            ? `${name} is a high-blast write tool; every call requires operator approval.`
+            : "Org policy approvals_gate_all is on; every write action requires operator approval.",
+        });
+      } catch (approvalErr) {
+        // createApproval IS the gate. If it throws (RLS, missing table,
+        // write failure) we must NOT fall through to execute - that
+        // bypasses the gate entirely. Abort and surface the failure.
+        return textError(
+          `${name}: approval system failed; tool execution aborted (${(approvalErr as Error).message})`,
+        );
+      }
+      return text(
+        [
+          `Queued for approval: ${name}.`,
+          "An operator must approve this at /approvals before it runs.",
+          "When approved, the tool re-executes server-side with the same input.",
+        ].join("\n"),
       );
     }
   }

@@ -127,7 +127,10 @@ export async function decideApproval(params: {
       const result = await callTool(
         approval.tool_name,
         approval.tool_args as Record<string, unknown>,
-        { organizationId: params.organizationId },
+        // skipApprovalGate: this IS the approved re-execution. Without
+        // it the central callTool write gate would re-queue the call
+        // into rgaios_approvals and it would never actually run.
+        { organizationId: params.organizationId, skipApprovalGate: true },
       );
       executionResult = result.content.map((c) => c.text).join("\n");
       if (result.isError) {

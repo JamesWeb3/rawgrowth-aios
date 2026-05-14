@@ -13,6 +13,13 @@ export type ToolContext = {
    * per-user OAuth buckets get hit first instead of the org default.
    */
   userId?: string | null;
+  /**
+   * Set by decideApproval when it re-executes an already-approved
+   * tool: it short-circuits the callTool write-approval gate so an
+   * approved call does not re-queue itself into rgaios_approvals.
+   * Every other caller leaves this unset (gate active).
+   */
+  skipApprovalGate?: boolean;
 };
 
 export type ToolResult = {
