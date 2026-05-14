@@ -718,10 +718,35 @@ async function verifyDelegatedOutput(
   }
 }
 
+/**
+ * Optional cross-turn context the dispatcher can thread onto a delegated
+ * run's input_payload. The READ side (tasks.ts executeChatTask ->
+ * extractTaskContext) already consumes these field names; this is the
+ * shape the WRITE side (execAgentInvoke) assembles. All fields optional.
+ *
+ *   - operatorAsk        : the original operator question that kicked off
+ *                          this delegation - threaded as a `user` turn.
+ *   - delegatingFraming  : how the orchestrator framed the handoff - the
+ *                          visible reply text around the command block -
+ *                          threaded as an `assistant` turn.
+ *   - context            : free-form framing the orchestrator wants the
+ *                          sub-agent to have.
+ *   - peerPositions      : COUNCIL round 2 only - the OTHER heads'
+ *                          round-1 outputs, so this head can rebut/refine
+ *                          instead of writing a parallel monologue.
+ */
+type DelegationContext = {
+  operatorAsk?: string;
+  delegatingFraming?: string;
+  context?: string;
+  peerPositions?: string[];
+};
+
 async function execAgentInvoke(
   orgId: string,
   speakerId: string,
   payload: unknown,
+  dispatchContext?: DelegationContext,
 ): Promise<CommandResult> {
   if (!payload || typeof payload !== "object") {
     return {
@@ -735,16 +760,32 @@ async function execAgentInvoke(
   // Anthropic guidance says every subagent handoff needs an objective, an
   // output format, and clear boundaries - we append them as labelled
   // blocks to the task text the delegated run receives.
+  //
+  // context / operator_ask / delegating_framing are the optional
+  // cross-turn fields: the model MAY put them in the command JSON, and
+  // the orchestrator (the batch loop in extractAndExecuteCommands) MAY
+  // also pass them via dispatchContext. Either way they get written onto
+  // input_payload under the exact field names extractTaskContext reads.
   const {
     agent,
     task,
     output_format: outputFormat,
     constraints,
+    context: payloadContext,
+    operator_ask: payloadOperatorAsk,
+    origin_operator_ask: payloadOriginOperatorAsk,
+    delegating_framing: payloadFraming,
+    framing: payloadFramingAlt,
   } = payload as {
     agent?: string;
     task?: string;
     output_format?: string;
     constraints?: string;
+    context?: string;
+    operator_ask?: string;
+    origin_operator_ask?: string;
+    delegating_framing?: string;
+    framing?: string;
   };
   const target = (agent ?? "").trim();
   const baseTask = (task ?? "").trim();
@@ -849,6 +890,59 @@ async function execAgentInvoke(
     };
   }
   const routineId = (routine as { id: string }).id;
+  // Assemble the cross-turn context that executeChatTask's
+  // extractTaskContext reads back off input_payload. Precedence: an
+  // explicit field in the command JSON wins; the orchestrator-supplied
+  // dispatchContext is the fallback. Empty strings are dropped so the
+  // read side's `str()` guard sees "absent", not "present but blank".
+  //
+  // WHY this matters: without it, the READ side (committed a01566c) is
+  // inert plumbing - it threads context / operator ask / framing / peer
+  // positions into the delegated agent's prompt, but nothing was ever
+  // writing those fields. This is the write side that makes it live.
+  const ctxContext = (payloadContext ?? dispatchContext?.context ?? "").trim();
+  const ctxOperatorAsk = (
+    payloadOperatorAsk ??
+    payloadOriginOperatorAsk ??
+    dispatchContext?.operatorAsk ??
+    ""
+  ).trim();
+  const ctxFraming = (
+    payloadFraming ??
+    payloadFramingAlt ??
+    dispatchContext?.delegatingFraming ??
+    ""
+  ).trim();
+  const ctxPeerPositions = (dispatchContext?.peerPositions ?? []).filter(
+    (p) => typeof p === "string" && p.trim(),
+  );
+  const inputPayload: Record<string, unknown> = {
+    delegated_by_agent_id: speakerId,
+    title: taskText.slice(0, 200),
+    // Delegation chain bookkeeping. delegation_chain is the ordered
+    // list of agent ids that delegated to reach this run (oldest
+    // first, includes the speaker); delegation_depth is its length.
+    // loadIncomingChain reads these back when the assignee later
+    // emits its own agent_invoke, so the depth/cycle guard works
+    // across hops even though the chat surface doesn't thread them.
+    delegation_depth: outgoingDepth,
+    delegation_chain: outgoingChain,
+  };
+  // Structured-handoff fields, written under the exact names
+  // extractTaskContext expects. constraints / output_format are also
+  // folded into taskText above for models that ignore history, but
+  // writing them structured too lets the read side surface them as
+  // their own labelled prompt sections.
+  if (cons) inputPayload.constraints = cons;
+  if (fmt) inputPayload.output_format = fmt;
+  if (ctxContext) inputPayload.context = ctxContext;
+  if (ctxOperatorAsk) inputPayload.operator_ask = ctxOperatorAsk;
+  if (ctxFraming) inputPayload.delegating_framing = ctxFraming;
+  // Council round 2: the other heads' round-1 positions. Present only
+  // on the re-dispatch pass (see extractAndExecuteCommands batch loop).
+  if (ctxPeerPositions.length > 0) {
+    inputPayload.peer_positions = ctxPeerPositions;
+  }
   const { data: run } = await db
     .from("rgaios_routine_runs")
     .insert({
@@ -856,18 +950,7 @@ async function execAgentInvoke(
       routine_id: routineId,
       source: "chat_command",
       status: "pending",
-      input_payload: {
-        delegated_by_agent_id: speakerId,
-        title: taskText.slice(0, 200),
-        // Delegation chain bookkeeping. delegation_chain is the ordered
-        // list of agent ids that delegated to reach this run (oldest
-        // first, includes the speaker); delegation_depth is its length.
-        // loadIncomingChain reads these back when the assignee later
-        // emits its own agent_invoke, so the depth/cycle guard works
-        // across hops even though the chat surface doesn't thread them.
-        delegation_depth: outgoingDepth,
-        delegation_chain: outgoingChain,
-      },
+      input_payload: inputPayload,
     } as never)
     .select("id")
     .single();
@@ -1274,12 +1357,27 @@ export async function extractAndExecuteCommands(input: {
     }
   };
 
+  // The orchestrator's own visible reply IS the framing it wrapped the
+  // command blocks in - "I'm asking Finance and Legal to weigh in on
+  // X...". Thread it onto every delegated run as `delegating_framing` so
+  // executeChatTask can replay it as an assistant history turn and the
+  // sub-agent sees the conversation it is joining, not a bare title.
+  // (operator_ask is NOT in scope here - the chat surface that calls
+  // this function does not thread the operator's original question
+  // through - so we only supply what we actually have.)
+  const baseDispatchCtx: DelegationContext = {
+    delegatingFraming: visibleReply || undefined,
+  };
+
   // Executes one already-parsed command. payload === null means the body
   // failed to parse. Pure dispatch - no progress firing - so the caller
   // controls progress timing (sequential vs. parallel batch).
+  // dispatchCtx threads cross-turn context onto agent_invoke runs; the
+  // council path overrides it per-pass to inject peer_positions.
   const runOne = async (
     type: string,
     payload: unknown,
+    dispatchCtx?: DelegationContext,
   ): Promise<CommandResult> => {
     if (payload === null) {
       return {
@@ -1292,7 +1390,7 @@ export async function extractAndExecuteCommands(input: {
       return execToolCall(orgId, speakerAgentId, payload, callerUserId ?? null);
     }
     if (type === "agent_invoke") {
-      return execAgentInvoke(orgId, speakerAgentId, payload);
+      return execAgentInvoke(orgId, speakerAgentId, payload, dispatchCtx);
     }
     if (type === "routine_create") {
       return execRoutineCreate(orgId, speakerAgentId, payload);
@@ -1315,6 +1413,20 @@ export async function extractAndExecuteCommands(input: {
   // order - the audit log + the operator-visible reply stay deterministic.
   const results: CommandResult[] = new Array(parsed.length);
 
+  // Pull the delegated agent's actual output out of an agent_invoke
+  // CommandResult so a council's round-1 outputs can be fed back to the
+  // siblings as peer_positions. execAgentInvoke parks the real reply on
+  // detail.delegated_output; fall back to the summary line if absent.
+  const delegatedOutputOf = (res: CommandResult): string => {
+    const out = res.detail?.delegated_output;
+    if (typeof out === "string" && out.trim()) return out.trim();
+    return (res.summary ?? "").trim();
+  };
+  const agentLabelOf = (payload: unknown): string => {
+    const a = (payload as { agent?: unknown } | null)?.agent;
+    return typeof a === "string" && a.trim() ? a.trim() : "a head";
+  };
+
   // FIX: a COO/Atlas council is several agent_invoke blocks in one turn.
   // Those are independent delegations to different agents, so run each
   // contiguous run of agent_invoke commands CONCURRENTLY (Promise.all) -
@@ -1322,6 +1434,19 @@ export async function extractAndExecuteCommands(input: {
   // parallel, not back-to-back. tool_call / routine_create stay strictly
   // sequential and in their original order: they may carry ordering
   // intent (do X, then schedule a routine about X).
+  //
+  // COUNCIL multi-round: a batch of 2+ agent_invoke blocks in ONE turn
+  // is a council on the same question. A single parallel pass is a
+  // parallel monologue - every head answers blind to the others. So we
+  // run it as a REAL debate, bounded to EXACTLY 2 rounds (no loop):
+  //   round 1: dispatch all heads concurrently, collect their outputs.
+  //   round 2: re-dispatch every head ONCE, with the OTHER heads'
+  //            round-1 positions written onto peer_positions, so each
+  //            head can rebut / refine. The round-2 results are what we
+  //            surface (they incorporate the debate).
+  // A single (non-council) agent_invoke - batch length 1 - skips round 2
+  // entirely: one block = one dispatch, exactly as before plus the
+  // baseDispatchCtx context fields.
   let i = 0;
   while (i < parsed.length) {
     const cmd = parsed[i];
@@ -1333,10 +1458,49 @@ export async function extractAndExecuteCommands(input: {
       // Emit each "about to run" signal up front so the operator sees the
       // whole council convene at once, then fan the batch out concurrently.
       for (const b of batch) fireProgress(b.type, b.payload);
-      const settled = await Promise.all(
-        batch.map((b) => runOne(b.type, b.payload)),
+
+      // Round 1: every head concurrently, with only the base framing
+      // context (no peers yet).
+      const round1 = await Promise.all(
+        batch.map((b) => runOne(b.type, b.payload, baseDispatchCtx)),
       );
-      for (let k = 0; k < settled.length; k++) results[i + k] = settled[k];
+
+      if (batch.length < 2) {
+        // Single agent_invoke - not a council. Round-1 result is final.
+        for (let k = 0; k < round1.length; k++) results[i + k] = round1[k];
+        i = j;
+        continue;
+      }
+
+      // Council: capture each head's round-1 position labelled by agent.
+      const round1Positions = batch.map((b, k) => ({
+        label: agentLabelOf(b.payload),
+        text: delegatedOutputOf(round1[k]),
+      }));
+
+      // Round 2: re-dispatch each head concurrently, handing it the
+      // OTHER heads' round-1 positions as peer_positions so it can
+      // argue / refine. Bounded to this one extra pass - no loop.
+      const round2 = await Promise.all(
+        batch.map((b, k) => {
+          const peerPositions = round1Positions
+            .filter((_, idx) => idx !== k)
+            .map((p) => `${p.label}: ${p.text}`.slice(0, 4000))
+            .filter((p) => p.trim());
+          return runOne(b.type, b.payload, {
+            ...baseDispatchCtx,
+            peerPositions,
+          });
+        }),
+      );
+
+      // Round-2 results win - they incorporate the debate. If a head's
+      // round-2 re-dispatch failed but its round-1 succeeded, keep
+      // round-1 so a flaky second pass can't lose a good first answer.
+      for (let k = 0; k < round2.length; k++) {
+        results[i + k] =
+          round2[k].ok || !round1[k].ok ? round2[k] : round1[k];
+      }
       i = j;
       continue;
     }

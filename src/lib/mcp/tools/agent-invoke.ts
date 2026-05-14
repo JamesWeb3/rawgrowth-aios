@@ -100,6 +100,21 @@ registerTool({
           "scope limits, tone, tools to prefer. Appended to the task " +
           "as a labelled block.",
       },
+      context: {
+        type: "string",
+        description:
+          "Optional. Free-form framing the sub-agent should have " +
+          "before it starts: what was already tried, what the bigger " +
+          "goal is, why this task matters. Threaded into the sub-agent's " +
+          "prompt as a labelled context block.",
+      },
+      operator_ask: {
+        type: "string",
+        description:
+          "Optional. The original operator question that kicked off " +
+          "this delegation. Replayed to the sub-agent as the opening " +
+          "user turn so it sees the conversation it is joining.",
+      },
       timeout_ms: {
         type: "number",
         description:
@@ -112,6 +127,8 @@ registerTool({
     const basePrompt = String(args.prompt ?? "").trim();
     const outputFormat = String(args.output_format ?? "").trim();
     const constraints = String(args.constraints ?? "").trim();
+    const context = String(args.context ?? "").trim();
+    const operatorAsk = String(args.operator_ask ?? "").trim();
     const timeoutMs = Math.min(Number(args.timeout_ms ?? 90_000) || 90_000, 120_000);
     if (!agentId || !basePrompt) {
       return textError("agent_id and prompt are required.");
@@ -203,7 +220,28 @@ registerTool({
       routineId = created.id;
     }
 
-    // Enqueue the run.
+    // Enqueue the run. Beyond `prompt` (the composed task text), write
+    // the structured handoff fields under the exact names
+    // executeChatTask's extractTaskContext reads back - context,
+    // constraints, output_format, operator_ask. The READ side
+    // (committed a01566c) already threads these into the delegated
+    // agent's prompt + history; this is the WRITE side that populates
+    // them. constraints / output_format are also folded into `prompt`
+    // above for models that ignore history, but writing them structured
+    // lets the read side surface each as its own labelled section.
+    const inputPayload: Record<string, unknown> = {
+      prompt,
+      invoked_by: "manager",
+      // Delegation chain bookkeeping (see loadIncomingChain). Written
+      // on every run so the depth/cycle guard has data to read when
+      // the assignee later invokes another agent.
+      delegation_depth: outgoingDepth,
+      delegation_chain: outgoingChain,
+    };
+    if (context) inputPayload.context = context;
+    if (constraints) inputPayload.constraints = constraints;
+    if (outputFormat) inputPayload.output_format = outputFormat;
+    if (operatorAsk) inputPayload.operator_ask = operatorAsk;
     const { data: run, error: runErr } = await db
       .from("rgaios_routine_runs")
       .insert({
@@ -211,15 +249,7 @@ registerTool({
         routine_id: routineId,
         source: "agent_invoke",
         status: "pending",
-        input_payload: {
-          prompt,
-          invoked_by: "manager",
-          // Delegation chain bookkeeping (see loadIncomingChain). Written
-          // on every run so the depth/cycle guard has data to read when
-          // the assignee later invokes another agent.
-          delegation_depth: outgoingDepth,
-          delegation_chain: outgoingChain,
-        },
+        input_payload: inputPayload,
       })
       .select("id")
       .single();
