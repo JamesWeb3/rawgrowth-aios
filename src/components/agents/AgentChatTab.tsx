@@ -7,6 +7,7 @@ import {
   Bot,
   Brain,
   Check,
+  ChevronRight,
   ClipboardList,
   Code,
   Cpu,
@@ -16,7 +17,6 @@ import {
   Palette,
   Paperclip,
   PhoneCall,
-  Plug,
   Wrench,
   X,
   type LucideIcon,
@@ -830,14 +830,31 @@ export default function AgentChatTab({
               </div>
             </div>
           )}
-          {messages.map((msg, i) => (
-            <Bubble
-              key={i}
-              message={msg}
-              streaming={streaming && i === messages.length - 1}
-              RoleIcon={RoleIcon}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            // A "run" is a contiguous stretch of system steps optionally
+            // capped by the assistant reply. Knowing the neighbouring
+            // roles lets each timeline row draw the connecting rail above
+            // / below itself so the whole turn reads as one spine instead
+            // of free-floating sibling cards.
+            const prev = messages[i - 1];
+            const nextMsg = messages[i + 1];
+            const onRail = msg.role === "system" || msg.role === "assistant";
+            const prevOnRail =
+              !!prev && (prev.role === "system" || prev.role === "assistant");
+            const nextOnRail =
+              !!nextMsg &&
+              (nextMsg.role === "system" || nextMsg.role === "assistant");
+            return (
+              <Bubble
+                key={i}
+                message={msg}
+                streaming={streaming && i === messages.length - 1}
+                RoleIcon={RoleIcon}
+                railTop={onRail && prevOnRail}
+                railBottom={onRail && nextOnRail}
+              />
+            );
+          })}
           {error && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {error}
@@ -857,18 +874,6 @@ export default function AgentChatTab({
       {/* Input bar */}
       <div className="shrink-0 border-t border-[var(--line)] bg-[var(--brand-bg)]/80 backdrop-blur">
         <div className="mx-auto max-w-2xl px-4 py-3">
-          <p
-            role="note"
-            aria-label="Secret-paste safety notice"
-            className="mb-2 text-center text-[11px] text-amber-600 dark:text-amber-300"
-          >
-            ⚠ Don&apos;t paste passwords, API keys, or SSH credentials. Agents
-            can&apos;t SSH or run shell - use{" "}
-            <a href="/connections" className="underline hover:opacity-80">
-              /connections
-            </a>{" "}
-            for OAuth.
-          </p>
           <div className="flex items-end gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--brand-surface)] p-2 focus-within:border-[var(--brand-primary)]">
             <button
               type="button"
@@ -935,10 +940,17 @@ function Bubble({
   message,
   streaming,
   RoleIcon,
+  railTop,
+  railBottom,
 }: {
   message: ChatMessage;
   streaming: boolean;
   RoleIcon: LucideIcon;
+  // When true, draw the connecting timeline rail above / below this
+  // row's icon node so a turn (system steps + assistant reply) reads as
+  // one continuous spine.
+  railTop: boolean;
+  railBottom: boolean;
 }) {
   if (message.role === "user") {
     return (
@@ -951,28 +963,33 @@ function Bubble({
   }
 
   if (message.role === "system") {
-    return <SystemBlock message={message} />;
+    return (
+      <SystemBlock message={message} railTop={railTop} railBottom={railBottom} />
+    );
   }
 
+  // Assistant reply: the conclusion of the run. Sits on the same rail as
+  // the orchestration steps above it (railTop) so it reads as the answer
+  // the timeline was building toward, not a disconnected block.
+  const showActions =
+    !!message.content &&
+    /Heads up.*flagged.*anomaly|Drafted plan.*approval needed in Updates/i.test(
+      message.content,
+    );
   return (
-    <div className="flex gap-3" data-role="assistant">
-      <div
-        className={
-          "flex size-7 shrink-0 items-center justify-center rounded-full border " +
-          "border-[var(--brand-primary)]/40 bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"
-        }
-        aria-hidden
-      >
-        <RoleIcon className="size-3.5" />
-      </div>
-      <div className="min-w-0 flex-1 rounded-xl rounded-bl-sm border border-[var(--line)] bg-[var(--brand-surface-2)] px-4 py-2.5 text-sm leading-relaxed text-[var(--text-body)]">
+    <TimelineRow
+      icon={RoleIcon}
+      tone="answer"
+      railTop={railTop}
+      railBottom={railBottom}
+      dataRole="assistant"
+    >
+      <div className="min-w-0 rounded-xl rounded-tl-sm border border-[var(--line)] bg-[var(--brand-surface-2)] px-4 py-2.5 text-sm leading-relaxed text-[var(--text-body)]">
         {message.content ? (
           <>
             <Response>{message.content}</Response>
             {/* Inline action panel for proactive anomaly messages */}
-            {/Heads up.*flagged.*anomaly|Drafted plan.*approval needed in Updates/i.test(
-              message.content,
-            ) && (
+            {showActions && (
               <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-2.5">
                 <a
                   href="/updates"
@@ -997,16 +1014,29 @@ function Bubble({
           </span>
         ) : null}
       </div>
-    </div>
+    </TimelineRow>
   );
 }
 
-// ── Orchestration display ─────────────────────────────────────────────
-// System messages used to render as a single flat pill. Now each variant
-// is a structured card so the operator can SEE the agent reasoning, the
-// tool calls (with their actual result content - emails listed, posts
-// scraped), and the CEO → dept-head delegation handoffs. "Orchestration,
-// visible" - the Anthropic Managed Agents / Nous Hermes pattern.
+// ── Orchestration timeline ────────────────────────────────────────────
+// A single orchestration turn used to render as a loose stack of
+// disconnected sibling cards (a "REASONING" box, a "Running X" pill,
+// per-command cards, then the reply bubble floating off on its own).
+// It now renders as ONE connected vertical timeline: every step
+// (reasoning, tool call, delegation, observation, tasks) is a node on a
+// shared rail, and the assistant reply is the rail's final node - the
+// conclusion the run was building toward.
+//
+// Design principles applied (see research):
+//  - One connected timeline, not separate cards. A continuous rail in a
+//    fixed-width gutter visually binds every step of a turn.
+//  - Progressive disclosure: each step shows a tight one-line headline;
+//    heavy detail (raw tool payload, full delegated output) is collapsed
+//    behind an expand toggle, not dumped inline.
+//  - Clear status affordances: each node carries an icon + ok/failed
+//    state so the run is glanceable.
+//  - The final answer is visually attached to the timeline as its
+//    conclusion, not a disconnected block.
 
 function sysStr(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
@@ -1023,7 +1053,7 @@ type SystemKind =
 
 // Resolve a system ChatMessage into a render kind. Structured (live SSE)
 // messages carry an explicit `kind`; DB-loaded history is classified by
-// string prefix so old threads still render as cards (best-effort - no
+// string prefix so old threads still render as steps (best-effort - no
 // structured command payload survives a page reload).
 function classifySystem(message: ChatMessage): {
   kind: SystemKind;
@@ -1053,133 +1083,142 @@ function classifySystem(message: ChatMessage): {
   return { kind: "plain", text: c };
 }
 
-function SystemBlock({ message }: { message: ChatMessage }) {
-  const { kind, text, commands } = classifySystem(message);
+// Tone drives the rail-node accent. "answer" is the assistant
+// conclusion, "active" is a live in-flight step, "warn" is a failed /
+// flagged step, "step" is a normal completed step.
+type RowTone = "step" | "active" | "answer" | "warn" | "muted";
 
-  if (kind === "thinking") {
-    return (
-      <div
-        className="flex justify-center"
-        data-role="system"
-        data-kind="thinking"
-      >
-        <div
-          aria-label="Agent reasoning"
-          className="w-full max-w-[88%] rounded-lg border-l-2 border-[var(--brand-primary)]/45 bg-[var(--brand-surface)]/40 px-3 py-2"
-        >
-          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
-            <Brain className="size-3" /> Reasoning
-          </div>
-          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-muted)]">
-            {text}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === "running") {
-    return (
-      <div
-        className="flex justify-center"
-        data-role="system"
-        data-kind="running"
-      >
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5 px-3 py-1 text-[11px] text-[var(--brand-primary)]">
-          <span className="size-1.5 animate-pulse rounded-full bg-current" />
-          {text}…
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === "secret") {
-    return (
-      <div className="flex justify-center" data-role="system" data-kind="secret">
-        <div
-          aria-label="Secret redacted warning"
-          className="rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-600 dark:text-amber-300"
-        >
-          {text}
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === "tasks") {
-    return (
-      <div className="flex justify-center" data-role="system" data-kind="tasks">
-        <div className="w-full max-w-[88%] rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2">
-          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
-            <ClipboardList className="size-3" /> Tasks
-          </div>
-          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
-            {text}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === "delegation") {
-    return (
-      <div
-        className="flex justify-center"
-        data-role="system"
-        data-kind="delegation"
-      >
-        <div className="w-full max-w-[92%] rounded-lg border border-[var(--brand-primary)]/30 bg-[var(--brand-surface)]/60 px-3 py-2">
-          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
-            <ArrowRightLeft className="size-3" /> Delegation
-          </div>
-          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
-            {text}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === "commands") {
-    if (commands && commands.length > 0) {
-      return (
-        <div
-          className="flex justify-center"
-          data-role="system"
-          data-kind="commands"
-        >
-          <div className="w-full max-w-[92%] space-y-1.5">
-            {commands.map((cmd, i) => (
-              <OrchestrationCard key={i} cmd={cmd} />
-            ))}
-          </div>
-        </div>
-      );
-    }
-    // Legacy history: no structured array, render the text block.
-    return (
-      <div
-        className="flex justify-center"
-        data-role="system"
-        data-kind="commands"
-      >
-        <div className="w-full max-w-[92%] rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2">
-          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
-            <Cpu className="size-3" /> Orchestration
-          </div>
-          <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
-            {text}
-          </p>
-        </div>
-      </div>
-    );
-  }
+// Shared timeline row. Renders a fixed-width rail gutter (icon node + a
+// connecting line span above / below the node) and the step content to
+// its right. railTop / railBottom decide whether the connecting line is
+// drawn above / below this node so a contiguous run of rows reads as
+// one unbroken spine. The line is a plain absolutely-positioned <span>
+// (not a ::before/::after with dynamic classes) so Tailwind can see
+// every utility statically.
+function TimelineRow({
+  icon: Icon,
+  tone = "step",
+  railTop,
+  railBottom,
+  dataRole,
+  dataKind,
+  dataCard,
+  children,
+}: {
+  icon: LucideIcon;
+  tone?: RowTone;
+  railTop: boolean;
+  railBottom: boolean;
+  dataRole: string;
+  dataKind?: string;
+  dataCard?: string;
+  children: React.ReactNode;
+}) {
+  const nodeAccent =
+    tone === "answer"
+      ? "border-[var(--brand-primary)]/40 bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"
+      : tone === "active"
+        ? "border-[var(--brand-primary)]/45 bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"
+        : tone === "warn"
+          ? "border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+          : tone === "muted"
+            ? "border-[var(--line)] bg-[var(--brand-surface)] text-[var(--text-muted)]"
+            : "border-[var(--line-strong)] bg-[var(--brand-surface)] text-[var(--text-muted)]";
 
   return (
-    <div className="flex justify-center" data-role="system" data-kind="plain">
-      <div className="rounded-full border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-1 text-[11px] text-[var(--text-muted)]">
-        {text}
+    <div
+      className="flex gap-3"
+      data-role={dataRole}
+      data-kind={dataKind}
+      data-card={dataCard}
+    >
+      {/* Rail gutter: 28px wide, holds the node + the connecting line.
+          The line is two absolutely-centred 1px spans - one above the
+          node, one below. They extend -top-5 / -bottom-5 into the
+          space-y-5 row gap so a contiguous run of rows shows one
+          unbroken spine rather than dashes between cards. */}
+      <div className="relative flex w-7 shrink-0 justify-center">
+        {railTop && (
+          <span
+            aria-hidden
+            className="absolute left-1/2 -top-5 h-[calc(0.875rem+1.25rem)] w-px -translate-x-1/2 bg-[var(--line-strong)]"
+          />
+        )}
+        {railBottom && (
+          <span
+            aria-hidden
+            className="absolute -bottom-5 left-1/2 top-3.5 w-px -translate-x-1/2 bg-[var(--line-strong)]"
+          />
+        )}
+        <div
+          className={
+            "relative z-[1] mt-0.5 flex size-7 items-center justify-center rounded-full border " +
+            nodeAccent +
+            (tone === "active" ? " animate-pulse" : "")
+          }
+          aria-hidden
+        >
+          <Icon className="size-3.5" />
+        </div>
       </div>
+      <div className="min-w-0 flex-1 pb-0.5">{children}</div>
+    </div>
+  );
+}
+
+// One-line step headline used by every non-answer node. Keeps the
+// timeline scannable: label on the left, optional status on the right.
+function StepHeadline({
+  label,
+  status,
+  badge,
+}: {
+  label: React.ReactNode;
+  status?: React.ReactNode;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-7 items-center gap-2">
+      <span className="truncate text-[12px] font-medium text-[var(--text-body)]">
+        {label}
+      </span>
+      {badge}
+      {status ? <span className="ml-auto shrink-0">{status}</span> : null}
+    </div>
+  );
+}
+
+// Progressive-disclosure wrapper: a step renders its tight headline
+// always; the heavy detail (raw tool payload, full delegated output)
+// lives behind this collapsed-by-default toggle.
+function StepDetail({
+  summary,
+  children,
+}: {
+  summary: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] transition-colors hover:text-[var(--brand-primary)]"
+        aria-expanded={open}
+      >
+        <ChevronRight
+          className={
+            "size-3 transition-transform " + (open ? "rotate-90" : "")
+          }
+        />
+        {open ? "Hide detail" : summary}
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-md border border-[var(--line)] bg-[var(--brand-surface-2)] px-2.5 py-1.5">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -1196,11 +1235,200 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-// One executed <command> rendered as a card. agent_invoke → a handoff
-// card showing CEO → dept head, the task, the dept head's ACTUAL output,
-// and a "CEO is monitoring" footer. tool_call → a tool card with the
-// Composio/MCP badge + the real result content (emails, posts).
-function OrchestrationCard({ cmd }: { cmd: CommandResult }) {
+// A system ChatMessage rendered as one (or more) nodes on the run
+// timeline. `commands` messages can carry several executed commands;
+// each becomes its own node so tool calls, delegations and routine
+// creations all sit in order on the same rail.
+function SystemBlock({
+  message,
+  railTop,
+  railBottom,
+}: {
+  message: ChatMessage;
+  railTop: boolean;
+  railBottom: boolean;
+}) {
+  const { kind, text, commands } = classifySystem(message);
+
+  if (kind === "thinking") {
+    return (
+      <TimelineRow
+        icon={Brain}
+        tone="step"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="thinking"
+      >
+        <StepHeadline
+          label={
+            <span className="text-[var(--brand-primary)]">Reasoning</span>
+          }
+        />
+        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-muted)]">
+          {text}
+        </p>
+      </TimelineRow>
+    );
+  }
+
+  if (kind === "running") {
+    return (
+      <TimelineRow
+        icon={Cpu}
+        tone="active"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="running"
+      >
+        <StepHeadline
+          label={
+            <span className="text-[var(--brand-primary)]">{text}…</span>
+          }
+          status={
+            <span className="inline-flex items-center gap-1 text-[10px] text-[var(--brand-primary)]">
+              <span className="size-1.5 animate-pulse rounded-full bg-current" />
+              running
+            </span>
+          }
+        />
+      </TimelineRow>
+    );
+  }
+
+  if (kind === "secret") {
+    return (
+      <TimelineRow
+        icon={X}
+        tone="warn"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="secret"
+      >
+        <div
+          aria-label="Secret redacted warning"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-600 dark:text-amber-300"
+        >
+          {text}
+        </div>
+      </TimelineRow>
+    );
+  }
+
+  if (kind === "tasks") {
+    return (
+      <TimelineRow
+        icon={ClipboardList}
+        tone="step"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="tasks"
+      >
+        <StepHeadline label="Tasks created" />
+        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+          {text}
+        </p>
+      </TimelineRow>
+    );
+  }
+
+  if (kind === "delegation") {
+    // Legacy DB-string delegation ("Delegated to ..."): no structured
+    // detail survives a reload, so render the text as a single node.
+    return (
+      <TimelineRow
+        icon={ArrowRightLeft}
+        tone="step"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="delegation"
+      >
+        <StepHeadline
+          label={
+            <span className="text-[var(--brand-primary)]">Delegation</span>
+          }
+        />
+        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+          {text}
+        </p>
+      </TimelineRow>
+    );
+  }
+
+  if (kind === "commands") {
+    if (commands && commands.length > 0) {
+      // Each executed command is its own node on the rail, in order.
+      // The rail runs through all of them (railTop/railBottom on the
+      // ends; always-connected in the middle) so a multi-tool turn
+      // reads as one sequence.
+      return (
+        <>
+          {commands.map((cmd, i) => (
+            <OrchestrationStep
+              key={i}
+              cmd={cmd}
+              railTop={i === 0 ? railTop : true}
+              railBottom={i === commands.length - 1 ? railBottom : true}
+            />
+          ))}
+        </>
+      );
+    }
+    // Legacy history: no structured array, render the text as one node.
+    return (
+      <TimelineRow
+        icon={Cpu}
+        tone="step"
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="commands"
+      >
+        <StepHeadline label="Orchestration" />
+        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
+          {text}
+        </p>
+      </TimelineRow>
+    );
+  }
+
+  return (
+    <TimelineRow
+      icon={Cpu}
+      tone="muted"
+      railTop={railTop}
+      railBottom={railBottom}
+      dataRole="system"
+      dataKind="plain"
+    >
+      <p className="min-h-7 py-1 text-[11px] leading-relaxed text-[var(--text-muted)]">
+        {text}
+      </p>
+    </TimelineRow>
+  );
+}
+
+// One executed <command> rendered as a single timeline node.
+//  - agent_invoke → a handoff node: "Delegated to <head>" headline, the
+//    task + the dept head's ACTUAL output collapsed behind expand, and a
+//    "<from> is monitoring" footer.
+//  - tool_call → a tool node with the Composio/MCP badge; the real
+//    result content sits behind expand.
+//  - routine_create → a routine node.
+// Every node carries the ok/failed StatusDot.
+function OrchestrationStep({
+  cmd,
+  railTop,
+  railBottom,
+}: {
+  cmd: CommandResult;
+  railTop: boolean;
+  railBottom: boolean;
+}) {
   const detail = (cmd.detail ?? {}) as Record<string, unknown>;
 
   if (cmd.type === "agent_invoke") {
@@ -1212,45 +1440,50 @@ function OrchestrationCard({ cmd }: { cmd: CommandResult }) {
       sysStr(detail.delegated_status) || (cmd.ok ? "succeeded" : "failed");
     const delivered = status === "succeeded";
     return (
-      <div
-        className="rounded-lg border border-[var(--brand-primary)]/30 bg-[var(--brand-surface)]/60 px-3 py-2.5"
-        data-card="delegation"
+      <TimelineRow
+        icon={ArrowRightLeft}
+        tone={delivered ? "step" : "warn"}
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="commands"
+        dataCard="delegation"
       >
-        <div className="flex items-center gap-2">
-          <ArrowRightLeft className="size-3.5 text-[var(--brand-primary)]" />
-          <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-body)]">
-            {from}
-            <span className="text-[var(--text-muted)]">→</span>
-            {to}
-          </span>
-          <span className="ml-auto">
-            <StatusDot ok={delivered} />
-          </span>
-        </div>
+        <StepHeadline
+          label={
+            <span className="flex items-center gap-1">
+              <span className="text-[var(--text-muted)]">Delegated</span>
+              {from}
+              <span className="text-[var(--text-muted)]">→</span>
+              {to}
+            </span>
+          }
+          status={<StatusDot ok={delivered} />}
+        />
         {task ? (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">
+          <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--text-muted)]">
             <span className="font-medium text-[var(--text-body)]">Task:</span>{" "}
             {task}
           </p>
         ) : null}
         {output ? (
-          <div className="mt-1.5 rounded-md border border-[var(--line)] bg-[var(--brand-surface-2)] px-2.5 py-1.5">
+          <StepDetail summary={`View ${to}'s output`}>
             <div className="mb-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--brand-primary)]">
               {to} delivered
             </div>
             <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
               {output}
             </p>
-          </div>
+          </StepDetail>
         ) : !delivered ? (
-          <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-300">
+          <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-300">
             {sysStr(detail.delegated_error) || cmd.summary}
           </p>
         ) : null}
-        <div className="mt-1.5 flex items-center gap-1 border-t border-[var(--line)] pt-1.5 text-[9px] text-[var(--text-muted)]">
+        <div className="mt-1 flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
           <Eye className="size-2.5" /> {from} is monitoring this handoff
         </div>
-      </div>
+      </TimelineRow>
     );
   }
 
@@ -1265,69 +1498,75 @@ function OrchestrationCard({ cmd }: { cmd: CommandResult }) {
         ? `${app} · ${action}`
         : "tool call";
     return (
-      <div
-        className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
-        data-card="tool"
+      <TimelineRow
+        icon={Wrench}
+        tone={cmd.ok ? "step" : "warn"}
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="commands"
+        dataCard="tool"
       >
-        <div className="flex items-center gap-2">
-          <Wrench className="size-3.5 text-[var(--brand-primary)]" />
-          <span className="text-[11px] font-medium text-[var(--text-body)]">
-            {label}
-          </span>
-          <span className="rounded bg-[var(--brand-surface-2)] px-1.5 py-0.5 text-[9px] font-medium uppercase text-[var(--text-muted)]">
-            {isApify ? "MCP" : "Composio"}
-          </span>
-          <span className="ml-auto">
-            <StatusDot ok={cmd.ok} />
-          </span>
-        </div>
-        <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
-          {cmd.summary}
-        </p>
-      </div>
+        <StepHeadline
+          label={label}
+          badge={
+            <span className="rounded bg-[var(--brand-surface-2)] px-1.5 py-0.5 text-[9px] font-medium uppercase text-[var(--text-muted)]">
+              {isApify ? "MCP" : "Composio"}
+            </span>
+          }
+          status={<StatusDot ok={cmd.ok} />}
+        />
+        {cmd.summary ? (
+          <StepDetail summary="View result">
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+              {cmd.summary}
+            </p>
+          </StepDetail>
+        ) : null}
+      </TimelineRow>
     );
   }
 
   if (cmd.type === "routine_create") {
     return (
-      <div
-        className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
-        data-card="routine"
+      <TimelineRow
+        icon={ClipboardList}
+        tone={cmd.ok ? "step" : "warn"}
+        railTop={railTop}
+        railBottom={railBottom}
+        dataRole="system"
+        dataKind="commands"
+        dataCard="routine"
       >
-        <div className="flex items-center gap-2">
-          <ClipboardList className="size-3.5 text-[var(--brand-primary)]" />
-          <span className="text-[11px] font-medium text-[var(--text-body)]">
-            Routine created
-          </span>
-          <span className="ml-auto">
-            <StatusDot ok={cmd.ok} />
-          </span>
-        </div>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-body)]">
-          {cmd.summary}
-        </p>
-      </div>
+        <StepHeadline label="Routine created" status={<StatusDot ok={cmd.ok} />} />
+        {cmd.summary ? (
+          <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--text-body)]">
+            {cmd.summary}
+          </p>
+        ) : null}
+      </TimelineRow>
     );
   }
 
   return (
-    <div
-      className="rounded-lg border border-[var(--line)] bg-[var(--brand-surface)]/60 px-3 py-2.5"
-      data-card="generic"
+    <TimelineRow
+      icon={Cpu}
+      tone={cmd.ok ? "step" : "warn"}
+      railTop={railTop}
+      railBottom={railBottom}
+      dataRole="system"
+      dataKind="commands"
+      dataCard="generic"
     >
-      <div className="flex items-center gap-2">
-        <Cpu className="size-3.5 text-[var(--brand-primary)]" />
-        <span className="text-[11px] font-medium text-[var(--text-body)]">
-          {cmd.type}
-        </span>
-        <span className="ml-auto">
-          <StatusDot ok={cmd.ok} />
-        </span>
-      </div>
-      <p className="mt-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
-        {cmd.summary}
-      </p>
-    </div>
+      <StepHeadline label={cmd.type} status={<StatusDot ok={cmd.ok} />} />
+      {cmd.summary ? (
+        <StepDetail summary="View result">
+          <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+            {cmd.summary}
+          </p>
+        </StepDetail>
+      ) : null}
+    </TimelineRow>
   );
 }
 
