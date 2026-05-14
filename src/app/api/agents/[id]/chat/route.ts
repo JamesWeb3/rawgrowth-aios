@@ -133,6 +133,15 @@ function redactSecrets(text: string): {
       replacement: "[REDACTED API KEY]",
     },
     {
+      // Supabase's 2026 key format: sb_secret_... (service role) and
+      // sb_publishable_... (anon). The prefix family above does not
+      // cover the `sb_` prefix, so a pasted Supabase service key would
+      // have leaked into chat history + the company corpus.
+      kind: "supabase_key",
+      re: /sb_(?:secret|publishable)_[A-Za-z0-9_-]{12,}/g,
+      replacement: "[REDACTED SUPABASE KEY]",
+    },
+    {
       // Catch the truncated/ellipsis form agents tend to echo back in
       // warnings: `ak_gHrg9Sor...`. Lower length floor (4+ chars after
       // prefix) and trailing ellipsis or dots. Runs after the full-key

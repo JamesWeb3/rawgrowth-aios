@@ -345,11 +345,13 @@ export async function executeChatTask(input: {
   const startedAt = new Date().toISOString();
 
   // Claim the row: only flip pending → running once. Skip if a drain
-  // worker already moved it.
+  // worker already moved it. Org-scoped so a runId from another org
+  // can never be claimed through this path.
   const { data: claimed } = await db
     .from("rgaios_routine_runs")
     .update({ status: "running", started_at: startedAt } as never)
     .eq("id", input.runId)
+    .eq("organization_id", input.orgId)
     .eq("status", "pending")
     .select("id, routine_id")
     .maybeSingle();
@@ -366,7 +368,8 @@ export async function executeChatTask(input: {
     await db
       .from("rgaios_routines")
       .update({ last_run_at: startedAt } as never)
-      .eq("id", claimedRoutineId);
+      .eq("id", claimedRoutineId)
+      .eq("organization_id", input.orgId);
   }
 
   // Pull org name + assignee details

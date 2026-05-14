@@ -20,7 +20,7 @@ export const QUESTIONNAIRE_SECTIONS: QuestionnaireSection[] = [
   { id: "sales", column: "sales", label: "Sales & conversion" },
   { id: "toolsSystems", column: "tools_systems", label: "Tools & systems" },
   { id: "additionalContext", column: "additional_context", label: "Additional context" },
-  { id: "salesCalls", column: "sales_calls", label: "Sales calls" },
+  { id: "salesCalls", column: "call_data", label: "Sales calls" },
 ];
 
 // Per-sub-section field catalog used by the chat guard to tell the model which

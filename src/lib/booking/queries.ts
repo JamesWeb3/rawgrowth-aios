@@ -333,22 +333,19 @@ export async function insertBooking(
 export async function updateBookingStatus(
   bookingId: string,
   patch: Partial<Pick<BookingRow, "status" | "cancelledAt" | "rescheduledToBookingId">>,
-  expectedOrgId?: string,
+  expectedOrgId: string,
 ): Promise<void> {
+  // Org check is mandatory. A missing/empty org id is a programming
+  // error in the caller, not a soft path - refuse rather than run an
+  // UPDATE that could mutate any org's booking.
   if (!expectedOrgId) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "booking.updateBookingStatus.no_expected_org",
-        bookingId,
-        msg: "updateBookingStatus called without expectedOrgId; cross-org defensive check skipped",
-      }),
+    throw new Error(
+      "updateBookingStatus requires expectedOrgId; refusing org-unscoped booking update",
     );
   }
-  // TODO: hard org check - resolve caller session here and verify access
-  // to existing.organization_id before UPDATE. For now we token-blind by
-  // SELECTing the row first and requiring expectedOrgId to match when
-  // provided, so a stray bookingId from one org cannot mutate another.
+  // Token-blind defense: SELECT the row first and require its
+  // organization_id to match expectedOrgId, so a stray bookingId from
+  // one org cannot mutate another.
   const { data: existing, error: selectError } = await supabaseAdmin()
     .from("rgaios_kalendly_bookings")
     .select("id, organization_id")
@@ -358,7 +355,7 @@ export async function updateBookingStatus(
   if (!existing) {
     throw new Error(`Booking ${bookingId} not found`);
   }
-  if (expectedOrgId && (existing.organization_id as string) !== expectedOrgId) {
+  if ((existing.organization_id as string) !== expectedOrgId) {
     const err = new Error("Forbidden: booking organization mismatch") as Error & {
       status?: number;
     };
@@ -373,12 +370,11 @@ export async function updateBookingStatus(
   if (patch.rescheduledToBookingId !== undefined) {
     update.rescheduled_to_booking_id = patch.rescheduledToBookingId;
   }
-  let q = supabaseAdmin()
+  const { error } = await supabaseAdmin()
     .from("rgaios_kalendly_bookings")
     .update(update as never)
-    .eq("id", bookingId);
-  if (expectedOrgId) q = q.eq("organization_id", expectedOrgId);
-  const { error } = await q;
+    .eq("id", bookingId)
+    .eq("organization_id", expectedOrgId);
   if (error) throw error;
 }
 

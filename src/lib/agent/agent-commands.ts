@@ -182,13 +182,63 @@ function extractBareJsonCommands(
   reply: string,
 ): Array<{ type: string; body: string; rawSpan: string }> {
   const out: Array<{ type: string; body: string; rawSpan: string }> = [];
-  // Match any top-level JSON object. Greedy enough for nested args. Stops
-  // at the first balanced close. Naive but effective for LLM output that
-  // emits one object at a time per code-fence or paragraph.
-  const objectRe = /\{[\s\S]*?\}(?=\s*(?:\n|$|```))/g;
-  for (const m of reply.matchAll(objectRe)) {
-    const span = m[0];
+  // Find every top-level JSON object via a balanced brace scan. The old
+  // lazy regex /\{[\s\S]*?\}(?=...)/ stopped at the FIRST `}` followed by
+  // a newline, so a pretty-printed multi-line object (inner `}` then
+  // `\n`) got truncated to an unparseable fragment. Instead, locate each
+  // `{` and walk forward counting `{`/`}` depth - skipping braces inside
+  // string literals and respecting `\` escapes - until depth returns to
+  // zero. That captures the complete balanced object regardless of
+  // internal whitespace or nesting.
+  const scanBalancedObject = (
+    src: string,
+    start: number,
+  ): { end: number } | null => {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < src.length; i++) {
+      const ch = src[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          // i is the matching close brace; end is exclusive.
+          return { end: i + 1 };
+        }
+      }
+    }
+    return null;
+  };
+
+  let cursor = 0;
+  while (cursor < reply.length) {
+    const open = reply.indexOf("{", cursor);
+    if (open === -1) break;
+    const match = scanBalancedObject(reply, open);
+    if (!match) break;
+    const span = reply.slice(open, match.end);
+    // Resume scanning right after this object - top-level objects don't
+    // overlap, so the next `{` we care about is past this one's close.
+    cursor = match.end;
     if (!span) continue;
+    // Preserve the fenced ```json``` handling: an LLM may wrap the bare
+    // object in a code fence. The brace scan already isolates just the
+    // `{...}`, but keep the strip for parity with the prior behaviour in
+    // case a fence marker leaked into the slice.
     const stripped = span
       .replace(/^```(?:json)?\s*\n?/, "")
       .replace(/\n?```$/, "")
@@ -431,7 +481,19 @@ async function execToolCall(
   // tool. Defense-in-depth: even if a sub-agent somehow slips past the
   // speaker authority check, dangerous DELETE/PURGE/etc actions are
   // refused at the chat-command surface too.
-  const destructive = /(?:^|[_\-])(DELETE|DROP|PURGE|REMOVE|WIPE|TRUNCATE)(?:[_\-]|$)/i;
+  //
+  // TRASH + REVOKE added: Gmail's real delete verb is *_TRASH_* (e.g.
+  // GMAIL_MOVE_TO_TRASH / GMAIL_TRASH_MESSAGE), which DELETE never
+  // matched - so "delete my emails" actually slipped through. REVOKE
+  // (token / OAuth / access revocation) is unambiguously destructive
+  // and an agent should never fire it unattended from chat.
+  //
+  // Deliberately NOT added: SEND - agents legitimately need
+  // GMAIL_SEND_EMAIL / SLACK_SEND_MESSAGE for core features, blocking
+  // it breaks them. CANCEL / ARCHIVE - context-dependent (cancel a
+  // calendar hold, archive a thread) and not unambiguously destructive,
+  // so left callable to stay conservative.
+  const destructive = /(?:^|[_\-])(DELETE|DROP|PURGE|REMOVE|WIPE|TRUNCATE|TRASH|REVOKE)(?:[_\-]|$)/i;
   if (destructive.test(action)) {
     return {
       ok: false,

@@ -253,10 +253,14 @@ export async function cancelBookingByToken(token: string): Promise<BookingRow> {
   if (!original) throw new BookingError("not_found", "Booking not found");
   if (original.status !== "confirmed") throw new BookingError("not_found", "Booking not active");
 
-  await updateBookingStatus(original.id, {
-    status: "cancelled",
-    cancelledAt: new Date(),
-  });
+  await updateBookingStatus(
+    original.id,
+    {
+      status: "cancelled",
+      cancelledAt: new Date(),
+    },
+    original.organizationId,
+  );
 
   const binding = await getCalendarBinding(original.organizationId);
   if (binding && original.googleEventId) {
@@ -288,11 +292,15 @@ export async function rescheduleBookingByToken(
     appUrl,
   });
 
-  await updateBookingStatus(original.id, {
-    status: "rescheduled",
-    rescheduledToBookingId: newBooking.id,
-    cancelledAt: new Date(),
-  });
+  await updateBookingStatus(
+    original.id,
+    {
+      status: "rescheduled",
+      rescheduledToBookingId: newBooking.id,
+      cancelledAt: new Date(),
+    },
+    original.organizationId,
+  );
 
   const binding = await getCalendarBinding(original.organizationId);
   if (binding && original.googleEventId) {
