@@ -20,13 +20,14 @@ This benchmark gives a score per commit. Re-run it after a change to the
 preamble, the command-extraction path, or the executor, and the
 scorecard tells you whether the agents got better.
 
-## The four files
+## The files
 
 | File | What it does |
 |---|---|
 | `fixtures.mjs` | The frozen task suite. 18 real-work tasks across the 4 objectives plus "my Instagram" handle resolution. Each task carries machine-checkable `expect` rules and an LLM-judge `rubric`. Exported as `FIXTURES`; also exports the 11 `BANNED_WORDS`. |
-| `run.mjs` | The runner. Logs into a running Rawclaw app, resolves each task's `agentRole` to a live agent, POSTs to `/api/agents/[id]/chat` k times per task, parses the chat route's event stream, and writes raw results to `results/<timestamp>.json`. Does not score. |
-| `score.mjs` | The scorer. Reads a raw results file, runs the deterministic checks, computes pass-rate + pass^k + trajectory correctness, calls the LLM-as-judge on the rubric tasks, prints a summary table, and writes `results/<timestamp>.scored.json`. |
+| `run.mjs` | The HTTP runner. Logs into a running Rawclaw app, resolves each task's `agentRole` to a live agent, POSTs to `/api/agents/[id]/chat` k times per task, parses the chat route's event stream, and writes raw results to `results/<timestamp>.json`. Does not score. |
+| `run-playwright.mjs` | The browser runner. Same task suite, same results shape, but drives the **real chat UI** in its own headless Chromium instead of POSTing raw HTTP. Writes raw results to `results/<timestamp>.pw.json`. Does not score. See below. |
+| `score.mjs` | The scorer. Reads a raw results file (from either runner), runs the deterministic checks, computes pass-rate + pass^k + trajectory correctness, calls the LLM-as-judge on the rubric tasks, prints a summary table, and writes `results/<timestamp>.scored.json`. |
 | `README.md` | This file. |
 
 ## How to run it
@@ -57,6 +58,76 @@ Run a subset while iterating:
 BENCH_K=2 BENCH_ONLY=gmail-pull-recent,kasia-3-hooks node scripts/bench/run.mjs
 BENCH_OBJECTIVE=orchestration node scripts/bench/run.mjs
 ```
+
+## The Playwright runner
+
+`run-playwright.mjs` is a second runner over the **same** `fixtures.mjs`
+suite. Instead of POSTing to the chat API and parsing the stream, it
+drives the real browser UI end to end: it spawns its own headless
+Chromium (the `playwright` library, `chromium.launch()` - not a shared
+or MCP browser), opens the actual `/auth/signin` page, navigates to each
+fixture's agent chat page, types the prompt into the chat input,
+submits, waits for the streamed reply to settle, then reads the
+trajectory back out of the rendered DOM: the visible reply text, the
+"Reasoning" thinking-trace nodes, and the orchestration timeline cards
+(tool calls, delegations, routine creations, in execution order). It
+also captures a full-page screenshot of every finished turn.
+
+It catches bugs the HTTP path cannot: a command the server emitted but
+the page failed to render, a reply that streamed but never settled, a
+stuck thinking frame, a timeline card that renders the wrong type. GAIA's
+finding that the harness is part of what you measure applies to the UI
+too - the chat page, the streaming render, and the timeline DOM are part
+of the product.
+
+It writes results in the **same JSON shape** `run.mjs` writes, to
+`results/<timestamp>.pw.json` (the `.pw.` marks it as the browser run; it
+still ends in `.json` so `score.mjs` picks it up). `score.mjs` scores it
+unchanged:
+
+```sh
+# 1. a running Rawclaw app with a seeded org (the runner does not boot one)
+npm run dev
+
+# 2. drive the suite through the real browser UI, then score it
+node scripts/bench/run-playwright.mjs
+node scripts/bench/score.mjs        # scores the newest results file
+```
+
+It needs **two** things running: a Rawclaw app to drive (same as
+`run.mjs` - it does not boot one) AND a real browser. Chromium ships with
+the repo's `@playwright/test` dev dependency; if the browser binary is
+missing, run `npx playwright install chromium` once.
+
+Per fixture, per run (`BENCH_K` times) it logs in fresh in its own
+browser context, so a poisoned session never leaks between runs. It is
+robust by design: login failure, page-load timeout, and a
+stream-that-never-finishes (bounded by `BENCH_TIMEOUT_MS`) are each
+caught, recorded as a failed run with a best-effort screenshot of the
+failed state, and the suite continues.
+
+It reads the **same** env-var contract as `run.mjs` (`BENCH_BASE_URL`,
+`BENCH_EMAIL`, `BENCH_PASSWORD`, `BENCH_K`, `BENCH_ONLY`,
+`BENCH_OBJECTIVE`, `BENCH_TIMEOUT_MS`, `BENCH_GIT_COMMIT`), plus one of
+its own:
+
+| Var | Default | Meaning |
+|---|---|---|
+| `BENCH_HEADFUL` | (unset) | Set to `1` to watch the browser run instead of headless. |
+
+The same subset filters work:
+
+```sh
+BENCH_K=2 BENCH_ONLY=gmail-pull-recent node scripts/bench/run-playwright.mjs
+BENCH_OBJECTIVE=orchestration node scripts/bench/run-playwright.mjs
+```
+
+### Screenshot output
+
+Every run saves a full-page screenshot to
+`results/screenshots/<task>-<run>.png` (run is the 0-based k index). The
+directory is created on demand. Like the result files, the screenshots
+are run artifacts - the `results/` tree keeps only its `.gitkeep`.
 
 ### Environment variables
 
