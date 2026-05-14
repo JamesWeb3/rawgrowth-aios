@@ -112,8 +112,14 @@ async function snapshotForDept(
     higherIsBetter: boolean,
   ): MetricSnapshot | null {
     if (prior === 0 && current === 0) return null;
-    const base = prior === 0 ? 1 : prior;
-    const deltaPct = (current - prior) / base;
+    // Cold-start guard. With prior=0 the old code set base=1, so a
+    // 0 -> 14 jump rendered as "+1400% week-over-week" - pure noise
+    // from an org that just came online. A percentage delta needs a
+    // real baseline; require prior >= MIN_BASELINE before treating
+    // any move as an anomaly. Mirrors the total<3 guard in ratePct.
+    const MIN_BASELINE = 3;
+    if (prior < MIN_BASELINE) return null;
+    const deltaPct = (current - prior) / prior;
     const worse = higherIsBetter ? deltaPct < 0 : deltaPct > 0;
     if (Math.abs(deltaPct) < ANOMALY_THRESHOLD) return null;
     return { metric, current, prior, deltaPct, worse };
