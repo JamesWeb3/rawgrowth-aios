@@ -149,6 +149,36 @@ export async function buildAgentChatPreamble(input: {
     );
   }
 
+  // 0-pre-b. Assigned skills. The hire flow + skills_assign write rows to
+  //   rgaios_agent_skills, the /skills UI renders them, and skills_for_agent
+  //   reports them - but the running agent's preamble never named them, so
+  //   an agent with "Paid Ads Audit" assigned had no idea it was supposed
+  //   to bring that lens. Inject the assigned catalog skills (name +
+  //   tagline + description) so the expertise actually shapes the reply.
+  try {
+    const { listSkillsForAgent } = await import("@/lib/skills/queries");
+    const { getSkill } = await import("@/lib/skills/catalog");
+    const skillIds = await listSkillsForAgent(orgId, agentId);
+    const skills = skillIds
+      .map((id) => getSkill(id))
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+    if (skills.length > 0) {
+      preamble +=
+        "\n\n═══ YOUR ASSIGNED SKILLS ═══\n\n" +
+        "You have been given these skills - they are domains you are expected to be sharp in. When a turn touches one, bring that lens by default; do not wait to be asked to apply it.\n" +
+        skills
+          .map((s) => `  - ${s.name}: ${s.tagline} ${s.description}`)
+          .join("\n") +
+        "\n";
+    }
+  } catch (err) {
+    // best-effort - a skills-lookup failure never blocks the reply
+    console.warn(
+      "[preamble] assigned skills skipped:",
+      (err as Error).message,
+    );
+  }
+
   // 0. Authority override (must come BEFORE persona). The seeded
   //    `system_prompt` for some dept heads contains stale "I am a
   //    sub-agent / I cannot emit command blocks" text from an earlier
