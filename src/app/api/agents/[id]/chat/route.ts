@@ -47,29 +47,49 @@ async function generateThinkingBrief(userMessage: string): Promise<string | null
     }
   }
   // Heuristic fallback - works on every VPS regardless of API key
-  // configuration. Pattern-match the operator's intent and template.
-  const t = userMessage.toLowerCase().trim();
-  if (/^(agent_invoke|dispatch|delegate|ask)\s+/i.test(userMessage)) {
-    const m = userMessage.match(/(?:agent_invoke|dispatch|delegate|ask)\s+(\w+)/i);
+  // configuration (Marti runs RUNTIME_PATH=cli with no ANTHROPIC_API_KEY,
+  // so this path is its ONLY brief). Strip a leading greeting/filler
+  // FIRST so "hey, can you pull my best post" classifies on the real
+  // ask, not on the word "hey" - the old regex matched the greeting and
+  // emitted "stand by for the real ask" even when the real ask was
+  // right there in the same sentence.
+  const stripped = userMessage
+    .trim()
+    .replace(/^(hi+|hello|hey+|yo|oi+|ol[aá]|cze[sś][cć]|hej|e a[ií])[\s,!.…-]+/i, "")
+    .trim();
+  const t = stripped.toLowerCase();
+  // Only a BARE greeting (nothing substantive left after the strip) is a
+  // greeting turn.
+  if (t.length < 4) {
+    return "I will greet the operator and ask what they actually need.";
+  }
+  if (/^(agent_invoke|dispatch|delegate|ask)\s+/i.test(stripped)) {
+    const m = stripped.match(/(?:agent_invoke|dispatch|delegate|ask)\s+(\w+)/i);
     const tgt = m?.[1] ?? "the right dept head";
     return `I will dispatch ${tgt} via agent_invoke and surface the result inline.`;
   }
-  if (/composio|tool|gmail|slack|calendar|google/i.test(t)) {
-    return "I will check what's wired in Composio and fire the appropriate tool call.";
+  if (/\b(instagram|\big\b|posts?|reels?|apify|scrape|engagement|best post|martifox)\b/i.test(t)) {
+    return "I will pull the Instagram data via Apify and work from the real numbers.";
   }
-  if (/^(hi|hello|hey|oi|olá|cześć|ola)\b/i.test(t)) {
-    return "I will greet the operator in their input language and stand by for the real ask.";
+  if (/composio|gmail|slack|calendar|google|hubspot|\btool\b/i.test(t)) {
+    return "I will check what's wired in Composio and fire the right tool call.";
   }
-  if (/(?:bye|tchau|later|thanks|obrigad)/i.test(t)) {
+  if (/council|debate|both .* and|marketing and|cross-functional/i.test(t)) {
+    return "I will convene a council - dispatch the relevant heads, then synthesise their angles into a decision.";
+  }
+  if (/(?:^bye|tchau|see you|^thanks|^obrigad)/i.test(t)) {
     return "I will close the turn briefly without spinning up new work.";
   }
-  if (/^(list|show|what|how|why|when|where|who|qual|quem|onde|porque|como)/i.test(t)) {
-    return "I will answer directly from org context (RAG / memory), no delegation needed.";
-  }
-  if (/(?:status|update|progress|check|monitor)/i.test(t)) {
+  if (/(?:status|progress|stuck|monitor|what.*pending)/i.test(t)) {
     return "I will status-check open delegations and surface anything stuck.";
   }
-  return `I will reply concisely in the operator's language, delegating only if the task fits one dept.`;
+  if (/^(write|draft|plan|create|make|build|outline|review|audit)\b/i.test(t)) {
+    return "I will produce this directly, grounded in org context and brand voice.";
+  }
+  if (/^(list|show|what|how|why|when|where|who|can you|could you|qual|quem|onde|porque|como)/i.test(t)) {
+    return "I will answer directly from org context (RAG / memory + tools), no delegation unless it needs a dept.";
+  }
+  return "I will work the ask in the operator's language, delegating only if it genuinely fits one department.";
 }
 
 export const runtime = "nodejs";
