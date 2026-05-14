@@ -130,13 +130,19 @@ export default async function AgentDetailPage({
     tabIsChat
       ? db
           .from("rgaios_agent_chat_messages")
-          .select("role, content")
+          .select("role, content, metadata")
           .eq("organization_id", orgId)
           .eq("agent_id", id)
           .or("metadata->>archived.is.null,metadata->>archived.eq.false")
           .order("created_at", { ascending: false })
           .limit(50)
-      : Promise.resolve({ data: [] as Array<{ role: string; content: string }> }),
+      : Promise.resolve({
+          data: [] as Array<{
+            role: string;
+            content: string;
+            metadata: Record<string, unknown> | null;
+          }>,
+        }),
     listConnectionsForOrg(orgId),
   ]);
 
@@ -211,8 +217,31 @@ export default async function AgentDetailPage({
       }
     : null;
 
+  // SSR seed for the MAIN chat thread only. Proactive rows (the
+  // atlas-coordinate cron + insights heads-ups, kind atlas_coordinate /
+  // proactive_anomaly, or anything tagged metadata.thread="proactive")
+  // belong to the separate Proactive (CEO) thread - excluding them here
+  // keeps the same split the chat-route GET does, so a proactive row
+  // never flashes inline in the operator's main conversation on first
+  // paint before the client GET reconciles.
   const initialChatMessages = (chatRows ?? [])
-    .map((r) => r as { role: string; content: string })
+    .map(
+      (r) =>
+        r as {
+          role: string;
+          content: string;
+          metadata: Record<string, unknown> | null;
+        },
+    )
+    .filter((r) => {
+      const m = (r.metadata ?? {}) as Record<string, unknown>;
+      const kind = typeof m.kind === "string" ? m.kind : "";
+      if (kind === "atlas_coordinate" || kind === "proactive_anomaly") {
+        return false;
+      }
+      return m.thread !== "proactive";
+    })
+    .map((r) => ({ role: r.role, content: r.content }))
     .reverse();
   const connectors = orgConnections
     .filter((c) => c.status === "connected")
