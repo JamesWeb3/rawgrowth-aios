@@ -780,20 +780,39 @@ export async function POST(
               extraPreamble:
                 extraPreamble +
                 "\n\n═══ TOOL RESULTS - YOU ALREADY RAN THESE ═══\n" +
-                "You emitted command block(s) on the previous turn and the system executed them. The real results are below. Write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' (the work is done). Do NOT emit new <command> blocks. Keep your <thinking> block to one short line.\n\n" +
+                "You emitted command block(s) on the previous turn and the system executed them. The real results are below.\n\n" +
+                "Open your reply with a <thinking> block that is your OBSERVATION step: in one or two sentences, say what the results actually show and what you make of them (\"3 emails back, all the same membership-confirmation template\" / \"Kasia delivered 3 usable hooks, the contrarian one is strongest\"). This is the Observation in Thought -> Action -> Observation - it must reference the real data, not be generic.\n\n" +
+                "Then write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' (the work is done). Do NOT emit new <command> blocks.\n\n" +
                 resultsBlock,
               noHandoff: true,
               callerUserId: userId,
             });
             if (pass2.ok && pass2.reply.trim()) {
               // Strip any stray command blocks pass 2 emitted despite the
-              // instruction - we do NOT re-execute them - and drop its
-              // <thinking> block (pass 1's thinking already streamed as
-              // the reasoning trace; one per turn is enough).
-              const cleaned = extractThinking(
+              // instruction - we do NOT re-execute them.
+              const pass2Thinking = extractThinking(
                 pass2.reply.replace(/<command[\s\S]*?<\/command>/gi, ""),
-              ).visibleReply;
-              if (cleaned) preFilterText = cleaned;
+              );
+              // Pass 2's <thinking> is the Observation step - emit it as
+              // a second reasoning trace so the operator sees the full
+              // ReAct chain: plan (pass 1) -> tool cards -> observation
+              // (pass 2) -> answer. Best-effort, never blocks the reply.
+              if (pass2Thinking.thinking) {
+                emit({ type: "thinking", brief: pass2Thinking.thinking });
+                try {
+                  await db.from("rgaios_agent_chat_messages").insert({
+                    organization_id: orgId,
+                    agent_id: agentId,
+                    user_id: null,
+                    role: "system",
+                    content: `Thinking: ${pass2Thinking.thinking}`,
+                    metadata: { kind: "chat_thinking", source: "agent", step: "observation" },
+                  } as never);
+                } catch {}
+              }
+              if (pass2Thinking.visibleReply) {
+                preFilterText = pass2Thinking.visibleReply;
+              }
             }
           } catch (err) {
             console.warn(
