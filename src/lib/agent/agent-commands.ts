@@ -71,8 +71,30 @@ function humanizeToolResult(
     const l = listOf(v);
     return l ? l.length : null;
   };
-  const str = (v: unknown): string =>
-    typeof v === "string" ? v : v == null ? "" : String(v);
+  const str = (v: unknown): string => {
+    if (typeof v === "string") return v;
+    if (v == null) return "";
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    // Composio's Gmail FETCH can return messageText/body as a nested
+    // object ({ text, html, ... }) for HTML / multipart mail - String()
+    // on that gives the useless "[object Object]" the agent complained
+    // about. Pull the human-readable field out, or fall back to a
+    // short JSON slice rather than the placeholder.
+    if (typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      for (const k of ["text", "plain", "value", "body", "content", "html", "snippet"]) {
+        if (typeof o[k] === "string" && (o[k] as string).trim()) {
+          return o[k] as string;
+        }
+      }
+      try {
+        return JSON.stringify(v).slice(0, 200);
+      } catch {
+        return "";
+      }
+    }
+    return String(v);
+  };
   // Gmail
   if (app === "gmail" || a.startsWith("GMAIL")) {
     if (a.includes("FETCH") || a.includes("LIST")) {

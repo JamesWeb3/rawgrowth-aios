@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { tryDecryptSecret } from "@/lib/crypto";
 
@@ -419,6 +421,164 @@ function buildPersonaPreamble(
 }
 
 /**
+ * CLI runtime path for chatReply (RUNTIME_PATH=cli).
+ *
+ * Anthropic's Feb-2026 ToS change made Claude Max OAuth tokens
+ * (sk-ant-oat01-*) valid ONLY through the Claude Code CLI - raw
+ * /v1/messages calls with the oauth-2025-04-20 beta now get soft-429'd.
+ * On cli-mode VPSes (OAuth-only, NO commercial API key) chatReply must
+ * therefore generate via the `claude` CLI subprocess instead of the raw
+ * fetch.
+ *
+ * This mirrors `generateViaClaudeCli` in lib/runs/executor.ts: same
+ * `claude --print --dangerously-skip-permissions` invocation, same
+ * HOME=/home/node so the CLI finds the host's ~/.claude credentials,
+ * same `--mcp-config` temp-file wiring of the org's Rawgrowth MCP
+ * server, same stdout read, same wall-clock abort. The executor's copy
+ * is NOT exported, so the spawn logic is replicated here rather than
+ * imported - a future refactor could lift this into a shared helper
+ * (e.g. lib/llm/claude-cli.ts) and have both call sites use it.
+ *
+ * Returns the trimmed stdout on success. Throws on spawn error, non-zero
+ * exit, or abort - chatReply catches and falls back to the raw API path
+ * so a broken CLI doesn't take chat down entirely.
+ *
+ * The system prompt + user message handed in are EXACTLY what the raw
+ * /v1/messages path would have sent (system = CLAUDE_CODE_PREFIX, user =
+ * persona-and-instructions preamble + the inbound message), so persona /
+ * preamble / handoff-sentinel behaviour is identical across both paths.
+ */
+const CHAT_CLI_WALL_CLOCK_MS = 60_000;
+
+async function chatReplyViaClaudeCli(opts: {
+  systemPrompt: string;
+  userMessage: string;
+  organizationId: string;
+  mcpToken: string | null;
+  appUrl: string;
+}): Promise<string> {
+  const { systemPrompt, userMessage, organizationId, mcpToken, appUrl } = opts;
+
+  // Wire the org's MCP server (this Next app's /api/mcp endpoint) into the
+  // CLI subprocess so the spawned agent sees the same tool registry the
+  // dashboard / executor use. Best-effort: if the temp-file write fails we
+  // still spawn the CLI, it just runs without the Rawgrowth MCP server.
+  let mcpConfigPath: string | null = null;
+  if (mcpToken) {
+    try {
+      const cfg = {
+        mcpServers: {
+          rawgrowth: {
+            type: "http",
+            url: `${appUrl.replace(/\/$/, "")}/api/mcp`,
+            headers: { Authorization: `Bearer ${mcpToken}` },
+          },
+        },
+      };
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const fs = await import("node:fs/promises");
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-mcp-"));
+      mcpConfigPath = path.join(dir, "mcp.json");
+      await fs.writeFile(mcpConfigPath, JSON.stringify(cfg), { mode: 0o600 });
+    } catch (err) {
+      console.warn(
+        `[chat.cli] mcp-config setup failed for org ${organizationId}: ${(err as Error).message}`,
+      );
+      mcpConfigPath = null;
+    }
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const bin = process.env.CLAUDE_CLI_PATH ?? "claude";
+    // Force HOME so the claude CLI finds ~/.claude/.credentials.json and
+    // ~/.claude.json from the bind-mounted host paths. The Next.js
+    // container's own HOME is /nonexistent. Mirrors executor.ts.
+    const home = process.env.CLAUDE_CLI_HOME ?? "/home/node";
+    // --dangerously-skip-permissions FIRST so MCP tool calls don't prompt
+    // for per-tool consent inside the headless subprocess.
+    const args = ["--dangerously-skip-permissions", "--print"];
+    if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
+
+    let child;
+    try {
+      child = spawn(bin, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: home },
+      });
+    } catch (err) {
+      reject(err as Error);
+      return;
+    }
+
+    // Wall-clock cap so a stuck CLI doesn't outlive the chat budget.
+    // Matches the 60s ceiling the raw /v1/messages path uses.
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* already gone */
+      }
+    }, CHAT_CLI_WALL_CLOCK_MS);
+
+    const cleanupMcpConfig = () => {
+      if (!mcpConfigPath) return;
+      import("node:fs/promises")
+        .then(async (fs) => {
+          await fs.unlink(mcpConfigPath!).catch(() => {});
+          const path = await import("node:path");
+          await fs.rmdir(path.dirname(mcpConfigPath!)).catch(() => {});
+        })
+        .catch(() => {});
+    };
+
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (b) => {
+      out += b.toString("utf8");
+    });
+    child.stderr.on("data", (b) => {
+      err += b.toString("utf8");
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      cleanupMcpConfig();
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      cleanupMcpConfig();
+      if (timedOut) {
+        reject(
+          new Error(
+            `claude --print timed out after ${CHAT_CLI_WALL_CLOCK_MS}ms`,
+          ),
+        );
+        return;
+      }
+      if (code !== 0) {
+        reject(
+          new Error(
+            `claude --print exited ${code}: ${err.slice(0, 500) || "(no stderr)"}`,
+          ),
+        );
+        return;
+      }
+      resolve(out.trim());
+    });
+
+    // Claude Code's --print mode reads the user message from stdin and
+    // ignores --system in some versions, so prepend the system block to
+    // the user message and let the model read both as one input. Same
+    // shape executor.ts uses.
+    child.stdin.write(`${systemPrompt}\n\n---\n\n${userMessage}`);
+    child.stdin.end();
+  });
+}
+
+/**
  * Generate an agent reply for a single inbound Telegram message.
  *
  * On success returns plain-text reply; caller is responsible for
@@ -509,9 +669,11 @@ export async function chatReply(input: {
       : loadRecentHistory(organizationId, chatId),
   ]);
 
-  // mcpToken is unused on the OAuth path (MCP server tools aren't allowed
-  // alongside oauth-2025-04-20). Reference it so the linter doesn't warn,
-  // and keep it visible for when Anthropic enables both betas together.
+  // mcpToken is unused on the raw /v1/messages OAuth path (MCP server
+  // tools aren't allowed alongside oauth-2025-04-20). It IS used by the
+  // RUNTIME_PATH=cli branch below to wire the org's Rawgrowth MCP server
+  // into the `claude` subprocess. The `void` keeps the linter quiet on
+  // VPSes that aren't in cli-mode (where the CLI branch never reads it).
   void mcpToken;
 
   // Persona + instructions live in the FIRST user turn, NOT in `system`.
@@ -559,6 +721,72 @@ export async function chatReply(input: {
       // generous ceiling for tool-using replies.
       signal: AbortSignal.timeout(60_000),
     });
+  }
+
+  // ─── Provider routing: RUNTIME_PATH=cli → Claude Code CLI subprocess ──
+  //
+  // Anthropic's Feb-2026 ToS change made Claude Max OAuth tokens valid
+  // ONLY through the Claude Code CLI; raw /v1/messages calls with the
+  // oauth-2025-04-20 beta now get soft-429'd. cli-mode VPSes (e.g.
+  // Marti's - OAuth-only, NO commercial API key) must therefore generate
+  // via the `claude` subprocess, the same way the routine executor does
+  // (generateViaClaudeCli in lib/runs/executor.ts).
+  //
+  // The CLI gets EXACTLY the system + user message the raw path would
+  // have sent: system = CLAUDE_CODE_PREFIX, user = the persona-and-
+  // instructions preamble + the inbound message (firstUserContent). So
+  // persona / preamble / CHAT_HANDOFF_SENTINEL behaviour is byte-for-byte
+  // identical across both paths - only the transport differs.
+  //
+  // Conversation history: the raw path passes prior turns as separate
+  // `messages` entries. --print is single-shot, so prior turns are folded
+  // into the user message as a transcript block ahead of the preamble.
+  //
+  // If the CLI spawn fails / times out / exits non-zero / returns empty,
+  // we DO NOT return an error - we fall through to the raw /v1/messages
+  // pool walk below, so a broken CLI degrades to the old behaviour rather
+  // than taking chat down entirely.
+  if (process.env.RUNTIME_PATH === "cli") {
+    const historyBlock =
+      history.length > 0
+        ? `${history
+            .map(
+              (m) =>
+                `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`,
+            )
+            .join("\n\n")}\n\n---\n\n`
+        : "";
+    const cliUserMessage = `${historyBlock}${firstUserContent}`;
+    const appUrl =
+      input.publicAppUrl ||
+      process.env.NEXTAUTH_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "http://localhost:3000";
+    try {
+      const cliReply = await chatReplyViaClaudeCli({
+        systemPrompt: CLAUDE_CODE_PREFIX,
+        userMessage: cliUserMessage,
+        organizationId,
+        mcpToken,
+        appUrl,
+      });
+      const trimmed = cliReply.trim();
+      if (trimmed.length >= 2) {
+        return { ok: true, reply: trimmed };
+      }
+      // Empty / near-empty CLI output is treated as a CLI failure, not a
+      // valid reply - fall through to the raw API path.
+      console.warn(
+        "[chat.cli] claude --print returned empty output, falling back to raw /v1/messages",
+      );
+    } catch (err) {
+      console.warn(
+        `[chat.cli] claude --print failed (${
+          (err as Error).message?.slice(0, 200) ?? "unknown"
+        }), falling back to raw /v1/messages`,
+      );
+    }
+    // intentional fall-through to the raw pool walk below
   }
 
   // Two-pass pool walk: first pass skips tokens we just saw 429 / 401

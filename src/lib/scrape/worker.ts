@@ -7,10 +7,6 @@ import {
 } from "@/lib/scrape/sources";
 import { fetchSource } from "@/lib/scrape/fetcher";
 import { isApifyEnabled } from "@/lib/scrape/apify-client";
-import type { Database } from "@/lib/supabase/types";
-
-type ScrapeSnapshotInsert =
-  Database["public"]["Tables"]["rgaios_scrape_snapshots"]["Insert"];
 
 /**
  * Drains a queued scrape job for an organization. Called from
@@ -154,14 +150,12 @@ async function drainFacebookAds(
     .eq("kind", "ads");
   const seen = new Set((existingAds ?? []).map((r) => r.url));
 
-  // rgaios_scrape_snapshots (migration 0023) has no `metrics` / `metadata`
-  // columns - the apify ad metrics + metadata fields the actor returns
-  // have nowhere to land in the live schema, so they are not persisted.
-  // See REPORT: this is a real schema gap (the referenced "migration 0041"
-  // that was meant to add them does not exist in supabase/migrations).
+  // Engagement metrics + ad metadata land in `metrics` jsonb (migration
+  // 0070). Run dates, platforms and the actor's recency rank let the
+  // media-buyer agent sort/filter the stored ad copy at query time.
   const rows = ads
     .filter((ad) => !seen.has(ad.url))
-    .map<ScrapeSnapshotInsert>((ad) => ({
+    .map((ad) => ({
       organization_id: organizationId,
       url: ad.url,
       kind: "ads",
@@ -169,11 +163,21 @@ async function drainFacebookAds(
       title: ad.page_name,
       content: ad.ad_text ?? "",
       scraped_at: new Date().toISOString(),
+      metrics: {
+        start_date: ad.start_date,
+        end_date: ad.end_date,
+        platforms: ad.platforms,
+        recency_rank: ad.metrics.recency_rank,
+      },
     }));
 
   if (rows.length === 0) return;
 
-  const { error } = await db.from("rgaios_scrape_snapshots").insert(rows);
+  // `metrics` is post-0070; supabase/types.ts predates it, so cast at the
+  // insert boundary like the rest of the repo (see src/lib/agent/tasks.ts).
+  const { error } = await db
+    .from("rgaios_scrape_snapshots")
+    .insert(rows as never);
   if (error) {
     console.warn(`[scrape] failed to insert FB ad snapshots: ${error.message}`);
     return;
@@ -217,11 +221,11 @@ async function drainYoutubeTop(
     .eq("kind", "yt_top");
   const seen = new Set((existing ?? []).map((r) => r.url));
 
-  // No `metrics` / `metadata` columns on rgaios_scrape_snapshots - the
-  // per-video view/like/comment metrics are not persisted. See REPORT.
+  // Per-video view/like/comment metrics land in `metrics` jsonb
+  // (migration 0070) so the copy + ads agents can see what performed.
   const rows = videos
     .filter((v) => !seen.has(v.url))
-    .map<ScrapeSnapshotInsert>((v) => ({
+    .map((v) => ({
       organization_id: organizationId,
       url: v.url,
       kind: "yt_top",
@@ -229,11 +233,23 @@ async function drainYoutubeTop(
       title: v.title,
       content: v.title ?? "",
       scraped_at: new Date().toISOString(),
+      metrics: {
+        view_count: v.view_count,
+        like_count: v.like_count,
+        comment_count: v.comment_count,
+        duration_seconds: v.duration_seconds,
+        published_at: v.published_at,
+        channel_name: v.channel_name,
+        view_rank: v.metrics.view_rank,
+      },
     }));
 
   if (rows.length === 0) return;
 
-  const { error } = await db.from("rgaios_scrape_snapshots").insert(rows);
+  // `metrics` is post-0070; cast at the insert boundary (see tasks.ts).
+  const { error } = await db
+    .from("rgaios_scrape_snapshots")
+    .insert(rows as never);
   if (error) {
     console.warn(`[scrape] failed to insert YT top snapshots: ${error.message}`);
     return;
@@ -279,11 +295,11 @@ async function drainInstagramTop(
     .eq("kind", "ig_top");
   const seen = new Set((existing ?? []).map((r) => r.url));
 
-  // No `metrics` / `metadata` columns on rgaios_scrape_snapshots - the
-  // per-post engagement metrics are not persisted. See REPORT.
+  // Per-post engagement metrics land in `metrics` jsonb (migration
+  // 0070); engagement_score/rank preserve the actor's own ordering.
   const rows = posts
     .filter((p) => !seen.has(p.url))
-    .map<ScrapeSnapshotInsert>((p) => ({
+    .map((p) => ({
       organization_id: organizationId,
       url: p.url,
       kind: "ig_top",
@@ -291,11 +307,23 @@ async function drainInstagramTop(
       title: null,
       content: p.caption ?? "",
       scraped_at: new Date().toISOString(),
+      metrics: {
+        like_count: p.like_count,
+        comment_count: p.comment_count,
+        type: p.type,
+        posted_at: p.posted_at,
+        display_url: p.display_url,
+        engagement_rank: p.metrics.engagement_rank,
+        engagement_score: p.metrics.engagement_score,
+      },
     }));
 
   if (rows.length === 0) return;
 
-  const { error } = await db.from("rgaios_scrape_snapshots").insert(rows);
+  // `metrics` is post-0070; cast at the insert boundary (see tasks.ts).
+  const { error } = await db
+    .from("rgaios_scrape_snapshots")
+    .insert(rows as never);
   if (error) {
     console.warn(`[scrape] failed to insert IG top snapshots: ${error.message}`);
     return;
