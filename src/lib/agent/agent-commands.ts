@@ -341,16 +341,23 @@ async function execToolCall(
     };
   }
   const { tool, args } = payload as { tool?: string; args?: unknown };
-  // Chat tool_call surface supports composio_use_tool plus the native
-  // Apify actor tools (Apify isn't a Composio app - it's wired as its
-  // own MCP tool in src/lib/mcp/tools/apify.ts). Anything else is
+  // Chat tool_call surface routes composio_use_tool plus a small set of
+  // native MCP tools straight through the registry: the Apify actor
+  // tools (Apify isn't a Composio app) and composio_list_tools (the
+  // discovery tool - the model used to wrap it as
+  // composio_use_tool({app:"composio",action:"composio_list_tools"})
+  // which failed with "composio isn't connected"). Anything else is
   // refused: the dashboard chat path has no MCP drain handoff.
-  const APIFY_TOOLS = new Set(["apify_run_actor", "apify_list_actor_runs"]);
-  if (tool !== "composio_use_tool" && !APIFY_TOOLS.has(tool ?? "")) {
+  const MCP_DIRECT_TOOLS = new Set([
+    "apify_run_actor",
+    "apify_list_actor_runs",
+    "composio_list_tools",
+  ]);
+  if (tool !== "composio_use_tool" && !MCP_DIRECT_TOOLS.has(tool ?? "")) {
     return {
       ok: false,
       type: "tool_call",
-      summary: `tool_call: supported tools are composio_use_tool, apify_run_actor, apify_list_actor_runs (got "${tool ?? "(missing)"}")`,
+      summary: `tool_call: supported tools are composio_use_tool, composio_list_tools, apify_run_actor, apify_list_actor_runs (got "${tool ?? "(missing)"}")`,
     };
   }
   if (!args || typeof args !== "object") {
@@ -361,11 +368,11 @@ async function execToolCall(
     };
   }
 
-  // Apify branch: route straight through the MCP registry. The apify
-  // tools own their key lookup + actor run; we just adapt the MCP
+  // MCP-direct branch: route straight through the MCP registry. These
+  // tools own their own auth + execution; we just adapt the MCP
   // ToolResult shape into a CommandResult so the orchestration card
-  // renders the scraped posts the same way a composio result does.
-  if (APIFY_TOOLS.has(tool ?? "")) {
+  // renders the result the same way a composio result does.
+  if (MCP_DIRECT_TOOLS.has(tool ?? "")) {
     try {
       await import("@/lib/mcp/tools"); // side-effect: register all MCP tools
       const { callTool } = await import("@/lib/mcp/registry");
