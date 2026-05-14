@@ -10,6 +10,7 @@ import { applyBrandFilter } from "@/lib/brand/apply-filter";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
 import { extractAndExecuteCommands } from "@/lib/agent/agent-commands";
+import { persistSharedMemoryFromReply } from "@/lib/memory/shared";
 import { badUuidResponse } from "@/lib/utils";
 
 /**
@@ -741,6 +742,27 @@ export async function POST(
         } catch (err) {
           console.warn(
             "[chat] data-ask extraction failed:",
+            (err as Error).message,
+          );
+        }
+
+        // 4a-quater. Shared-memory extraction. Agents emit
+        // <shared_memory importance="N" scope="...">FACT</shared_memory>
+        // when they learn something peers need. extractSharedMemoryBlocks
+        // exists but was never wired into the dashboard chat route, so
+        // the raw XML leaked into the visible reply AND the fact was
+        // never persisted. Now: strip the blocks, persist each fact.
+        try {
+          const sm = await persistSharedMemoryFromReply({
+            orgId,
+            sourceAgentId: agentId,
+            sourceChatId: null,
+            reply: preFilterText,
+          });
+          preFilterText = sm.visibleReply || preFilterText;
+        } catch (err) {
+          console.warn(
+            "[chat] shared-memory extraction failed:",
             (err as Error).message,
           );
         }
