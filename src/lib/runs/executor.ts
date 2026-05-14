@@ -925,6 +925,17 @@ const ALWAYS_AVAILABLE_TOOLS = new Set<string>([
   "composio_list_tools",
 ]);
 
+// Operator-only tools that must NEVER reach the agent runtime. approvals_decide
+// re-executes a queued tool with skipApprovalGate - if an agent can call it, it
+// queues a gated action (e.g. supabase_run_sql) then approves its own request,
+// neutering the entire approval gate. approvals_list lets it discover its own
+// pending ids to do exactly that. These are dashboard / operator-session
+// actions; the headless executor toolset excludes them outright.
+const OPERATOR_ONLY_TOOLS = new Set<string>([
+  "approvals_decide",
+  "approvals_list",
+]);
+
 type BuiltToolsets = {
   /** Shape consumed by @ai-sdk/anthropic's generateText fallback. */
   aiSdkTools: ToolSet;
@@ -962,6 +973,8 @@ function buildToolsets(
   const oauthTools: Record<string, OauthToolDef> = {};
 
   for (const t of mcpTools) {
+    // Operator-only tools never enter the agent toolset (see set above).
+    if (OPERATOR_ONLY_TOOLS.has(t.name)) continue;
     // write_policy keys are either an integration id (grants every tool
     // under that integration) or a workspace tool name. Policy on the
     // integration key applies to all its write tools.

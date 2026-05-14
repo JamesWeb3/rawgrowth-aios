@@ -285,6 +285,43 @@ registerTool({
     const id = String(args.id ?? "").trim();
     if (!id) return textError("id is required");
 
+    // Privilege guard - mirrors agents_fire's CEO/dept-head protection.
+    // Without it any agent could promote itself to role "ceo" (which
+    // grants the orchestrator surface + JSON COMMANDS authority) or
+    // demote / rewire the real CEO or a department head. role:"ceo"
+    // passes the VALID_ROLES check, so the gate has to live here.
+    const db = supabaseAdmin();
+    const { data: targetRow } = await db
+      .from("rgaios_agents")
+      .select("role, is_department_head, name")
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const target = targetRow as {
+      role: string | null;
+      is_department_head: boolean | null;
+      name: string;
+    } | null;
+    if (!target) {
+      return textError(`agent ${id} not found in your organization`);
+    }
+    if (args.role !== undefined && String(args.role).trim() === "ceo") {
+      return textError(
+        'can\'t promote an agent to CEO from MCP - role:"ceo" is an operator action in the dashboard agent panel.',
+      );
+    }
+    if (target.role === "ceo" || target.is_department_head === true) {
+      const guarded = ["role", "reports_to", "integrations", "department", "status"];
+      const touched = guarded.filter(
+        (k) => (args as Record<string, unknown>)[k] !== undefined,
+      );
+      if (touched.length > 0) {
+        return textError(
+          `${target.name} is the CEO or a department head - ${touched.join(", ")} can only be changed from the dashboard agent panel. name / title / description / budget stay editable from MCP.`,
+        );
+      }
+    }
+
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = String(args.name);
     if (args.title !== undefined) patch.title = String(args.title);
