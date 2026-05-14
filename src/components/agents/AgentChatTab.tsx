@@ -45,7 +45,7 @@ type ChatMessage = {
   // System-message variant. When unset, Bubble falls back to parsing
   // the legacy string prefixes ("Thinking: ", "Commands executed:")
   // so DB-loaded history still renders as rich cards.
-  kind?: "thinking" | "commands" | "tasks" | "secret" | "plain";
+  kind?: "thinking" | "commands" | "tasks" | "secret" | "running" | "plain";
   // Structured payload for kind==="commands".
   commands?: CommandResult[];
 };
@@ -451,6 +451,29 @@ export default function AgentChatTab({
                 role: "system",
                 kind: "thinking",
                 content: brief,
+              };
+              if (last && last.role === "assistant" && firstDelta) {
+                copy.splice(copy.length - 1, 0, note);
+              } else {
+                copy.push(note);
+              }
+              return copy;
+            });
+          } else if (
+            event.type === "command_running" &&
+            typeof event.verb === "string"
+          ) {
+            // Live orchestration status - "Kasia is answering now",
+            // "Running gmail" - streamed the moment a command starts,
+            // before the slow call returns.
+            const verb = event.verb;
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              const note: ChatMessage = {
+                role: "system",
+                kind: "running",
+                content: verb,
               };
               if (last && last.role === "assistant" && firstDelta) {
                 copy.splice(copy.length - 1, 0, note);
@@ -985,6 +1008,7 @@ type SystemKind =
   | "commands"
   | "tasks"
   | "secret"
+  | "running"
   | "delegation"
   | "plain";
 
@@ -1004,6 +1028,8 @@ function classifySystem(message: ChatMessage): {
   if (message.kind === "tasks") return { kind: "tasks", text: message.content };
   if (message.kind === "secret")
     return { kind: "secret", text: message.content };
+  if (message.kind === "running")
+    return { kind: "running", text: message.content };
 
   const c = message.content;
   if (c.startsWith("Thinking: "))
@@ -1038,6 +1064,21 @@ function SystemBlock({ message }: { message: ChatMessage }) {
           <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-muted)]">
             {text}
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "running") {
+    return (
+      <div
+        className="flex justify-center"
+        data-role="system"
+        data-kind="running"
+      >
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5 px-3 py-1 text-[11px] text-[var(--brand-primary)]">
+          <span className="size-1.5 animate-pulse rounded-full bg-current" />
+          {text}…
         </div>
       </div>
     );

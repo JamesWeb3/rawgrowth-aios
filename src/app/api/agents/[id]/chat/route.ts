@@ -721,6 +721,20 @@ export async function POST(
             speakerAgentId: agentId,
             reply: preFilterText,
             callerUserId: userId,
+            // Live status: stream "Kasia is answering now" / "Running
+            // gmail" the moment each command starts, before the slow
+            // tool call or delegated run returns.
+            onProgress: (ev) => {
+              const verb =
+                ev.type === "agent_invoke"
+                  ? `${ev.label} is answering now`
+                  : ev.type === "tool_call"
+                    ? `Running ${ev.label}`
+                    : ev.type === "routine_create"
+                      ? `Creating routine "${ev.label}"`
+                      : `Working on ${ev.label}`;
+              emit({ type: "command_running", verb, label: ev.label });
+            },
           });
           if (ext.results.length > 0) {
             preFilterText = ext.visibleReply || preFilterText;
@@ -731,6 +745,62 @@ export async function POST(
             "[chat] command extraction failed:",
             (err as Error).message,
           );
+        }
+
+        // 4a-2. Second pass: feed the tool/delegation results back to the
+        // agent so the operator-visible reply actually USES the data -
+        // "Here are the last 5 posts: ..." instead of "Pulling now."
+        // (the pull already happened). One extra LLM call, only when a
+        // command ran. The agent is told NOT to emit new <command>
+        // blocks, and any it emits anyway are stripped, not executed.
+        if (commandResults.length > 0) {
+          try {
+            const resultsBlock = commandResults
+              .map((r, i) => {
+                const out =
+                  r.detail &&
+                  typeof r.detail.delegated_output === "string" &&
+                  r.detail.delegated_output
+                    ? r.detail.delegated_output
+                    : r.summary;
+                return `[${i + 1}] ${r.type} ${r.ok ? "(ok)" : "(failed)"}:\n${out}`;
+              })
+              .join("\n\n");
+            const pass2 = await chatReply({
+              organizationId: orgId,
+              organizationName: ctx.activeOrgName,
+              chatId: 0,
+              userMessage: lastContent,
+              publicAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+              agentId,
+              historyOverride: [
+                ...history,
+                { role: "user", content: lastContent },
+              ],
+              extraPreamble:
+                extraPreamble +
+                "\n\n═══ TOOL RESULTS - YOU ALREADY RAN THESE ═══\n" +
+                "You emitted command block(s) on the previous turn and the system executed them. The real results are below. Write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' (the work is done). Do NOT emit new <command> blocks. Keep your <thinking> block to one short line.\n\n" +
+                resultsBlock,
+              noHandoff: true,
+              callerUserId: userId,
+            });
+            if (pass2.ok && pass2.reply.trim()) {
+              // Strip any stray command blocks pass 2 emitted despite the
+              // instruction - we do NOT re-execute them - and drop its
+              // <thinking> block (pass 1's thinking already streamed as
+              // the reasoning trace; one per turn is enough).
+              const cleaned = extractThinking(
+                pass2.reply.replace(/<command[\s\S]*?<\/command>/gi, ""),
+              ).visibleReply;
+              if (cleaned) preFilterText = cleaned;
+            }
+          } catch (err) {
+            console.warn(
+              "[chat] second-pass reply failed:",
+              (err as Error).message,
+            );
+          }
         }
 
         // 4a-bis. Data-ask extraction. Atlas (or any agent following the

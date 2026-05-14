@@ -839,8 +839,15 @@ export async function extractAndExecuteCommands(input: {
   speakerAgentId: string;
   reply: string;
   callerUserId?: string | null;
+  /**
+   * Optional: fired once per command, just BEFORE it executes. The chat
+   * route uses this to stream a live "Kasia is answering now" /
+   * "Running gmail" status to the operator while the (slow) tool call
+   * or delegated run is in flight.
+   */
+  onProgress?: (ev: { type: string; label: string }) => void;
 }): Promise<ExtractCommandsResult> {
-  const { orgId, speakerAgentId, reply, callerUserId } = input;
+  const { orgId, speakerAgentId, reply, callerUserId, onProgress } = input;
   const wrappedMatches = [...reply.matchAll(COMMAND_BLOCK_RE)];
 
   // Two-pass: prefer wrapped <command> blocks (canonical), then fall back
@@ -899,6 +906,30 @@ export async function extractAndExecuteCommands(input: {
         summary: `command type=${type}: body is not valid JSON`,
       });
       continue;
+    }
+    // Live progress: tell the operator what is about to run BEFORE the
+    // (slow) call starts - "Basia is answering now", "Running gmail".
+    if (onProgress) {
+      let label = type;
+      if (type === "agent_invoke") {
+        label = (payload as { agent?: string }).agent?.trim() || "an agent";
+      } else if (type === "tool_call") {
+        const tp = payload as {
+          tool?: string;
+          args?: { app?: string; action?: string };
+        };
+        label =
+          tp.tool === "composio_use_tool"
+            ? (tp.args?.app || tp.args?.action || "a tool")
+            : tp.tool || "a tool";
+      } else if (type === "routine_create") {
+        label = (payload as { title?: string }).title?.trim() || "a routine";
+      }
+      try {
+        onProgress({ type, label });
+      } catch {
+        /* progress is best-effort - never block execution */
+      }
     }
     if (type === "tool_call") {
       results.push(
