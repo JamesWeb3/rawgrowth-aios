@@ -1,6 +1,10 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chunkText } from "@/lib/knowledge/chunker";
-import { embedBatch, embedOne, toPgVector } from "@/lib/knowledge/embedder";
+import {
+  embedBatchWithProvider,
+  embedOne,
+  toPgVector,
+} from "@/lib/knowledge/embedder";
 
 /**
  * Plan §7. Helpers around rgaios_company_chunks (migration 0042) - the
@@ -64,7 +68,9 @@ export async function ingestCompanyChunk(input: {
   // embedder ever returns a missing slot we substitute a zero-padded
   // placeholder so the row still lands and the operator can backfill
   // by re-running ingest under EMBEDDING_PROVIDER=openai or voyage.
-  const embeddings = await embedBatch(chunks.map((c) => c.content));
+  const { vectors: embeddings, provider } = await embedBatchWithProvider(
+    chunks.map((c) => c.content),
+  );
   const zeroVector = new Array<number>(1536).fill(0);
   const rows = chunks.map((c, idx) => ({
     organization_id: input.orgId,
@@ -74,10 +80,15 @@ export async function ingestCompanyChunk(input: {
     content: c.content,
     token_count: Math.round(c.content.length / 4),
     embedding: toPgVector(embeddings[idx] ?? zeroVector),
+    embedding_provider: provider,
     metadata: input.metadata ?? {},
   }));
 
-  const { error } = await supabaseAdmin().from("rgaios_company_chunks").insert(rows);
+  // embedding_provider (migration 0073) isn't in the generated Database
+  // types yet; cast to bypass the stale inference until the next regen.
+  const { error } = await supabaseAdmin()
+    .from("rgaios_company_chunks")
+    .insert(rows as never);
   if (error) {
     throw new Error(`ingestCompanyChunk: ${error.message}`);
   }

@@ -3,7 +3,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 import { getOrgContext } from "@/lib/auth/admin";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { chunkText } from "@/lib/knowledge/chunker";
-import { embedBatch, toPgVector } from "@/lib/knowledge/embedder";
+import { embedBatchWithProvider, toPgVector } from "@/lib/knowledge/embedder";
 import { extractInsights } from "@/lib/sales-calls/extract-insights";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
@@ -286,7 +286,8 @@ async function pollOrg(orgId: string): Promise<{
         try {
           const chunks = chunkText(transcript);
           if (chunks.length > 0) {
-            const embeddings = await embedBatch(chunks.map((c) => c.content));
+            const { vectors: embeddings, provider } =
+              await embedBatchWithProvider(chunks.map((c) => c.content));
             const rows = chunks.map((c, i) => ({
               organization_id: orgId,
               source: "sales_call",
@@ -295,16 +296,20 @@ async function pollOrg(orgId: string): Promise<{
               content: c.content,
               token_count: Math.round(c.content.length / 4),
               embedding: embeddings[i] ? toPgVector(embeddings[i]) : null,
+              embedding_provider: provider,
               metadata: {
                 sales_call_id: id,
                 source: "sales_call",
                 from: "fireflies",
               },
             }));
+            // embedding_provider (migration 0073) isn't in the
+            // generated Database types yet; cast the batch to bypass
+            // the stale inference until the next type regen.
             for (let i = 0; i < rows.length; i += 500) {
               await db2
                 .from("rgaios_company_chunks")
-                .insert(rows.slice(i, i + 500));
+                .insert(rows.slice(i, i + 500) as never);
             }
           }
         } catch (err) {

@@ -37,14 +37,31 @@ import { createHash } from "node:crypto";
  * schema migration. Do NOT mix providers inside one organization's
  * corpus  -  flip per-VPS, then backfill if you switch later.
  *
- * Public contract is unchanged: embedBatch / embedOne / toPgVector with
- * the same shapes the upload route and knowledge_query MCP tool expect.
+ * Provenance: embedBatchWithProvider / embedOneWithProvider return the
+ * resolved provider alongside the vectors so callers can stamp the
+ * rgaios_*_chunks.embedding_provider column (migration 0073) per row.
+ * This is what makes the "stub fallback poisoned the corpus" failure
+ * auditable instead of silent - a corpus with mixed providers is now
+ * a `group by embedding_provider` query away from being visible. New
+ * ingest paths SHOULD use the *WithProvider variants and persist the
+ * provider. embedBatch / embedOne are kept as thin
+ * provider-dropping wrappers so existing call sites still compile.
+ *
+ * Stub fallback is LOUD, not once-per-process: every batch that routes
+ * through the stub because fastembed's native modules failed emits a
+ * console.error with a running count. Set EMBEDDING_STRICT=1 to make
+ * the stub fallback THROW instead - a half-broken VPS then fails the
+ * ingest loudly rather than corrupting RAG with zero-signal vectors
+ * (per the "do NOT mix providers" rule above). EMBEDDING_PROVIDER=stub
+ * is still an explicit, allowed choice and is never blocked by strict
+ * mode - strict mode only guards the *involuntary* fallback.
  *
  * Fails loud if the selected provider's API key is missing (openai /
  * voyage). The upload route catches and turns that into a per-file
  * warning so the file blob still lands in storage and can be
  * backfilled later. fastembed never throws for a missing key  -  on
- * native-load failure it warns once and routes through the stub.
+ * native-load failure it falls back to the stub (or throws under
+ * EMBEDDING_STRICT=1).
  */
 
 const OPENAI_MODEL = "text-embedding-3-large";
@@ -61,6 +78,25 @@ const TARGET_DIMENSIONS = 1536;
 const BATCH = 96;
 
 export type EmbeddingProvider = "fastembed" | "openai" | "voyage" | "stub";
+
+/**
+ * A batch of 1536d vectors plus the provider that actually produced
+ * them. `provider` is the RESOLVED backend, not the requested one: when
+ * EMBEDDING_PROVIDER=fastembed but the native modules fail to load and
+ * the batch routes through the stub, `provider` is "stub". Callers
+ * persist this into rgaios_*_chunks.embedding_provider so a corpus that
+ * silently picked up zero-signal stub rows is auditable after the fact.
+ */
+export type EmbeddedBatch = {
+  vectors: number[][];
+  provider: EmbeddingProvider;
+};
+
+/** Single-text counterpart of EmbeddedBatch. */
+export type EmbeddedOne = {
+  vector: number[];
+  provider: EmbeddingProvider;
+};
 
 function selectedProvider(): EmbeddingProvider {
   const raw = (process.env.EMBEDDING_PROVIDER ?? "fastembed")
@@ -84,7 +120,7 @@ function openaiClient(): OpenAI {
   return _openaiClient;
 }
 
-async function embedBatchOpenAI(inputs: string[]): Promise<number[][]> {
+async function embedBatchOpenAI(inputs: string[]): Promise<EmbeddedBatch> {
   const all: number[][] = [];
   for (let i = 0; i < inputs.length; i += BATCH) {
     const slice = inputs.slice(i, i + BATCH);
@@ -95,7 +131,7 @@ async function embedBatchOpenAI(inputs: string[]): Promise<number[][]> {
     });
     for (const item of res.data) all.push(item.embedding as number[]);
   }
-  return all;
+  return { vectors: all, provider: "openai" };
 }
 
 /**
@@ -189,17 +225,44 @@ function embedBatchStub(inputs: string[]): number[][] {
   return inputs.map(stubVector);
 }
 
-let _fastembedFallbackWarned = false;
-function warnFastembedFallbackOnce(err: unknown): void {
-  if (_fastembedFallbackWarned) return;
-  _fastembedFallbackWarned = true;
+// Running count of involuntary stub fallbacks this process. Unlike the
+// old once-per-process boolean, this never goes quiet: every poisoned
+// batch is accounted for in the logs so an operator grepping for
+// "[embedder]" sees the full blast radius, not just the first hit.
+let _fastembedFallbackCount = 0;
+
+function strictModeEnabled(): boolean {
+  const raw = (process.env.EMBEDDING_STRICT ?? "").toLowerCase().trim();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Handle an involuntary fastembed -> stub fallback. Under
+ * EMBEDDING_STRICT=1 this THROWS so the ingest fails loudly instead of
+ * writing zero-signal vectors into a corpus that also holds real ones.
+ * Otherwise it emits a per-call console.error (with a running count)
+ * and lets the caller route the batch through the stub - but the
+ * caller MUST then stamp embedding_provider='stub' on those rows so
+ * the poison is at least labelled.
+ */
+function handleFastembedFallback(err: unknown, batchSize: number): void {
+  _fastembedModel = null;
+  _fastembedFallbackCount += 1;
   const reason = err instanceof Error ? err.message : String(err);
-  console.warn(
-    `[embedder] fastembed unavailable, falling back to stub embeddings - configure EMBEDDING_PROVIDER=openai or voyage for real semantic search (reason: ${reason})`,
+  if (strictModeEnabled()) {
+    throw new Error(
+      `[embedder] fastembed unavailable and EMBEDDING_STRICT=1 - refusing to write ${batchSize} stub (zero-signal) vectors into the corpus. Set EMBEDDING_PROVIDER=openai or voyage, or unset EMBEDDING_STRICT to allow labelled stub fallback (reason: ${reason})`,
+    );
+  }
+  console.error(
+    `[embedder] fastembed unavailable, falling back to STUB embeddings for ${batchSize} chunk(s) ` +
+      `(fallback #${_fastembedFallbackCount} this process). These rows carry ZERO semantic signal and ` +
+      `will be stamped embedding_provider='stub' - configure EMBEDDING_PROVIDER=openai or voyage and ` +
+      `re-ingest for real semantic search, or set EMBEDDING_STRICT=1 to fail ingest instead (reason: ${reason})`,
   );
 }
 
-async function embedBatchFastembed(inputs: string[]): Promise<number[][]> {
+async function embedBatchFastembed(inputs: string[]): Promise<EmbeddedBatch> {
   let model: FastembedModel;
   try {
     model = await fastembedModel();
@@ -207,10 +270,10 @@ async function embedBatchFastembed(inputs: string[]): Promise<number[][]> {
     // Native ONNX / tokenizer modules missing or unloadable (typical on
     // Vercel serverless). Drop the cached promise so a later environment
     // with the binaries available can retry, then route this batch
-    // through the stub path so ingest does not 500.
-    _fastembedModel = null;
-    warnFastembedFallbackOnce(err);
-    return embedBatchStub(inputs);
+    // through the stub path so ingest does not 500 - unless strict mode
+    // is on, in which case handleFastembedFallback throws.
+    handleFastembedFallback(err, inputs.length);
+    return { vectors: embedBatchStub(inputs), provider: "stub" };
   }
   try {
     const out: number[][] = [];
@@ -224,18 +287,17 @@ async function embedBatchFastembed(inputs: string[]): Promise<number[][]> {
         out.push(padToTarget(v));
       }
     }
-    return out;
+    return { vectors: out, provider: "fastembed" };
   } catch (err) {
     // First-call inference failures (e.g. native .node side-load throws
-    // lazily inside embed()) get the same treatment: warn once, fall
-    // back to the stub for this batch.
-    _fastembedModel = null;
-    warnFastembedFallbackOnce(err);
-    return embedBatchStub(inputs);
+    // lazily inside embed()) get the same treatment: loud per-call
+    // error (or throw under strict mode), fall back to the stub.
+    handleFastembedFallback(err, inputs.length);
+    return { vectors: embedBatchStub(inputs), provider: "stub" };
   }
 }
 
-async function embedBatchVoyage(inputs: string[]): Promise<number[][]> {
+async function embedBatchVoyage(inputs: string[]): Promise<EmbeddedBatch> {
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -290,21 +352,62 @@ async function embedBatchVoyage(inputs: string[]): Promise<number[][]> {
       all.push(padToTarget(v));
     }
   }
-  return all;
+  return { vectors: all, provider: "voyage" };
 }
 
-export async function embedBatch(inputs: string[]): Promise<number[][]> {
-  if (inputs.length === 0) return [];
+/**
+ * Embed a batch and report which backend actually produced the vectors.
+ * This is the provenance-aware entry point - new ingest paths should
+ * call this and persist `provider` into the chunk row's
+ * embedding_provider column (migration 0073) so an involuntary stub
+ * fallback is labelled instead of silently poisoning the corpus.
+ *
+ * `provider` is the RESOLVED backend: a fastembed request that fell
+ * back to the stub reports "stub" here, not "fastembed".
+ */
+export async function embedBatchWithProvider(
+  inputs: string[],
+): Promise<EmbeddedBatch> {
+  // Empty input short-circuits BEFORE selectedProvider(): an empty batch
+  // needs no backend, and selectedProvider() throws on a misconfigured
+  // EMBEDDING_PROVIDER - embedBatch([]) must stay a safe no-op even on a
+  // hostile env. The reported provider is the configured default and is
+  // never used (no vectors), so we don't pay the throw to compute it.
+  if (inputs.length === 0) return { vectors: [], provider: "fastembed" };
   const provider = selectedProvider();
   if (provider === "voyage") return embedBatchVoyage(inputs);
   if (provider === "openai") return embedBatchOpenAI(inputs);
-  if (provider === "stub") return embedBatchStub(inputs);
+  if (provider === "stub") {
+    return { vectors: embedBatchStub(inputs), provider: "stub" };
+  }
+  // fastembed: embedBatchFastembed resolves the real provider itself
+  // ("fastembed" on success, "stub" on involuntary fallback).
   return embedBatchFastembed(inputs);
 }
 
+/** Single-text counterpart of embedBatchWithProvider. */
+export async function embedOneWithProvider(
+  text: string,
+): Promise<EmbeddedOne> {
+  const { vectors, provider } = await embedBatchWithProvider([text]);
+  return { vector: vectors[0], provider };
+}
+
+/**
+ * Provider-dropping wrapper. Kept so existing call sites that only need
+ * the vectors keep compiling unchanged. Prefer embedBatchWithProvider
+ * for any path that writes rows - the dropped `provider` is exactly the
+ * provenance that makes a stub-poisoned corpus auditable.
+ */
+export async function embedBatch(inputs: string[]): Promise<number[][]> {
+  const { vectors } = await embedBatchWithProvider(inputs);
+  return vectors;
+}
+
+/** Provider-dropping wrapper around embedOneWithProvider. */
 export async function embedOne(text: string): Promise<number[]> {
-  const [v] = await embedBatch([text]);
-  return v;
+  const { vector } = await embedOneWithProvider(text);
+  return vector;
 }
 
 /**
@@ -348,5 +451,5 @@ export function warmEmbedder(): void {
 export function __resetClientsForTests(): void {
   _openaiClient = null;
   _fastembedModel = null;
-  _fastembedFallbackWarned = false;
+  _fastembedFallbackCount = 0;
 }

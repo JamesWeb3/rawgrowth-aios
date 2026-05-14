@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { uploadToBucket } from "@/lib/storage/local";
 import { chunkText } from "@/lib/knowledge/chunker";
-import { embedBatch, toPgVector } from "@/lib/knowledge/embedder";
+import { embedBatchWithProvider, toPgVector } from "@/lib/knowledge/embedder";
 
 /**
  * Plan §3 + §4. Reusable ingest path for per-agent files. The upload
@@ -77,7 +77,8 @@ export async function ingestAgentFile(input: {
     if (input.content.trim()) {
       const chunks = chunkText(input.content);
       if (chunks.length > 0) {
-        const embeddings = await embedBatch(chunks.map((c) => c.content));
+        const { vectors: embeddings, provider } =
+          await embedBatchWithProvider(chunks.map((c) => c.content));
         const rows = chunks.map((c, i) => ({
           file_id: fileId,
           organization_id: input.orgId,
@@ -86,11 +87,15 @@ export async function ingestAgentFile(input: {
           content: c.content,
           token_count: Math.round(c.content.length / 4),
           embedding: embeddings[i] ? toPgVector(embeddings[i]) : null,
+          embedding_provider: provider,
         }));
         for (let i = 0; i < rows.length; i += 500) {
+          // embedding_provider (migration 0073) isn't in the generated
+          // Database types yet; cast the batch to bypass the stale
+          // inference until the next type regen.
           const { error } = await db
             .from("rgaios_agent_file_chunks")
-            .insert(rows.slice(i, i + 500));
+            .insert(rows.slice(i, i + 500) as never);
           if (error) throw error;
         }
         chunkCount = rows.length;

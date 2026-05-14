@@ -45,6 +45,7 @@ export type Database = {
           content: string;
           token_count: number | null;
           embedding: string | null;
+          embedding_provider: string | null;
           created_at: string;
         };
         Insert: {
@@ -56,6 +57,7 @@ export type Database = {
           content: string;
           token_count?: number | null;
           embedding?: string | null;
+          embedding_provider?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_agent_file_chunks"]["Row"]>;
@@ -311,6 +313,7 @@ export type Database = {
           content: string;
           token_count: number | null;
           embedding: string | null;
+          embedding_provider: string | null;
           metadata: Record<string, unknown>;
           created_at: string;
         };
@@ -323,6 +326,7 @@ export type Database = {
           content: string;
           token_count?: number | null;
           embedding?: string | null;
+          embedding_provider?: string | null;
           metadata?: Record<string, unknown>;
           created_at?: string;
         };
