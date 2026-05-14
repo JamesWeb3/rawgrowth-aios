@@ -9,6 +9,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Clock,
   Code,
   Cpu,
   Crown,
@@ -257,6 +258,10 @@ export default function AgentChatTab({
   );
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // Messages typed while a run is streaming. The operator can keep
+  // sending mid-run; queued turns drain FIFO the moment `streaming`
+  // flips false (drain effect below).
+  const [queued, setQueued] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(initialMessages.length > 0);
   const [dragActive, setDragActive] = useState(false);
@@ -339,11 +344,39 @@ export default function AgentChatTab({
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }, [input]);
 
+  // Drain the queued-message FIFO. Fires when a run finishes
+  // (streaming -> false) and a turn is pending; replays the head via
+  // the `override` path. sendMessage drops the head from the queue
+  // itself (keeping this effect free of cascading setState), then sets
+  // streaming true - so the next render re-guards here until the
+  // replay's own run settles.
+  useEffect(() => {
+    if (streaming || queued.length === 0) return;
+    void sendMessage(queued[0]);
+    // sendMessage is a stable in-component closure recreated each
+    // render; the drain only depends on streaming + queued.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming, queued]);
+
   async function sendMessage(override?: string) {
     const text = (override ?? input).trim();
-    if (!text || streaming) return;
+    if (!text) return;
+    // A run is already streaming - queue instead of dropping the turn.
+    // `override` means the drain effect is replaying a queued turn;
+    // never re-queue that or it would loop forever.
+    if (streaming && override === undefined) {
+      setInput("");
+      setQueued((q) => [...q, text]);
+      return;
+    }
     setError("");
-    if (override === undefined) setInput("");
+    if (override === undefined) {
+      setInput("");
+    } else {
+      // Drain replay - drop this turn from the head of the queue.
+      // Guarded by head-equality so a stray re-fire is a no-op.
+      setQueued((q) => (q[0] === override ? q.slice(1) : q));
+    }
 
     const next: ChatMessage[] = [
       ...messages,
@@ -874,6 +907,33 @@ export default function AgentChatTab({
       {/* Input bar */}
       <div className="shrink-0 border-t border-[var(--line)] bg-[var(--brand-bg)]/80 backdrop-blur">
         <div className="mx-auto max-w-2xl px-4 py-3">
+          {queued.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {queued.map((q, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-full border border-[var(--line-strong)] bg-[var(--brand-surface)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]"
+                >
+                  <Clock className="h-3 w-3 shrink-0" />
+                  <span className="max-w-[220px] truncate">{q}</span>
+                  <button
+                    type="button"
+                    aria-label="Remove queued message"
+                    onClick={() =>
+                      setQueued((prev) => prev.filter((_, j) => j !== i))
+                    }
+                    className="ml-0.5 text-[var(--text-muted)] transition-colors hover:text-destructive"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <span className="text-[11px] text-[var(--text-muted)]">
+                {queued.length === 1 ? "1 queued" : `${queued.length} queued`}{" "}
+                &middot; sends when the run finishes
+              </span>
+            </div>
+          )}
           <div className="flex items-end gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--brand-surface)] p-2 focus-within:border-[var(--brand-primary)]">
             <button
               type="button"
@@ -904,17 +964,26 @@ export default function AgentChatTab({
               onKeyDown={handleKeyDown}
               rows={1}
               placeholder={
-                uploading ? "Uploading file..." : "Talk to this agent..."
+                uploading
+                  ? "Uploading file..."
+                  : streaming
+                    ? "Type ahead - queues until the run finishes..."
+                    : "Talk to this agent..."
               }
-              disabled={streaming || uploading}
+              disabled={uploading}
               className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-muted)] outline-none disabled:opacity-60"
             />
             <Button
               type="button"
               size="icon"
               onClick={() => sendMessage()}
-              disabled={!input.trim() || streaming || uploading}
+              disabled={!input.trim() || uploading}
               aria-label="Send message"
+              title={
+                streaming
+                  ? "Queue message - sends when the current run finishes"
+                  : "Send message"
+              }
               className={
                 // eslint-disable-next-line rawgrowth-brand/banned-tailwind-defaults -- transition target names box-shadow as the explicit property; arbitrary shadow value is an intentional brand accent
                 "h-9 w-9 shrink-0 rounded-xl transition-[box-shadow,transform] " +
