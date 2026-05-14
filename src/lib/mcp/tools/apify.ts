@@ -100,6 +100,23 @@ registerTool({
 
     const limit = clampLimit(args.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
+    // Decouple what we FETCH from the actor from what we RETURN. The
+    // Instagram scraper surfaces pinned posts first; if we ask the
+    // actor for only `limit` items (e.g. 3) it returns 3 pinned posts
+    // and there is nothing left to sort - "latest 3" comes back as the
+    // 3 oldest pinned bangers. So always pull a generous window, sort
+    // newest-first below, then slice to `limit`. Also bump any
+    // run_input.resultsLimit the model set to the same floor so the
+    // actor itself does not pre-truncate to the small number.
+    const fetchLimit = Math.min(Math.max(limit * 5, 30), MAX_LIMIT);
+    const runInputObj = runInput as Record<string, unknown>;
+    if (
+      typeof runInputObj.resultsLimit === "number" &&
+      runInputObj.resultsLimit < fetchLimit
+    ) {
+      runInputObj.resultsLimit = fetchLimit;
+    }
+
     const resolved = await resolveApifyKey(ctx.organizationId);
     if ("error" in resolved) return textError(resolved.error);
 
@@ -110,7 +127,7 @@ registerTool({
     const actorPath = actorId.replace("/", "~");
     const url =
       `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
-      `?token=${encodeURIComponent(resolved.key)}&limit=${limit}`;
+      `?token=${encodeURIComponent(resolved.key)}&limit=${fetchLimit}`;
 
     let res: Response;
     try {

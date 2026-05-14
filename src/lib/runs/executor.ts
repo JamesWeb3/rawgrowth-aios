@@ -679,6 +679,22 @@ function buildUserMessage(
 
 // ─── Toolset construction ──────────────────────────────────────────
 
+// Core composio router tools are the *mechanism* for tool use, not a
+// specific integration to gate. They register with no
+// `requiresIntegration`, so their policyKey is the bare tool name -
+// which an agent's write_policy never lists (policy keys are
+// integration ids or workspace tool names). Without this allowlist the
+// explicit-mode filter below silently drops `composio_use_tool` (and
+// `composio_list_tools`) from any agent that has a configured
+// write_policy, leaving routine runs unable to call ANY Composio app.
+// write_policy still gates WHICH composio actions/apps run via the
+// per-action denylist + approvals flow in composio-router.ts; this only
+// keeps the tool itself reachable.
+const ALWAYS_AVAILABLE_TOOLS = new Set<string>([
+  "composio_use_tool",
+  "composio_list_tools",
+]);
+
 type BuiltToolsets = {
   /** Shape consumed by @ai-sdk/anthropic's generateText fallback. */
   aiSdkTools: ToolSet;
@@ -722,7 +738,16 @@ function buildToolsets(
     const policyKey = t.requiresIntegration ?? t.name;
     // Explicit mode: only offer tools the user enabled on the agent.
     // Legacy mode (empty policy): offer everything so older agents keep working.
-    if (explicit && !(policyKey in writePolicy)) continue;
+    // Core composio router tools bypass the filter - they're the
+    // mechanism for tool use, not a gated integration (see
+    // ALWAYS_AVAILABLE_TOOLS above).
+    if (
+      explicit &&
+      !(policyKey in writePolicy) &&
+      !ALWAYS_AVAILABLE_TOOLS.has(t.name)
+    ) {
+      continue;
+    }
 
     const dispatchTool = async (
       typedArgs: Record<string, unknown>,

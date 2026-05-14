@@ -340,6 +340,16 @@ export async function POST(
             acknowledgement,
           });
         }
+      } else if (placeholderId !== null) {
+        // No drain wired - without this branch the placeholder sat on
+        // "🔧 Working on it" forever and the operator never heard back.
+        // Surface an honest dead-end message instead of a silent hang.
+        await editMessageText(
+          token,
+          msg.chat.id,
+          placeholderId,
+          "I need a tool to finish that, but the background runner isn't wired on this deployment. Tell Pedro to set RAWCLAW_DRAIN_URL - until then I can't run that step.",
+        ).catch(() => {});
       }
       // Drain owns progress + final reply from here; stop refreshing
       // typing from this handler.
