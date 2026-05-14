@@ -75,7 +75,10 @@ export async function executeRun(
     if (!ctx) return; // already claimed by another worker, not pending, or wrong org
 
     const { routine, agent, run, trigger } = ctx;
-    const toolCtx: ToolContext = { organizationId: run.organization_id };
+    const toolCtx: ToolContext = {
+      organizationId: run.organization_id,
+      agentId: agent?.id ?? null,
+    };
     const writePolicy = (agent?.write_policy ?? {}) as Record<
       string,
       "direct" | "requires_approval" | "draft_only"

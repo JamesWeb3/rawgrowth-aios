@@ -130,7 +130,14 @@ export async function decideApproval(params: {
         // skipApprovalGate: this IS the approved re-execution. Without
         // it the central callTool write gate would re-queue the call
         // into rgaios_approvals and it would never actually run.
-        { organizationId: params.organizationId, skipApprovalGate: true },
+        // agentId: carry the original calling agent through so a tool
+        // that reads ctx.agentId (agent_message / agent_inbox /
+        // telegram_reply) re-runs as the agent that queued it.
+        {
+          organizationId: params.organizationId,
+          agentId: approval.agent_id ?? null,
+          skipApprovalGate: true,
+        },
       );
       executionResult = result.content.map((c) => c.text).join("\n");
       if (result.isError) {

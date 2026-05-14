@@ -461,7 +461,10 @@ async function execToolCall(
       const res = await callTool(
         tool as string,
         args as Record<string, unknown>,
-        { organizationId: orgId, userId: callerUserId },
+        // agentId = the speaker: lets agent_message / agent_inbox /
+        // telegram_reply default "who is calling" to this agent
+        // instead of forcing the model to name itself in args.
+        { organizationId: orgId, userId: callerUserId, agentId: speakerId },
       );
       const out = res.content?.map((c) => c.text).join("\n").trim() ?? "";
       if (res.isError) {

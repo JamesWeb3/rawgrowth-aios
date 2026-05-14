@@ -16,9 +16,10 @@ import { embedBatch, toPgVector } from "@/lib/knowledge/embedder";
 const BUCKET = "agent-files";
 
 export type IngestResult = {
-  fileId: string;
+  fileId: string | null;
   chunkCount: number;
   warnings: string[];
+  ok: boolean;
 };
 
 export async function ingestAgentFile(input: {
@@ -99,5 +100,21 @@ export async function ingestAgentFile(input: {
     warnings.push(`chunk/embed failed: ${(err as Error).message}`);
   }
 
-  return { fileId, chunkCount, warnings };
+  // A file row with zero chunks is invisible to RAG but looks like a
+  // successful ingest. rgaios_agent_files has no status column, so the
+  // cleanest fix is to delete the orphan row rather than leave a
+  // phantom file behind. ok=false tells the caller not to count it.
+  if (chunkCount === 0) {
+    const { error: cleanupErr } = await db
+      .from("rgaios_agent_files")
+      .delete()
+      .eq("id", fileId);
+    if (cleanupErr) {
+      warnings.push(`orphan file cleanup failed: ${cleanupErr.message}`);
+      return { fileId, chunkCount, warnings, ok: false };
+    }
+    return { fileId: null, chunkCount, warnings, ok: false };
+  }
+
+  return { fileId, chunkCount, warnings, ok: true };
 }

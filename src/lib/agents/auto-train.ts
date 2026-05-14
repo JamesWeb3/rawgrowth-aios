@@ -88,7 +88,7 @@ export async function autoTrainAgent(input: {
     try {
       const filePath = join(starterRoot, starter.relativePath);
       const content = await readFile(filePath, "utf8");
-      await ingestAgentFile({
+      const ingest = await ingestAgentFile({
         orgId: input.orgId,
         agentId: input.agentId,
         filename: starter.filename,
@@ -97,7 +97,16 @@ export async function autoTrainAgent(input: {
         uploadedBy: null,
         storage: null,
       });
-      result.files += 1;
+      // ingestAgentFile returns success-shaped even on a zero-chunk
+      // half-ingest (chunk/embed failed) - only count files that
+      // actually landed chunks, and surface the rest.
+      if (ingest.ok) {
+        result.files += 1;
+      } else {
+        console.warn(
+          `[auto-train] starter ${starter.relativePath} ingested 0 chunks for ${input.agentId}: ${ingest.warnings.join("; ")}`,
+        );
+      }
     } catch (err) {
       console.warn(
         `[auto-train] starter ${starter.relativePath} failed for ${input.agentId}: ${(err as Error).message}`,

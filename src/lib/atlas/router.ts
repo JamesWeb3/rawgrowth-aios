@@ -72,23 +72,67 @@ export async function findFailedTasks(
     const { data: agents } = await db
       .from("rgaios_agents")
       .select("id, name")
+      .eq("organization_id", orgId)
       .in("id", aIds);
     for (const a of (agents ?? []) as Array<{ id: string; name: string }>) {
       nameById.set(a.id, a.name);
     }
   }
 
-  return rows.map((r) => ({
-    routineId: r.routine_id,
-    title: r.routines?.title ?? "(untitled)",
-    assigneeAgentId: r.routines?.assignee_agent_id ?? null,
-    assigneeName: r.routines?.assignee_agent_id
-      ? nameById.get(r.routines.assignee_agent_id) ?? "agent"
-      : "unassigned",
-    error: r.error ?? "",
-    output: r.output?.reply ?? "",
-    createdAt: r.created_at,
-  }));
+  // Reroute-loop guard: a routine already rerouted >= MAX_REROUTES times is
+  // genuinely broken (dead integration, impossible ask, missing creds).
+  // Re-rerouting it daily forever just spawns more doomed tasks - skip the
+  // auto-reroute and escalate to a human instead.
+  const MAX_REROUTES = 3;
+  const rIds = Array.from(new Set(rows.map((r) => r.routine_id)));
+  const rerouteCount = new Map<string, number>();
+  if (rIds.length > 0) {
+    const { data: priorReroutes } = await db
+      .from("rgaios_audit_log")
+      .select("detail")
+      .eq("organization_id", orgId)
+      .eq("kind", "task_rerouted");
+    for (const a of (priorReroutes ?? []) as Array<{
+      detail: { routine_id?: string } | null;
+    }>) {
+      const rid = a.detail?.routine_id;
+      if (typeof rid === "string" && rIds.includes(rid)) {
+        rerouteCount.set(rid, (rerouteCount.get(rid) ?? 0) + 1);
+      }
+    }
+  }
+
+  const escalated = rows.filter(
+    (r) => (rerouteCount.get(r.routine_id) ?? 0) >= MAX_REROUTES,
+  );
+  for (const r of escalated) {
+    await db.from("rgaios_audit_log").insert({
+      organization_id: orgId,
+      kind: "task_escalated_to_human",
+      actor_type: "system",
+      actor_id: null,
+      detail: {
+        routine_id: r.routine_id,
+        title: r.routines?.title ?? "(untitled)",
+        reroute_count: rerouteCount.get(r.routine_id) ?? 0,
+        reason: "exceeded max auto-reroutes",
+      },
+    } as never);
+  }
+
+  return rows
+    .filter((r) => (rerouteCount.get(r.routine_id) ?? 0) < MAX_REROUTES)
+    .map((r) => ({
+      routineId: r.routine_id,
+      title: r.routines?.title ?? "(untitled)",
+      assigneeAgentId: r.routines?.assignee_agent_id ?? null,
+      assigneeName: r.routines?.assignee_agent_id
+        ? nameById.get(r.routines.assignee_agent_id) ?? "agent"
+        : "unassigned",
+      error: r.error ?? "",
+      output: r.output?.reply ?? "",
+      createdAt: r.created_at,
+    }));
 }
 
 /**

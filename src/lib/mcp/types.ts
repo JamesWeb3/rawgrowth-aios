@@ -14,6 +14,17 @@ export type ToolContext = {
    */
   userId?: string | null;
   /**
+   * The calling AGENT's rgaios_agents.id, when the call originates
+   * from an agent run or an agent-emitted command. In-process callers
+   * populate it (executor from the run's agent, execToolCall from the
+   * speaker, decideApproval from the stored approval row); the
+   * external bearer-token /api/mcp path leaves it null - that caller
+   * is an MCP client, not an agent. Tools that need to know "who is
+   * calling" - agent_message / agent_inbox / telegram_reply - read
+   * this as the default instead of forcing the model to name itself.
+   */
+  agentId?: string | null;
+  /**
    * Set by decideApproval when it re-executes an already-approved
    * tool: it short-circuits the callTool write-approval gate so an
    * approved call does not re-queue itself into rgaios_approvals.

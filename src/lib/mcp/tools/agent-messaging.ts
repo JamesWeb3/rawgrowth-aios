@@ -122,7 +122,12 @@ registerTool({
     },
   },
   handler: async (args, ctx) => {
-    const fromAgent = String(args.from_agent ?? "").trim();
+    // from_agent defaults to the calling agent: ToolContext now carries
+    // ctx.agentId for in-process agent calls (executor / execToolCall /
+    // approved re-exec), so the model no longer has to name itself -
+    // an explicit from_agent arg still wins when supplied.
+    const fromAgent =
+      String(args.from_agent ?? "").trim() || (ctx.agentId ?? "");
     const toAgent = String(args.to_agent ?? "").trim();
     const body = String(args.body ?? "").trim();
     const threadId =
@@ -131,7 +136,9 @@ registerTool({
         : String(args.thread_id).trim();
 
     if (!fromAgent || !toAgent || !body) {
-      return textError("from_agent, to_agent and body are required.");
+      return textError(
+        "to_agent and body are required (from_agent too, unless the call carries a calling-agent id).",
+      );
     }
     if (threadId !== "" && !UUID_RE.test(threadId)) {
       return textError(
@@ -224,11 +231,15 @@ registerTool({
     },
   },
   handler: async (args, ctx) => {
-    const agentRef = String(args.agent_id ?? "").trim();
+    // agent_id defaults to the calling agent: ToolContext now carries
+    // ctx.agentId for in-process agent calls, so the model no longer
+    // has to name itself - an explicit agent_id arg still wins.
+    const agentRef =
+      String(args.agent_id ?? "").trim() || (ctx.agentId ?? "");
     const unreadOnly = args.unread_only === true;
     if (!agentRef) {
       return textError(
-        "agent_id is required (the calling agent's UUID or unique name).",
+        "agent_id is required (the calling agent's UUID or unique name) unless the call carries a calling-agent id.",
       );
     }
 
