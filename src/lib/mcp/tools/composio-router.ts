@@ -330,6 +330,12 @@ const DESTRUCTIVE_ACTION_PATTERNS: RegExp[] = [
   /(?:^|[_\-])REMOVE(?:[_\-]|$)/i,
   /(?:^|[_\-])WIPE(?:[_\-]|$)/i,
   /(?:^|[_\-])TRUNCATE(?:[_\-]|$)/i,
+  // TRASH = Gmail's real delete verb (GMAIL_MOVE_TO_TRASH); REVOKE =
+  // credential/grant teardown (GITHUB_REVOKE_TOKEN, etc). Both are
+  // destructive and were missing - an injected email could drive
+  // GMAIL_MOVE_TO_TRASH past the old 7-verb list.
+  /(?:^|[_\-])TRASH(?:[_\-]|$)/i,
+  /(?:^|[_\-])REVOKE(?:[_\-]|$)/i,
 ];
 
 // ─── Tool: composio_use_tool (invoke) ───────────────────────────────
