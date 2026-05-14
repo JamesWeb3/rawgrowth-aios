@@ -1630,8 +1630,18 @@ function SystemBlock({
   }
 
   if (kind === "delegation") {
-    // Legacy DB-string delegation ("Delegated to ..."): no structured
-    // detail survives a reload, so render the text as a single node.
+    // Legacy DB-string delegation ("Delegated to <name>: <output>"):
+    // the structured detail does not survive a reload, so all we have
+    // is the flat string. Headline = "Delegated to <name>"; the
+    // delegated output collapses behind expand - NEVER dump the full
+    // dept-head reply inline, that buries the operator under a wall of
+    // text (operator caught this on the /chat surface, which always
+    // renders from the DB string).
+    const colonIdx = text.indexOf(":");
+    const head =
+      colonIdx > 0 && colonIdx < 60 ? text.slice(0, colonIdx) : "Delegation";
+    const body =
+      colonIdx > 0 && colonIdx < 60 ? text.slice(colonIdx + 1).trim() : text;
     return (
       <TimelineRow
         icon={ArrowRightLeft}
@@ -1642,13 +1652,15 @@ function SystemBlock({
         dataKind="delegation"
       >
         <StepHeadline
-          label={
-            <span className="text-[var(--brand-primary)]">Delegation</span>
-          }
+          label={<span className="text-[var(--brand-primary)]">{head}</span>}
         />
-        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
-          {text}
-        </p>
+        {body ? (
+          <StepDetail summary="View delegated output">
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+              {body}
+            </p>
+          </StepDetail>
+        ) : null}
       </TimelineRow>
     );
   }
@@ -1672,7 +1684,10 @@ function SystemBlock({
         </>
       );
     }
-    // Legacy history: no structured array, render the text as one node.
+    // Legacy history: no structured array survived the reload, just the
+    // flat "Commands executed: ..." string. Headline only; the body
+    // collapses behind expand so a reloaded orchestration turn does not
+    // dump every delegated output inline.
     return (
       <TimelineRow
         icon={Cpu}
@@ -1683,9 +1698,13 @@ function SystemBlock({
         dataKind="commands"
       >
         <StepHeadline label="Orchestration" />
-        <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-body)]">
-          {text}
-        </p>
+        {text ? (
+          <StepDetail summary="View orchestration detail">
+            <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-body)]">
+              {text}
+            </p>
+          </StepDetail>
+        ) : null}
       </TimelineRow>
     );
   }
