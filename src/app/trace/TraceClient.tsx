@@ -31,6 +31,8 @@ type Kind =
   | "approval_reviewed"
   | "telegram_inbound"
   | "chat_message"
+  | "thinking_emitted"
+  | "monitor_alert"
   | "audit";
 
 type Actor = { type: "agent" | "user" | "system"; id: string | null; name: string };
@@ -93,12 +95,29 @@ const KIND_META: Record<
     Icon: MessageCircle,
     chip: "bg-blue-500/10 text-blue-300",
   },
+  thinking_emitted: {
+    label: "Thinking",
+    Icon: CircleDot,
+    chip: "bg-violet-500/10 text-violet-300",
+  },
+  monitor_alert: {
+    label: "Monitor alert",
+    Icon: ShieldCheck,
+    chip: "bg-rose-500/15 text-rose-300",
+  },
   audit: {
     label: "Audit",
     Icon: Activity,
     chip: "bg-white/5 text-muted-foreground",
   },
 };
+
+// Defensive fallback so a new server-side kind never crashes the page.
+const FALLBACK_META = {
+  label: "Event",
+  Icon: Activity,
+  chip: "bg-white/5 text-muted-foreground",
+} as const;
 
 const WINDOW_OPTIONS = [5, 15, 30, 60] as const;
 const KIND_OPTIONS: { value: "all" | Kind; label: string }[] = [
@@ -111,6 +130,8 @@ const KIND_OPTIONS: { value: "all" | Kind; label: string }[] = [
   { value: "approval_reviewed", label: "Approval reviewed" },
   { value: "telegram_inbound", label: "Telegram" },
   { value: "chat_message", label: "Chat" },
+  { value: "thinking_emitted", label: "Thinking" },
+  { value: "monitor_alert", label: "Monitor alert" },
   { value: "audit", label: "Audit" },
 ];
 
@@ -253,7 +274,7 @@ export function TraceClient({
 
       <ol className="relative space-y-2">
         {items.map((it) => {
-          const meta = KIND_META[it.kind];
+          const meta = KIND_META[it.kind] ?? FALLBACK_META;
           const Icon = meta.Icon;
           const isOpen = expanded.has(it.sourceId);
           const summary = detailSummary(it.detail);
