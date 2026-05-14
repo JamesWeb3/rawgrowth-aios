@@ -88,7 +88,23 @@ export function tryDecryptSecret(value: string | null | undefined): string | nul
   if (!value) return null;
   try {
     return decryptSecret(value);
-  } catch {
+  } catch (err) {
+    // A bare null swallow makes "no secret stored" and "a real stored
+    // secret failed to decrypt" indistinguishable - so every caller
+    // (loadClaudeMaxTokenPool, the telegram webhook, crm-sync, the
+    // composio webhook) reports "not connected" when the truth is a
+    // key mismatch (JWT_SECRET rotated / differs between envs) or a
+    // tampered value. An unprefixed value is genuinely absent/legacy
+    // and returns null silently; a value carrying the enc:v1: prefix
+    // is a real stored secret, so a decrypt failure there is an
+    // actionable problem - log it loudly before returning null.
+    if (value.startsWith(PREFIX)) {
+      console.error(
+        `[crypto] tryDecryptSecret: a stored enc:v1: secret failed to ` +
+          `decrypt - likely JWT_SECRET mismatch between environments or ` +
+          `a tampered value, NOT an absent secret: ${(err as Error).message}`,
+      );
+    }
     return null;
   }
 }

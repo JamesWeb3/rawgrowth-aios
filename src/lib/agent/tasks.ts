@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { dispatchRun } from "@/lib/runs/dispatch";
 import { chatReply } from "@/lib/agent/chat";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
+import { extractThinking } from "@/lib/agent/thinking";
 
 /**
  * Chat-driven task creation. The agent ends a reply with one or more
@@ -409,6 +410,15 @@ export async function executeChatTask(input: {
 
   const completedAt = new Date().toISOString();
   if (result.ok) {
+    // Split the <thinking> block off the reply. The dashboard chat
+    // route does this, but the delegation pipeline never did - so
+    // executeChatTask stored and mirrored the RAW chatReply output,
+    // tag and all, leaking raw <thinking> XML into the assignee's
+    // chat thread and into every downstream reader of the run output.
+    // Persist visibleReply for display + thinking separately for
+    // /trace, same split the chat route applies.
+    const { thinking, visibleReply } = extractThinking(result.reply);
+
     // Log if the success update fails - leaving the run in pending
     // means the next schedule-tick may re-claim it and the chat tab
     // shows a stuck task. Caller doesn't currently react but at least
@@ -418,7 +428,11 @@ export async function executeChatTask(input: {
       .update({
         status: "succeeded",
         completed_at: completedAt,
-        output: { reply: result.reply, executed_inline: true },
+        output: {
+          reply: visibleReply,
+          thinking: thinking ?? null,
+          executed_inline: true,
+        },
       } as never)
       .eq("id", input.runId);
     if (upd.error) {
@@ -436,7 +450,7 @@ export async function executeChatTask(input: {
       agent_id: input.assigneeAgentId,
       user_id: null,
       role: "assistant",
-      content: `${input.title}\n\n${result.reply}`,
+      content: `${input.title}\n\n${visibleReply}`,
       metadata: {
         kind: "chat_task_output",
         run_id: input.runId,

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { composioAction } from "@/lib/mcp/proxy";
+import { extractThinking } from "@/lib/agent/thinking";
 
 /**
  * Atlas / dept-head JSON command extraction. The chat reply may include
@@ -875,12 +876,17 @@ async function execAgentInvoke(
           (runOutput?.reply as string | undefined) ??
           (runOutput?.text as string | undefined) ??
           "";
+        // Strip any <thinking> block before mirroring into the caller's
+        // thread. executeChatTask output is already clean, but the
+        // executeRun `text` path is not - a no-op on an already-clean
+        // string, so it is safe to apply unconditionally.
+        const summaryClean = extractThinking(summaryRaw).visibleReply;
         await db.from("rgaios_agent_chat_messages").insert({
           organization_id: orgId,
           agent_id: speakerId,
           user_id: null,
           role: "system",
-          content: `Delegated to ${resolved.name}: ${summaryRaw.slice(0, 800)}`,
+          content: `Delegated to ${resolved.name}: ${summaryClean.slice(0, 800)}`,
           metadata: {
             kind: "agent_invoke_completed",
             delegated_to: resolved.id,
@@ -917,11 +923,16 @@ async function execAgentInvoke(
   // from the polled run. This is what makes the orchestration "real" on
   // the operator's screen - the handoff card shows what the agent
   // produced, not just that a dispatch happened.
-  const delegatedOutput =
+  const delegatedOutputRaw =
     (runOutput?.summary as string | undefined) ??
     (runOutput?.reply as string | undefined) ??
     (runOutput?.text as string | undefined) ??
     null;
+  // Same <thinking>-strip as the caller-thread mirror above: the
+  // delegation card must never show a raw <thinking> block.
+  const delegatedOutput = delegatedOutputRaw
+    ? extractThinking(delegatedOutputRaw).visibleReply
+    : null;
   const delegationOk = finalStatus === "succeeded";
 
   // summary: on success, lead with the actual result so even the flat
