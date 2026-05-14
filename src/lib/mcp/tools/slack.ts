@@ -13,14 +13,17 @@ import { postMessage } from "@/lib/slack/client";
  * channel  -  hence this tool.
  *
  * Token resolution: the org's Slack bot token is stored encrypted in
- * rgaios_connections (provider_config_key='slack'). Single-org-per-VPS
- * means we just grab the one row.
+ * rgaios_connections (provider_config_key='slack'). The lookup is
+ * org-scoped on organization_id - supabaseAdmin() bypasses RLS, so an
+ * unscoped query would return an arbitrary org's row on any box that
+ * hosts more than one org (admin / self-hosted / hosted SaaS).
  */
 
-async function getBotToken(): Promise<string | null> {
+async function getBotToken(orgId: string): Promise<string | null> {
   const { data } = await supabaseAdmin()
     .from("rgaios_connections")
     .select("metadata")
+    .eq("organization_id", orgId)
     .eq("provider_config_key", "slack")
     .limit(1)
     .maybeSingle();
@@ -59,7 +62,7 @@ registerTool({
     if (!channel || !body) {
       return textError("channel_id and text are required");
     }
-    const token = await getBotToken();
+    const token = await getBotToken(ctx.organizationId);
     if (!token) {
       return textError(
         "Slack isn't installed for this organization. Connect it at /connections.",
