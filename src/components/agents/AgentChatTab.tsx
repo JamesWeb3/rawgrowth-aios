@@ -18,6 +18,7 @@ import {
   Palette,
   Paperclip,
   PhoneCall,
+  Sparkles,
   Wrench,
   X,
   type LucideIcon,
@@ -74,6 +75,23 @@ type HistoryRow = {
   created_at: string;
 };
 
+// A row as returned by GET /api/agents/[id]/chat - carries metadata so
+// the client can keep the proactive feed coherent across reloads.
+type ChatRow = {
+  id?: string;
+  role: string;
+  content: string;
+  created_at?: string;
+  metadata?: Record<string, unknown> | null;
+};
+
+// Which conversation the operator is looking at. "main" is the normal
+// operator <-> agent thread; "proactive" is the CEO agent's unprompted
+// feed (atlas-coordinate cron + insight anomalies) which is ALSO a
+// full interactive chat - the operator can reply there and the agent
+// answers with the same context pipeline.
+type ThreadId = "main" | "proactive";
+
 interface AgentChatTabProps {
   agentId: string;
   agentName?: string;
@@ -82,7 +100,10 @@ interface AgentChatTabProps {
   // SSR-loaded thread so the panel renders existing messages on first
   // paint instead of waiting on a useEffect fetch. Eliminates the
   // hydration race where Playwright reads bodyText before the client
-  // GET completes under load.
+  // GET completes under load. Note: the SSR query only selects
+  // {role, content} (no metadata), so it cannot tell main vs proactive
+  // rows apart - the client always reconciles via the GET on mount,
+  // which returns the authoritative split.
   initialMessages?: Array<{ role: string; content: string }>;
 }
 
@@ -225,6 +246,21 @@ function startersFor(role: string | null | undefined, title?: string): string[] 
   ];
 }
 
+// Narrow GET rows ({role, content, ...}) down to renderable
+// ChatMessages. Pure - module scope so it never lands in a hook's
+// dep array. Used to hydrate both the main and proactive threads.
+function toChatMessages(rows: ChatRow[]): ChatMessage[] {
+  return rows
+    .filter(
+      (m): m is ChatRow & { role: ChatMessage["role"] } =>
+        (m.role === "user" ||
+          m.role === "assistant" ||
+          m.role === "system") &&
+        typeof m.content === "string",
+    )
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
 /**
  * AgentChatTab
  *
@@ -248,7 +284,14 @@ export default function AgentChatTab({
   agentTitle,
   initialMessages = [],
 }: AgentChatTabProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+  // Which thread is on screen. Default "main" - the proactive feed is
+  // opt-in via the header toggle so it never clutters the operator's
+  // working conversation.
+  const [activeThread, setActiveThread] = useState<ThreadId>("main");
+  // Main operator thread. SSR seeds it on first paint (best-effort -
+  // see below; the GET on mount reconciles the real main/proactive
+  // split since SSR rows carry no metadata).
+  const [mainMessages, setMainMessages] = useState<ChatMessage[]>(() =>
     initialMessages
       .filter(
         (m): m is { role: ChatMessage["role"]; content: string } =>
@@ -257,12 +300,28 @@ export default function AgentChatTab({
       )
       .map((m) => ({ role: m.role, content: m.content })),
   );
+  // Proactive (CEO) thread - cron / insight rows + anything said in
+  // the proactive view. Always hydrated from the GET on mount.
+  const [proactiveMessages, setProactiveMessages] = useState<ChatMessage[]>([]);
+  // The visible thread's array + setter. Streaming closures capture
+  // these per-render, so a run started in one thread keeps writing to
+  // that thread even if the operator toggles away mid-stream.
+  const messages = activeThread === "main" ? mainMessages : proactiveMessages;
+  const setMessages =
+    activeThread === "main" ? setMainMessages : setProactiveMessages;
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   // Messages typed while a run is streaming. The operator can keep
   // sending mid-run; queued turns drain FIFO the moment `streaming`
-  // flips false (drain effect below).
-  const [queued, setQueued] = useState<string[]>([]);
+  // flips false (drain effect below). Each item carries its thread so
+  // a queued turn replays into the conversation it was typed in.
+  const [queued, setQueued] = useState<Array<{ text: string; thread: ThreadId }>>(
+    [],
+  );
+  // Which thread the in-flight run belongs to (null when idle). Lets
+  // the message list show the streaming indicator only on the thread
+  // that is actually running, even if the operator toggles away.
+  const [streamingThread, setStreamingThread] = useState<ThreadId | null>(null);
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(initialMessages.length > 0);
   const [dragActive, setDragActive] = useState(false);
@@ -282,22 +341,24 @@ export default function AgentChatTab({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // SSR seeds initialMessages on first paint. Skip the client GET when
-  // we already have rows, otherwise we'd burn a round-trip and overwrite
-  // the SSR-seeded state with the same data.
+  // SSR seeds initialMessages into the main thread for instant first
+  // paint, but it carries no metadata so it can't tell main vs
+  // proactive rows apart - so we ALWAYS run the client GET on mount to
+  // get the authoritative split (main `messages` + `proactiveMessages`)
+  // and reconcile both arrays. Any proactive rows that flashed inline
+  // from the SSR seed are corrected the moment this resolves.
   // AbortController on cleanup so fast page navigations (chat picker,
   // /agents/tree) actually CANCEL the in-flight history fetch instead
   // of letting it leak a stale 404 toast after unmount. Without abort,
   // navigating off mid-flight surfaces the prior page's 404 in console
   // (bug W8 #9).
   useEffect(() => {
-    if (initialMessages.length > 0) return;
     const ctrl = new AbortController();
     let cancelled = false;
     fetch(`/api/agents/${agentId}/chat`, { signal: ctrl.signal })
       .then(async (r) => {
         if (r.ok) {
-          return r.json().catch(() => ({ messages: [] }));
+          return r.json().catch(() => ({ messages: [], proactiveMessages: [] }));
         }
         if (!cancelled) {
           setError(
@@ -306,16 +367,20 @@ export default function AgentChatTab({
               : `Chat history fetch failed (${r.status})`,
           );
         }
-        return { messages: [] };
+        return { messages: [], proactiveMessages: [] };
       })
-      .then((data: { messages?: HistoryRow[] }) => {
-        if (cancelled) return;
-        const rows = Array.isArray(data.messages) ? data.messages : [];
-        setMessages(
-          rows.map((m) => ({ role: m.role, content: m.content })),
-        );
-        setHydrated(true);
-      })
+      .then(
+        (data: { messages?: ChatRow[]; proactiveMessages?: ChatRow[] }) => {
+          if (cancelled) return;
+          const main = Array.isArray(data.messages) ? data.messages : [];
+          const proactive = Array.isArray(data.proactiveMessages)
+            ? data.proactiveMessages
+            : [];
+          setMainMessages(toChatMessages(main));
+          setProactiveMessages(toChatMessages(proactive));
+          setHydrated(true);
+        },
+      )
       .catch((err: unknown) => {
         // AbortError on unmount is expected, never log/toast.
         if (cancelled) return;
@@ -326,8 +391,6 @@ export default function AgentChatTab({
       cancelled = true;
       ctrl.abort();
     };
-    // initialMessages reference is stable per agent (set from SSR prop).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
   // Auto-scroll on new content.
@@ -353,21 +416,35 @@ export default function AgentChatTab({
   // replay's own run settles.
   useEffect(() => {
     if (streaming || queued.length === 0) return;
-    void sendMessage(queued[0]);
+    const head = queued[0];
+    void sendMessage(head.text, head.thread);
     // sendMessage is a stable in-component closure recreated each
     // render; the drain only depends on streaming + queued.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, queued]);
 
-  async function sendMessage(override?: string) {
+  // `override` replays a queued turn (drain effect); `threadOverride`
+  // pins it to the thread it was typed in even if the operator has
+  // since toggled away. A fresh send with no override targets the
+  // currently-visible thread.
+  async function sendMessage(override?: string, threadOverride?: ThreadId) {
     const text = (override ?? input).trim();
     if (!text) return;
+    const turnThread: ThreadId = threadOverride ?? activeThread;
+    // Resolve the thread-specific state + setter ONCE so every closure
+    // below (stream loop, timers, finally) writes to the conversation
+    // this turn belongs to, regardless of what the operator toggles to
+    // mid-stream.
+    const threadMessages =
+      turnThread === "main" ? mainMessages : proactiveMessages;
+    const setThreadMessages =
+      turnThread === "main" ? setMainMessages : setProactiveMessages;
     // A run is already streaming - queue instead of dropping the turn.
     // `override` means the drain effect is replaying a queued turn;
     // never re-queue that or it would loop forever.
     if (streaming && override === undefined) {
       setInput("");
-      setQueued((q) => [...q, text]);
+      setQueued((q) => [...q, { text, thread: turnThread }]);
       return;
     }
     setError("");
@@ -376,16 +453,17 @@ export default function AgentChatTab({
     } else {
       // Drain replay - drop this turn from the head of the queue.
       // Guarded by head-equality so a stray re-fire is a no-op.
-      setQueued((q) => (q[0] === override ? q.slice(1) : q));
+      setQueued((q) => (q[0]?.text === override ? q.slice(1) : q));
     }
 
     const next: ChatMessage[] = [
-      ...messages,
+      ...threadMessages,
       { role: "user", content: text },
       { role: "assistant", content: THINKING_FRAMES[0] },
     ];
-    setMessages(next);
+    setThreadMessages(next);
     setStreaming(true);
+    setStreamingThread(turnThread);
 
     // Rotate the thinking-frame phrase in the trailing assistant
     // bubble every 2.5s so the chat doesn't feel frozen between POST
@@ -398,7 +476,7 @@ export default function AgentChatTab({
       if (!firstDelta) return;
       frame = (frame + 1) % THINKING_FRAMES.length;
       const phrase = THINKING_FRAMES[frame];
-      setMessages((prev) => {
+      setThreadMessages((prev) => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
         if (last && last.role === "assistant" && firstDelta) {
@@ -424,7 +502,11 @@ export default function AgentChatTab({
       const res = await fetch(`/api/agents/${agentId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: wireMessages }),
+        // `thread` tells the route which conversation to persist the
+        // turn + reply under. "main" turns stay untagged; "proactive"
+        // turns are tagged metadata.thread so GET groups them into the
+        // proactive feed. The reply pipeline is identical either way.
+        body: JSON.stringify({ messages: wireMessages, thread: turnThread }),
       });
 
       if (!res.ok || !res.body) {
@@ -461,7 +543,7 @@ export default function AgentChatTab({
               firstDelta = false;
               clearInterval(thinkingTimer);
             }
-            setMessages((prev) => {
+            setThreadMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
               if (last && last.role === "assistant") {
@@ -487,7 +569,7 @@ export default function AgentChatTab({
             setError(event.message || "Stream error");
           } else if (event.type === "thinking" && typeof event.brief === "string") {
             const brief = event.brief;
-            setMessages((prev) => {
+            setThreadMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
               const note: ChatMessage = {
@@ -510,7 +592,7 @@ export default function AgentChatTab({
             // "Running gmail" - streamed the moment a command starts,
             // before the slow call returns.
             const verb = event.verb;
-            setMessages((prev) => {
+            setThreadMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
               const note: ChatMessage = {
@@ -530,7 +612,7 @@ export default function AgentChatTab({
               (h): h is string => typeof h === "string",
             );
             const redactedText = typeof event.redactedText === "string" ? event.redactedText : null;
-            setMessages((prev) => {
+            setThreadMessages((prev) => {
               const copy = [...prev];
               // Replace the just-sent user message with the server's
               // redacted version so the bubble doesn't keep displaying
@@ -569,7 +651,7 @@ export default function AgentChatTab({
                   ? (r.detail as Record<string, unknown>)
                   : undefined,
             }));
-            setMessages((prev) => [
+            setThreadMessages((prev) => [
               ...prev,
               { role: "system", kind: "commands", content: "", commands },
             ]);
@@ -584,7 +666,7 @@ export default function AgentChatTab({
               title: string;
               assigneeName: string;
             }>).map((t) => `→ ${t.title} (${t.assigneeName})`).join("\n");
-            setMessages((prev) => [
+            setThreadMessages((prev) => [
               ...prev,
               {
                 role: "system",
@@ -604,7 +686,7 @@ export default function AgentChatTab({
       // is showing a rotating thinking-frame and never got real text,
       // so we drop it. Otherwise also handle the legacy empty-string
       // case for safety.
-      setMessages((prev) => {
+      setThreadMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant" && (firstDelta || !last.content.trim())) {
           return prev.slice(0, -1);
@@ -615,10 +697,11 @@ export default function AgentChatTab({
       const message =
         err instanceof Error ? err.message : "Something went wrong";
       setError(message);
-      setMessages((prev) => prev.slice(0, -1));
+      setThreadMessages((prev) => prev.slice(0, -1));
     } finally {
       clearInterval(thinkingTimer);
       setStreaming(false);
+      setStreamingThread(null);
     }
   }
 
@@ -701,15 +784,65 @@ export default function AgentChatTab({
         </div>
       )}
 
-      {/* Chat header strip - thread controls */}
+      {/* Chat header strip - thread toggle + thread controls. The
+          Main | Proactive (CEO) toggle keeps the agent's unprompted
+          feed (atlas-coordinate cron + insight anomalies) in its own
+          interactive thread so it never clutters the operator's
+          working conversation. Default view is Main. */}
       {hydrated && (
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--line)] bg-[var(--brand-surface)]/40 px-4 py-2">
-          <span className="text-[11px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
-            {messages.length === 0
-              ? "New chat"
-              : `${messages.length} message${messages.length === 1 ? "" : "s"} in this thread`}
-          </span>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--brand-surface)]/40 px-4 py-2">
           <div className="flex items-center gap-2">
+            {/* Two-state segmented toggle. Switching swaps the whole
+                conversation; the run streaming in the other thread
+                keeps going (its closure pinned the thread). */}
+            <div className="inline-flex rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] p-0.5">
+              <button
+                type="button"
+                onClick={() => setActiveThread("main")}
+                className={
+                  "rounded px-2 py-0.5 text-[11px] transition-colors " +
+                  (activeThread === "main"
+                    ? "bg-[var(--brand-primary)]/12 text-[var(--brand-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-body)]")
+                }
+              >
+                Main
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveThread("proactive")}
+                className={
+                  "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors " +
+                  (activeThread === "proactive"
+                    ? "bg-[var(--brand-primary)]/12 text-[var(--brand-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-body)]")
+                }
+              >
+                <Sparkles className="h-3 w-3" />
+                Proactive (CEO)
+                {proactiveMessages.length > 0 && (
+                  <span className="rounded-full bg-[var(--brand-primary)]/15 px-1 text-[9px] font-medium text-[var(--brand-primary)]">
+                    {proactiveMessages.length}
+                  </span>
+                )}
+              </button>
+            </div>
+            <span className="hidden text-[11px] uppercase tracking-[1.5px] text-[var(--text-muted)] sm:inline">
+              {messages.length === 0
+                ? "New chat"
+                : `${messages.length} message${messages.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeThread === "proactive" && (
+              <button
+                type="button"
+                onClick={() => setActiveThread("main")}
+                className="inline-flex h-6 items-center gap-1 rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface)] px-2 text-[11px] text-[var(--text-body)] hover:border-[var(--brand-primary)]/50 hover:text-[var(--brand-primary)]"
+              >
+                Go to main chat
+              </button>
+            )}
             <button
               type="button"
               onClick={async () => {
@@ -728,8 +861,15 @@ export default function AgentChatTab({
                   }
                   const j = (await r.json().catch(() => ({}))) as {
                     messages?: HistoryRow[];
+                    proactiveMessages?: HistoryRow[];
                   };
-                  setHistoryRows(j.messages ?? []);
+                  // History shows the archived rows of whichever thread
+                  // is on screen.
+                  setHistoryRows(
+                    (activeThread === "proactive"
+                      ? j.proactiveMessages
+                      : j.messages) ?? [],
+                  );
                 } catch (err) {
                   setError((err as Error).message);
                 } finally {
@@ -746,7 +886,12 @@ export default function AgentChatTab({
                 onClick={async () => {
                   if (!confirm("Start a new chat? Past messages are archived (visible via History) - never deleted.")) return;
                   try {
-                    await fetch(`/api/agents/${agentId}/chat`, { method: "DELETE" });
+                    // Per-thread archive - "+ New chat" in Main never
+                    // touches the proactive feed and vice versa.
+                    await fetch(
+                      `/api/agents/${agentId}/chat?thread=${activeThread}`,
+                      { method: "DELETE" },
+                    );
                     setMessages([]);
                     setInput("");
                     setError("");
@@ -847,10 +992,14 @@ export default function AgentChatTab({
               </div>
               <div>
                 <p className="font-serif text-xl tracking-tight text-foreground">
-                  Ask {displayName} anything
+                  {activeThread === "proactive"
+                    ? `Proactive feed with ${displayName}`
+                    : `Ask ${displayName} anything`}
                 </p>
                 <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  Or drop a file to add it to memory.
+                  {activeThread === "proactive"
+                    ? "Unprompted updates land here. Reply to debate the angle - the CEO answers with full context."
+                    : "Or drop a file to add it to memory."}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-1">
@@ -888,7 +1037,11 @@ export default function AgentChatTab({
               <Bubble
                 key={i}
                 message={msg}
-                streaming={streaming && i === messages.length - 1}
+                streaming={
+                  streaming &&
+                  streamingThread === activeThread &&
+                  i === messages.length - 1
+                }
                 RoleIcon={RoleIcon}
                 railTop={onRail && prevOnRail}
                 railBottom={onRail && nextOnRail}
@@ -922,7 +1075,10 @@ export default function AgentChatTab({
                   className="inline-flex items-center gap-1 rounded-full border border-[var(--line-strong)] bg-[var(--brand-surface)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]"
                 >
                   <Clock className="h-3 w-3 shrink-0" />
-                  <span className="max-w-[220px] truncate">{q}</span>
+                  {q.thread === "proactive" && (
+                    <Sparkles className="h-3 w-3 shrink-0 text-[var(--brand-primary)]" />
+                  )}
+                  <span className="max-w-[220px] truncate">{q.text}</span>
                   <button
                     type="button"
                     aria-label="Remove queued message"
@@ -975,7 +1131,9 @@ export default function AgentChatTab({
                   ? "Uploading file..."
                   : streaming
                     ? "Type ahead - queues until the run finishes..."
-                    : "Talk to this agent..."
+                    : activeThread === "proactive"
+                      ? "Reply in the proactive thread..."
+                      : "Talk to this agent..."
               }
               disabled={uploading}
               className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-[var(--text-muted)] outline-none disabled:opacity-60"

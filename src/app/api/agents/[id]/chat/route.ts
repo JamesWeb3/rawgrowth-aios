@@ -274,6 +274,29 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
   }
 }
 
+// Proactive-thread classification. The agent writes unprompted rows
+// into the SAME rgaios_agent_chat_messages table as the operator
+// conversation:
+//   - the atlas-coordinate cron → metadata.kind = "atlas_coordinate"
+//   - the insights generator   → metadata.kind = "proactive_anomaly"
+// Rendering those inline made the operator's thread noisy ("fica
+// confundindo a conversa"). They now live in a SEPARATE interactive
+// thread. A row belongs to the proactive thread when EITHER its
+// metadata.kind is one of those proactive kinds OR it was explicitly
+// tagged metadata.thread = "proactive" (operator turns + the CEO's
+// replies sent from the proactive view). Everything else is the main
+// operator thread.
+const PROACTIVE_KINDS = new Set(["atlas_coordinate", "proactive_anomaly"]);
+
+function isProactiveRow(row: {
+  metadata?: Record<string, unknown> | null;
+}): boolean {
+  const meta = row.metadata ?? {};
+  const kind = typeof meta.kind === "string" ? meta.kind : "";
+  if (PROACTIVE_KINDS.has(kind)) return true;
+  return meta.thread === "proactive";
+}
+
 /**
  * GET /api/agents/[id]/chat
  *
@@ -281,6 +304,12 @@ async function maybePromoteInsightQueue(orgId: string, agentId: string) {
  * so the client can render top-to-bottom without flipping). Used to
  * hydrate AgentChatTab on first mount so refreshing the panel keeps
  * the conversation visible.
+ *
+ * The read is SPLIT into two threads (see isProactiveRow): the main
+ * operator conversation is returned as `messages`, and the proactive
+ * thread (cron / insight rows + anything the operator and CEO said in
+ * the proactive view) is returned as a separate `proactiveMessages`
+ * array of the same row shape. The archived filter applies to both.
  */
 export async function GET(
   _req: NextRequest,
@@ -325,8 +354,19 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const messages = [...(data ?? [])].reverse();
-  return NextResponse.json({ messages });
+  // Oldest-first so the client renders top-to-bottom. Then split the
+  // two threads: proactive rows (cron / insight + thread-tagged) go to
+  // `proactiveMessages`, everything else stays in `messages`.
+  const ordered = [...(data ?? [])].reverse() as Array<{
+    id: string;
+    role: string;
+    content: string;
+    created_at: string;
+    metadata: Record<string, unknown> | null;
+  }>;
+  const messages = ordered.filter((r) => !isProactiveRow(r));
+  const proactiveMessages = ordered.filter((r) => isProactiveRow(r));
+  return NextResponse.json({ messages, proactiveMessages });
 }
 
 /**
@@ -337,6 +377,11 @@ export async function GET(
  * raw history is still in rgaios_agent_chat_messages and can be
  * restored / surfaced later. Memory tab + extracted chat_memory rows
  * are untouched.
+ *
+ * Per-thread: `?thread=proactive` archives ONLY the proactive thread
+ * (cron / insight rows + thread-tagged turns); the default archives
+ * ONLY the main operator thread. Starting a fresh main chat must not
+ * wipe the proactive feed and vice versa.
  */
 export async function DELETE(
   _req: NextRequest,
@@ -366,6 +411,10 @@ export async function DELETE(
   // metadata, write back. metadata is jsonb so we can carry an archive
   // marker without a schema migration. Parallelize the per-row updates -
   // sequential awaits made "+ New chat" lag noticeably with 30+ messages.
+  const thread =
+    new URL(_req.url).searchParams.get("thread") === "proactive"
+      ? "proactive"
+      : "main";
   const { data: rows } = await db
     .from("rgaios_agent_chat_messages")
     .select("id, metadata")
@@ -373,7 +422,13 @@ export async function DELETE(
     .eq("agent_id", agentId)
     .or("metadata->>archived.is.null,metadata->>archived.eq.false");
   const stamp = new Date().toISOString();
-  const typedRows = (rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>;
+  // Only archive rows in the requested thread - main "+ New chat" must
+  // not nuke the proactive feed, and vice versa.
+  const typedRows = (
+    (rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>
+  ).filter((r) =>
+    thread === "proactive" ? isProactiveRow(r) : !isProactiveRow(r),
+  );
   const settled = await Promise.all(
     typedRows.map(async (r): Promise<{ id: string; ok: boolean; error?: string }> => {
       const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
@@ -467,12 +522,27 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: { messages?: IncomingMessage[] };
+  let body: { messages?: IncomingMessage[]; thread?: string };
   try {
-    body = (await req.json()) as { messages?: IncomingMessage[] };
+    body = (await req.json()) as {
+      messages?: IncomingMessage[];
+      thread?: string;
+    };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  // Which thread this turn belongs to. "proactive" turns (operator
+  // replies sent from the Proactive (CEO) view) + their resulting
+  // assistant reply + every system row written for the turn get
+  // tagged metadata.thread = "proactive" so GET groups them into the
+  // proactive feed. The reply pipeline (preamble / memory / RAG) is
+  // IDENTICAL either way - only the persistence tag differs.
+  const thread = body.thread === "proactive" ? "proactive" : "main";
+  // Merge the thread tag into any metadata object we persist this
+  // turn. For the main thread it's a no-op (untagged = main) so we
+  // keep rows lean.
+  const withThread = <T extends Record<string, unknown>>(meta: T): T =>
+    thread === "proactive" ? ({ ...meta, thread } as T) : meta;
   const incoming = Array.isArray(body.messages) ? body.messages : [];
   const userTurns = incoming.filter(
     (m): m is { role: "user" | "assistant"; content: string } =>
@@ -522,6 +592,9 @@ export async function POST(
       user_id: userId,
       role: "user",
       content: lastContent,
+      ...(thread === "proactive"
+        ? { metadata: { thread } }
+        : {}),
     } as never);
   if (userInsert.error) {
     console.error("[chat] user insert failed:", userInsert.error.message);
@@ -696,7 +769,7 @@ export async function POST(
             user_id: null,
             role: "system",
             content: result.error,
-            metadata: { kind: "chat_reply_failed" },
+            metadata: withThread({ kind: "chat_reply_failed" }),
           } as never);
           // Also log to audit_log so the connections page health probe
           // can detect a stale Claude Max token without burning a real
@@ -737,10 +810,10 @@ export async function POST(
               user_id: null,
               role: "system",
               content: `Thinking: ${brief}`,
-              metadata: {
+              metadata: withThread({
                 kind: "chat_thinking",
                 source: extractedThinking.thinking ? "agent" : "heuristic",
-              },
+              }),
             } as never);
             await db.from("rgaios_audit_log").insert({
               organization_id: orgId,
@@ -912,7 +985,7 @@ export async function POST(
                     user_id: null,
                     role: "system",
                     content: `Thinking: ${pass2Thinking.thinking}`,
-                    metadata: { kind: "chat_thinking", source: "agent", step: "observation" },
+                    metadata: withThread({ kind: "chat_thinking", source: "agent", step: "observation" }),
                   } as never);
                 } catch {}
               }
@@ -953,7 +1026,7 @@ export async function POST(
                   user_id: null,
                   role: "assistant",
                   content: `I need: ${n.text}. Paste it in this chat or use Data Entry.`,
-                  metadata: { kind: "data_ask", scope: n.scope } as never,
+                  metadata: withThread({ kind: "data_ask", scope: n.scope }) as never,
                 } as never),
               ),
             );
@@ -1057,10 +1130,10 @@ export async function POST(
               user_id: null,
               role: "system",
               content: `Commands executed:\n${summary}`,
-              metadata: {
+              metadata: withThread({
                 kind: "chat_commands_executed",
                 results: commandResults,
-              } as never,
+              }) as never,
             } as never);
           } catch (err) {
             console.warn(
@@ -1083,7 +1156,7 @@ export async function POST(
             user_id: null,
             role: "assistant",
             content: visibleText,
-            metadata: persistMetadata,
+            metadata: withThread(persistMetadata),
           } as never);
         if (assistantInsert.error) {
           console.error(
