@@ -145,12 +145,18 @@ export async function extractAndCreateTasks(input: {
   // returned rows when given an array - we rely on that for the
   // routineId correlation below. If the whole batch fails, fall back
   // to per-row inserts so one bad payload can't lose every task.
+  // kind='delegation': <task> blocks are one-shot delegations, not
+  // automated workflows - they carry no trigger. Tagging them keeps the
+  // /routines list scoped to real routines (listRoutinesForOrg filters
+  // to kind='workflow'); the work is still surfaced via the Tasks tab,
+  // which reads rgaios_routine_runs directly.
   const routineRows = pending.map((p) => ({
     organization_id: orgId,
     title: p.title,
     description: p.description,
     assignee_agent_id: p.assignee.id,
     status: "active",
+    kind: "delegation",
   }));
   const routineIds: (string | null)[] = new Array(pending.length).fill(null);
   const { data: insertedRoutines, error: batchRoutineErr } = await db
@@ -345,9 +351,23 @@ export async function executeChatTask(input: {
     .update({ status: "running", started_at: startedAt } as never)
     .eq("id", input.runId)
     .eq("status", "pending")
-    .select("id")
+    .select("id, routine_id")
     .maybeSingle();
   if (!claimed) return;
+
+  // Stamp the routine's last_run_at. This inline chat-task path does NOT
+  // go through runs/queries.ts claimRun (the executor's chokepoint that
+  // bumps last_run_at), so without this every chat-task routine showed
+  // "Last run: Never" even after it ran - half of Chris's /routines bug.
+  // why here: this is the one spot every inline chat-task execution
+  // passes through after winning the claim, so it can't double-stamp.
+  const claimedRoutineId = (claimed as { routine_id?: string }).routine_id;
+  if (claimedRoutineId) {
+    await db
+      .from("rgaios_routines")
+      .update({ last_run_at: startedAt } as never)
+      .eq("id", claimedRoutineId);
+  }
 
   // Pull org name + assignee details
   const { data: org } = await db

@@ -559,6 +559,12 @@ async function execAgentInvoke(
   // reply against this task description and stores the output. Same
   // shape rgaios_routines + rgaios_routine_runs use, so the Tasks tab
   // surfaces it identically.
+  //
+  // kind='delegation': this is a one-shot delegation artifact, not an
+  // automated workflow (no trigger). Tagging it keeps it out of the
+  // /routines list (listRoutinesForOrg filters to kind='workflow') so
+  // delegation churn doesn't drown the real routines. Still visible via
+  // the Tasks tab, which queries rgaios_routine_runs directly.
   const { data: routine, error: rErr } = await db
     .from("rgaios_routines")
     .insert({
@@ -567,6 +573,7 @@ async function execAgentInvoke(
       description: taskText.slice(0, 4000),
       assignee_agent_id: resolved.id,
       status: "active",
+      kind: "delegation",
     } as never)
     .select("id")
     .single();

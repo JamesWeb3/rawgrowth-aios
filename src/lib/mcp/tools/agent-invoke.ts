@@ -73,6 +73,10 @@ registerTool({
 
     let routineId = (routine as { id?: string } | null)?.id ?? null;
     if (!routineId) {
+      // kind='delegation': this is a delegation holder, not an automated
+      // workflow - it has no trigger. Keeps it off the /routines list
+      // (listRoutinesForOrg filters to kind='workflow'); run history is
+      // still reachable via the Tasks tab / runs queries.
       const { data: created, error } = await db
         .from("rgaios_routines")
         .insert({
@@ -82,6 +86,7 @@ registerTool({
             "Auto-created by agent_invoke. Holds direct manager→sub-agent delegations so their run history stays grouped.",
           assignee_agent_id: agentId,
           status: "active",
+          kind: "delegation",
         })
         .select("id")
         .single();
