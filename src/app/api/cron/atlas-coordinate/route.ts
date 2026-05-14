@@ -61,6 +61,29 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // Content-dedup: even past the 14-min window, don't re-post an
+      // IDENTICAL coordination state. A persistent unchanged state (same
+      // stale insights, same failed runs) was spamming the operator with
+      // a verbatim "Coordination check" every 15 min. We compare the
+      // `counts` snapshot against the most recent atlas_coordinate msg;
+      // if nothing moved AND it was posted within the last 60 min, skip.
+      // State change OR a 60-min refresh window still gets a fresh post.
+      const { data: lastCoord } = await db
+        .from("rgaios_agent_chat_messages")
+        .select("created_at, metadata")
+        .eq("organization_id", orgId)
+        .filter("metadata->>kind", "eq", "atlas_coordinate")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const lastCounts = (
+        (lastCoord?.metadata as { counts?: Record<string, number> } | null)
+          ?.counts ?? null
+      );
+      const lastCoordAtMs = lastCoord?.created_at
+        ? Date.parse(lastCoord.created_at)
+        : 0;
+
       // Atlas (CEO).
       const { data: ceo } = await db
         .from("rgaios_agents")
@@ -234,6 +257,28 @@ export async function GET(req: NextRequest) {
           : "Nothing in flight. I'll re-check in 15.",
       );
 
+      const nextCounts = {
+        openRuns,
+        failedRuns: failedRuns.length,
+        pendingApprovals,
+        pendingInsights: pendingInsights.length,
+        queuedInsights,
+      };
+      // Skip a verbatim re-post: same counts as last time AND last post
+      // was under 60 min ago. Unchanged state surfaces at most hourly.
+      const SIXTY_MIN_MS = 60 * 60 * 1000;
+      const countsUnchanged =
+        lastCounts !== null &&
+        JSON.stringify(lastCounts) === JSON.stringify(nextCounts);
+      if (
+        countsUnchanged &&
+        lastCoordAtMs > 0 &&
+        Date.now() - lastCoordAtMs < SIXTY_MIN_MS
+      ) {
+        results.push({ org: orgId, name: o.name, skipped: "unchanged" });
+        continue;
+      }
+
       const content = lines.join("\n");
       const ticketInsert = await db.from("rgaios_agent_chat_messages").insert({
         organization_id: orgId,
@@ -243,13 +288,7 @@ export async function GET(req: NextRequest) {
         content,
         metadata: {
           kind: "atlas_coordinate",
-          counts: {
-            openRuns,
-            failedRuns: failedRuns.length,
-            pendingApprovals,
-            pendingInsights: pendingInsights.length,
-            queuedInsights,
-          },
+          counts: nextCounts,
         },
       } as never);
 

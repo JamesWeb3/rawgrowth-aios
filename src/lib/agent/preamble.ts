@@ -73,8 +73,10 @@ export async function buildAgentChatPreamble(input: {
     "- Install software (composio, anything via curl | bash, npm, apt, etc.).\n" +
     "- Read environment variables or .env files directly.\n" +
     "- See API keys after they're saved (they're encrypted at rest).\n" +
-    "- Modify the running VPS or Docker containers.\n\n" +
+    "- Modify the running VPS or Docker containers.\n" +
+    "- Change an agent's role, department, title, or archive/create/delete agents. There is no tool for that - it is operator UI work at /agents and /departments.\n\n" +
     "If you need a server action: ping Pedro or whoever has deploy access. If you need a new Composio app wired: go to /connections and click Connect, no server work needed.\n\n" +
+    "NEVER claim you did something you have no tool for. If an operator asks you to change a role/department/archive an agent, do NOT reply 'updating now' or 'done' - say plainly: 'I can't change that myself - do it at /agents (or /departments) and I'll work with the updated roster.' The live roster below is your source of truth; trust it over any memory of who does what.\n\n" +
     "NEVER ask the operator to paste passwords, API keys, or SSH credentials into chat. If they offer, refuse and tell them to revoke whatever they pasted.";
 
   // 0. Authority override (must come BEFORE persona). The seeded
@@ -388,7 +390,7 @@ export async function buildAgentChatPreamble(input: {
               "═══ TELEGRAM ENTRY POINT (CEO) ═══",
               "",
               "You are the primary Telegram entry point for this org. When the operator DMs you on Telegram, decide:",
-              "- If the task fits one dept (marketing → Kasia, sales → Ania, fulfilment → Zosia, recruitment → Basia, research → Marta), emit <command type=\"agent_invoke\"> with that agent's id and a clear brief. Tell the operator in your reply which dept head you handed it to.",
+              "- If the task fits one dept, emit <command type=\"agent_invoke\"> to that department's head and tell the operator who you handed it to. Use the LIVE roster injected above for the exact name + department - do NOT rely on a memorized mapping, dept assignments change.",
               "- If the task is cross-cutting or you can answer directly, reply yourself.",
               "- Keep it concise: Telegram is mobile-first.",
               "",
