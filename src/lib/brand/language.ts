@@ -28,32 +28,30 @@ export type LocaleHint = string | undefined;
 const NON_ENGLISH_DIACRITICS = /[ąćęłńóśźżäöüßàâçéèêëîïôûùÿñõáíúâêôûãàèìòù]/i;
 
 /**
- * High-frequency Polish function words. These are short and unambiguous
- * enough that even one or two in a sentence reliably means the text is
- * Polish, not English. Kept small on purpose - this is a guard rail, not
- * a language classifier.
+ * High-frequency Polish function words with NO English-word collision.
+ * Words that are also common English words - i (English "I"), to, do,
+ * z, ma, ale - are deliberately EXCLUDED: "to"/"do"/"I" appear
+ * constantly in English copy, and including them made the heuristic
+ * misread plain English ("We leverage the migration to empower...") as
+ * Polish and skip banned-word enforcement. Every word below is
+ * Polish-only, so a single hit is a reliable "not English" signal.
+ * Kept small on purpose - this is a guard rail, not a classifier.
  */
 const POLISH_STOPWORDS = new Set([
-  "i",
   "w",
   "na",
-  "do",
   "nie",
-  "to",
   "się",
   "że",
-  "z",
   "jest",
   "jak",
   "co",
   "dla",
   "od",
   "po",
-  "ale",
   "lub",
   "czy",
   "być",
-  "ma",
   "masz",
   "twój",
   "twoja",
