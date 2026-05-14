@@ -436,6 +436,8 @@ export async function buildAgentChatPreamble(input: {
           "  </task>",
           "",
           "Do NOT dispatch tasks for things YOU can answer (questions, summaries, opinions). Do NOT delegate cross-team coordination back to a single head when it spans depts - that's YOUR job.",
+          "",
+          "EXCEPTION - explicit operator delegation overrides your judgment: when the operator literally names an agent AND says delegate / dispatch / agent_invoke / ask <Name> to / send to <Name>, you MUST emit the agent_invoke command to that exact agent, even if the task looks trivial enough to answer yourself. The operator chose to route it - they may be testing the pipeline or have context you don't. Comply, then optionally note 'this was simple enough I could have answered directly'.",
         ].join("\n");
 
       // Active manager loop: CEO chases its own delegations instead of
