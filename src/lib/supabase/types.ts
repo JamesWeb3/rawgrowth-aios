@@ -891,6 +891,7 @@ export type Database = {
           description: string | null;
           assignee_agent_id: string | null;
           status: string;
+          kind: string;
           last_run_at: string | null;
           created_at: string;
           updated_at: string;
@@ -902,6 +903,7 @@ export type Database = {
           description?: string | null;
           assignee_agent_id?: string | null;
           status?: string;
+          kind?: string;
           last_run_at?: string | null;
           created_at?: string;
           updated_at?: string;

@@ -19,10 +19,17 @@ export async function listRoutinesForOrg(
   organizationId: string,
 ): Promise<Routine[]> {
   const db = supabaseAdmin();
+  // Only real automated workflows surface on /routines. kind='delegation'
+  // rows are one-shot chat delegation artifacts (created by
+  // agent-commands.ts execAgentInvoke + tasks.ts extractAndCreateTasks);
+  // they have no trigger and would otherwise drown the list - Chris's
+  // "161 routines, 157 active, mostly Last run: Never" bug. They stay
+  // visible via the Tasks tab, which queries rgaios_routine_runs.
   const { data: routines, error: rErr } = await db
     .from("rgaios_routines")
     .select("*")
     .eq("organization_id", organizationId)
+    .eq("kind", "workflow")
     .order("created_at", { ascending: false });
   if (rErr) throw new Error(`listRoutines: ${rErr.message}`);
   if (!routines || routines.length === 0) return [];
