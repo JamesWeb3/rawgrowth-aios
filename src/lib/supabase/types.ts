@@ -156,6 +156,7 @@ export type Database = {
           department: string | null;
           is_department_head: boolean;
           system_prompt: string | null;
+          max_tokens: number | null;
         };
         Insert: {
           id?: string;
@@ -175,6 +176,7 @@ export type Database = {
           department?: string | null;
           is_department_head?: boolean;
           system_prompt?: string | null;
+          max_tokens?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_agents"]["Row"]>;
         Relationships: [];

@@ -74,6 +74,10 @@ export async function PATCH(
       budget_monthly_usd: "budgetMonthlyUsd",
       write_policy: "writePolicy",
       spent_monthly_usd: "spentMonthlyUsd",
+      // Per-agent reasoning token budget (migration 0074). Accepted on
+      // the wire as either max_tokens or maxTokens; normalized to
+      // maxTokens here so updateAgent's patch keys stay camelCase.
+      max_tokens: "maxTokens",
     };
     const patch: Record<string, unknown> = { ...raw };
     for (const [snake, camel] of Object.entries(SNAKE_TO_CAMEL)) {

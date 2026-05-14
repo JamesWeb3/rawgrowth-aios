@@ -76,6 +76,11 @@ export async function updateAgent(
     dbPatch.system_prompt =
       (patch as { systemPrompt: string | null }).systemPrompt || null;
   }
+  if (patch.maxTokens !== undefined) {
+    // null = "use the global default reasoning budget"; a number is the
+    // per-agent max_tokens override the Settings tab sets (32k / 64k).
+    dbPatch.max_tokens = patch.maxTokens;
+  }
 
   const { data, error } = await supabaseAdmin()
     .from("rgaios_agents")

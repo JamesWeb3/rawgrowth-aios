@@ -499,15 +499,21 @@ export async function POST(
   const db = supabaseAdmin();
 
   // Cross-tenant guard. Persona + RAG happen inside buildAgentChatPreamble.
+  // max_tokens is the per-agent reasoning budget (migration 0074); null
+  // means "use chatReply's DEFAULT_MAX_TOKENS".
   const { data: agent } = await db
     .from("rgaios_agents")
-    .select("id, department")
+    .select("id, department, max_tokens")
     .eq("id", agentId)
     .eq("organization_id", orgId)
     .maybeSingle();
   if (!agent) {
     return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   }
+  // Per-agent max_tokens override. When null we pass nothing so chatReply
+  // falls back to its own DEFAULT_MAX_TOKENS.
+  const agentMaxTokens =
+    (agent as { max_tokens: number | null }).max_tokens ?? undefined;
   // Per-dept ACL. Marketing-only invitee can't POST chat to a sales
   // agent even if they guess the id.
   const allowed = await isDepartmentAllowed(
@@ -754,6 +760,9 @@ export async function POST(
           // Dashboard chat has no MCP tool drain - swap "always handoff"
           // for "answer from injected context" in the persona preamble.
           noHandoff: true,
+          // Per-agent reasoning budget (migration 0074). undefined when
+          // the agent has no override - chatReply uses DEFAULT_MAX_TOKENS.
+          maxTokens: agentMaxTokens,
           // Pool rotation: try caller's own claude-max bucket before
           // borrowing other org members' buckets on 429.
           callerUserId: userId,
@@ -964,6 +973,8 @@ export async function POST(
                 "Then write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' (the work is done). Do NOT emit new <command> blocks.\n\n" +
                 resultsBlock,
               noHandoff: true,
+              // Same per-agent reasoning budget as pass 1.
+              maxTokens: agentMaxTokens,
               callerUserId: userId,
             });
             if (pass2.ok && pass2.reply.trim()) {

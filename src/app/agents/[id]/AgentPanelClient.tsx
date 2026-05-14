@@ -126,6 +126,7 @@ type Agent = {
   system_prompt?: string | null;
   budget_monthly_usd?: number | null;
   spent_monthly_usd?: number | null;
+  max_tokens?: number | null;
   updated_at?: string | null;
 };
 
@@ -217,6 +218,11 @@ export function AgentPanelClient({
     agent.description ?? "",
   );
   const [draftRuntime, setDraftRuntime] = useState(agent.runtime ?? "");
+  // Per-agent reasoning token budget. "" = use the global default;
+  // otherwise a stringified ceiling ("32768" / "65536").
+  const [draftMaxTokens, setDraftMaxTokens] = useState(
+    agent.max_tokens != null ? String(agent.max_tokens) : "",
+  );
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [tgOpen, setTgOpen] = useState(false);
@@ -291,6 +297,10 @@ export function AgentPanelClient({
           runtime: draftRuntime,
           systemPrompt: draftSystemPrompt,
           budgetMonthlyUsd: Number(draftBudget) || 0,
+          // "" = clear the override (null = global default), else the
+          // chosen ceiling. Sent as maxTokens so the PATCH route maps
+          // it straight through.
+          maxTokens: draftMaxTokens ? Number(draftMaxTokens) : null,
         }),
       });
       if (!res.ok) {
@@ -901,6 +911,23 @@ export function AgentPanelClient({
                   />
                   <p className="mt-1 text-[11px] text-[var(--text-muted)]">
                     Spent: ${(agent.spent_monthly_usd ?? 0).toFixed(2)} this month
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-[11px] uppercase tracking-widest text-[var(--text-muted)]">
+                    Reasoning token budget
+                  </label>
+                  <select
+                    value={draftMaxTokens}
+                    onChange={(e) => setDraftMaxTokens(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-[var(--line-strong)] bg-[var(--brand-surface-2)] px-3 py-2 text-sm text-[var(--text-strong)]"
+                  >
+                    <option value="">Default</option>
+                    <option value="32768">32k (32768)</option>
+                    <option value="65536">64k (65536)</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                    Output ceiling per reply. Default uses the global 32k.
                   </p>
                 </div>
               </div>
