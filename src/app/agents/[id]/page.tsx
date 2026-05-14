@@ -174,7 +174,9 @@ export default async function AgentDetailPage({
     ...(r as Record<string, unknown>),
     routine_title: titleById.get((r as { routine_id: string }).routine_id) ?? null,
   }));
-  const fired = new Set(taggedRuns.map((r) => (r as { routine_id: string }).routine_id));
+  const fired = new Set(
+    taggedRuns.map((r) => (r as unknown as { routine_id: string }).routine_id),
+  );
   const placeholders = (assignedRoutines ?? [])
     .filter((r) => !fired.has((r as { id: string }).id))
     .map((r) => ({
@@ -223,7 +225,11 @@ export default async function AgentDetailPage({
     <AgentPanelClient
       agent={agent as unknown as Parameters<typeof AgentPanelClient>[0]["agent"]}
       memory={memory ?? []}
-      tasks={tasks ?? []}
+      tasks={
+        (tasks ?? []) as unknown as Parameters<
+          typeof AgentPanelClient
+        >[0]["tasks"]
+      }
       telegram={
         (telegram as unknown as Parameters<typeof AgentPanelClient>[0]["telegram"]) ?? null
       }

@@ -28,16 +28,17 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
 
   // Kill switch (Dilan, 2026-05-14: "kill this routine, it clogs
-  // Marti's scan chat"). The 15-min loop posted unsolicited
-  // "Coordination check" + idle-nudge messages straight into the
-  // operator's chat thread. OFF by default; flip
-  // ATLAS_COORDINATE_ENABLED=1 to bring it back once the posting
-  // target is moved off the main thread.
+  // Marti's scan chat"). Emergency off-valve for the 15-min loop -
+  // ON by default now that the dedup is fixed (a stable signature
+  // gates re-posts on both the ticket and the idle-nudge path, and
+  // unchanged state re-surfaces at most every 3h). Set
+  // ATLAS_COORDINATE_ENABLED=0 to hard-disable without a code deploy
+  // if it ever misbehaves again.
   // Read process.env directly, NOT the strict `env` validator object.
   // Importing `env` here ran its DEPLOY_MODE=hosted validation during
   // `next build` page-data collection and failed the Docker image build
   // ("Missing required variables..."). Runtime process.env read is safe.
-  if (process.env.ATLAS_COORDINATE_ENABLED !== "1") {
+  if (process.env.ATLAS_COORDINATE_ENABLED === "0") {
     return NextResponse.json({
       ok: true,
       processed: 0,
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest) {
       // below) and its timestamp. The actual skip decision happens once
       // the counters are in, and applies to BOTH the ticket and the
       // idle-nudge path.
-      const { data: lastCoord } = await db
+      const { data: lastCoordRaw } = await db
         .from("rgaios_agent_chat_messages")
         .select("created_at, metadata")
         .eq("organization_id", orgId)
@@ -94,8 +95,13 @@ export async function GET(req: NextRequest) {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      const lastSig =
-        (lastCoord?.metadata as { sig?: string } | null)?.sig ?? null;
+      // Supabase generated types collapse this row to `never`; cast to the
+      // shape we actually selected.
+      const lastCoord = lastCoordRaw as unknown as {
+        created_at: string | null;
+        metadata: { sig?: string } | null;
+      } | null;
+      const lastSig = lastCoord?.metadata?.sig ?? null;
       const lastCoordAtMs = lastCoord?.created_at
         ? Date.parse(lastCoord.created_at)
         : 0;
@@ -125,7 +131,7 @@ export async function GET(req: NextRequest) {
           .from("rgaios_routine_runs")
           .select("id", { count: "exact", head: true })
           .eq("organization_id", orgId)
-          .in("status", ["queued", "running"]),
+          .in("status", ["queued", "running"] as never),
         db
           .from("rgaios_routine_runs")
           .select("id, error, routine_id, created_at")

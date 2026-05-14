@@ -79,6 +79,31 @@ export async function buildAgentChatPreamble(input: {
     "NEVER claim you did something you have no tool for. If an operator asks you to change a role/department/archive an agent, do NOT reply 'updating now' or 'done' - say plainly: 'I can't change that myself - do it at /agents (or /departments) and I'll work with the updated roster.' The live roster below is your source of truth; trust it over any memory of who does what.\n\n" +
     "NEVER ask the operator to paste passwords, API keys, or SSH credentials into chat. If they offer, refuse and tell them to revoke whatever they pasted.";
 
+  // -0.5. Reasoning protocol. Every reply opens with a <thinking> block -
+  //     the agent's REAL plan for this turn, not a separate Haiku guess.
+  //     This is the ReAct "Thought" step (Thought -> Action -> Observation):
+  //     the same model that writes the answer first states what it is
+  //     about to do and why. The chat + Telegram routes strip the block
+  //     from the visible reply and surface it as a `thinking` event so the
+  //     operator sees the reasoning live, in natural language, in their
+  //     own language. Universal - applies to CEO, dept heads, sub-agents.
+  preamble +=
+    "\n\n═══ REASONING PROTOCOL (every reply) ═══\n\n" +
+    "Open EVERY reply with a <thinking> block. Inside it, in 1-3 short sentences and IN THE OPERATOR'S LANGUAGE, state your real plan for this turn:\n" +
+    "  - What the operator actually wants (restate the ask in your own words).\n" +
+    "  - Whether you can answer directly or must delegate - and if delegating, WHICH head and WHY that head owns it.\n" +
+    "  - What tool / data / dispatch you will use, if any.\n\n" +
+    "Format:\n" +
+    "  <thinking>\n" +
+    "  Operator wants last week's ad numbers. Marketing owns paid media so I'll hand this to Kasia rather than answer from stale corpus data.\n" +
+    "  </thinking>\n" +
+    "  <then your normal visible reply>\n\n" +
+    "Rules:\n" +
+    "  - This is REAL reasoning, not a label. Say what you actually concluded, including doubts ('not sure the corpus has this, may need to ask').\n" +
+    "  - Natural language. No bullet IDs, no XML inside, no banned words.\n" +
+    "  - The system strips this block from what the operator reads and shows it as a separate 'thinking' line - do NOT repeat it in your prose.\n" +
+    "  - Keep it honest: if you are about to refuse or say you lack a tool, the thinking block should say so.\n";
+
   // 0. Authority override (must come BEFORE persona). The seeded
   //    `system_prompt` for some dept heads contains stale "I am a
   //    sub-agent / I cannot emit command blocks" text from an earlier
@@ -277,43 +302,68 @@ export async function buildAgentChatPreamble(input: {
       // every first-attempt agent_invoke fails. Inject the heads list +
       // sub-agents grouped by department so Atlas dispatches by exact
       // name on the first try.
+      //
+      // Why title + description are pulled here too (2026-05-14, Marti):
+      // Scan kept "confusing names with roles and responsibilities" - it
+      // only ever saw name/role/department, so when an agent's title said
+      // "Customer Service" but role=ops/department=fulfilment, Scan would
+      // "correct" the operator with the role slug. The fix is two-part:
+      // (1) inject every human-readable field, (2) render each agent as a
+      // labelled multi-line record so the model cannot read the name as
+      // if it were the job description.
       try {
         const { data: roster } = await db
           .from("rgaios_agents")
-          .select("name, role, department, is_department_head")
+          .select("name, role, title, description, department, is_department_head")
           .eq("organization_id", orgId)
           .neq("id", agentId)
           .order("is_department_head", { ascending: false });
         const rows = (roster ?? []) as Array<{
           name: string;
           role: string | null;
+          title: string | null;
+          description: string | null;
           department: string | null;
           is_department_head: boolean | null;
         }>;
         if (rows.length > 0) {
           const heads = rows.filter((a) => a.is_department_head);
           const subs = rows.filter((a) => !a.is_department_head);
+          // One labelled record per agent. Each field is on its own line
+          // with an explicit "FIELD:" prefix so Scan reads NAME as just an
+          // identifier and ROLE / DEPARTMENT / TITLE / RESPONSIBILITY as
+          // the actual job. Responsibility (description / title) is the
+          // plain-English answer to "what does this person do" - Scan
+          // should quote that back to the operator, not the role slug.
+          const fmtAgent = (a: (typeof rows)[number]): string => {
+            const responsibility =
+              (a.description && a.description.trim()) ||
+              (a.title && a.title.trim()) ||
+              "(not documented - ask the operator, do not guess)";
+            return [
+              `  - NAME: ${a.name}`,
+              `    ROLE (internal slug, NOT a job summary): ${a.role ?? "?"}`,
+              `    DEPARTMENT: ${a.department ?? "?"}`,
+              `    TITLE: ${a.title ?? "(none)"}`,
+              `    RESPONSIBILITY: ${responsibility}`,
+            ].join("\n");
+          };
           const headBlock = heads.length
-            ? "Department heads (use the EXACT name when emitting agent_invoke):\n" +
-              heads
-                .map(
-                  (h) =>
-                    `  - ${h.name} (department=${h.department ?? "?"}, role=${h.role ?? "?"})`,
-                )
-                .join("\n")
+            ? "DEPARTMENT HEADS (emit agent_invoke against the exact NAME value):\n" +
+              heads.map(fmtAgent).join("\n\n")
             : "";
           const subBlock = subs.length
-            ? "Sub-agents (route work to them via their dept head, NOT via Atlas direct dispatch):\n" +
-              subs
-                .map(
-                  (s) =>
-                    `  - ${s.name} (department=${s.department ?? "?"}, role=${s.role ?? "?"})`,
-                )
-                .join("\n")
+            ? "SUB-AGENTS (route work to them via their department head, NOT via direct dispatch):\n" +
+              subs.map(fmtAgent).join("\n\n")
             : "";
           preamble +=
             (preamble ? "\n\n" : "") +
-            "═══ ORG ROSTER (live, from DB) ═══\n\n" +
+            "═══ ORG ROSTER (live, from DB - THIS IS THE SOURCE OF TRUTH) ═══\n\n" +
+            "How to read each record below:\n" +
+            "  - NAME is only an identifier. It is NOT a description of what the agent does. Never infer someone's job from their name.\n" +
+            "  - DEPARTMENT + ROLE + RESPONSIBILITY together describe the job. When the operator asks 'who handles X' or 'what does <Name> do', answer from RESPONSIBILITY (and DEPARTMENT), not from the NAME and not from a memory.\n" +
+            "  - If the operator states someone's role and it differs from this roster, the roster wins - but do NOT lecture them; say 'the roster has <Name> as <RESPONSIBILITY> in <DEPARTMENT>' and offer to have it changed at /agents.\n" +
+            "  - To delegate, copy the NAME value verbatim into agent_invoke.\n\n" +
             [headBlock, subBlock].filter(Boolean).join("\n\n");
         }
       } catch {}
@@ -390,7 +440,11 @@ export async function buildAgentChatPreamble(input: {
               "═══ TELEGRAM ENTRY POINT (CEO) ═══",
               "",
               "You are the primary Telegram entry point for this org. When the operator DMs you on Telegram, decide:",
-              "- If the task fits one dept, emit <command type=\"agent_invoke\"> to that department's head and tell the operator who you handed it to. Use the LIVE roster injected above for the exact name + department - do NOT rely on a memorized mapping, dept assignments change.",
+              "- If the task fits one dept, emit <command type=\"agent_invoke\"> to that department's head and tell the operator who you handed it to. Pick the head by reading the ORG ROSTER above - match on DEPARTMENT + RESPONSIBILITY, then copy that head's exact NAME into the command. Do NOT rely on a memorized name->dept mapping; assignments change and the roster is the only source of truth.",
+              // Why this line exists (Marti, 2026-05-14): Scan kept naming
+              // the wrong agent or describing an agent's job from their
+              // name. Force it to quote the roster's RESPONSIBILITY field.
+              "- If the operator asks 'who handles X' or 'what does <Name> do', answer straight from the roster's RESPONSIBILITY + DEPARTMENT fields for that agent. Never guess the job from the agent's name.",
               "- If the task is cross-cutting or you can answer directly, reply yourself.",
               "- Keep it concise: Telegram is mobile-first.",
               "",

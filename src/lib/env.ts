@@ -77,10 +77,4 @@ export const env = {
   COMPOSIO_WEBHOOK_SECRET: process.env.COMPOSIO_WEBHOOK_SECRET,
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   CRON_SECRET: process.env.CRON_SECRET,
-  // Kill switch for Atlas's 15-min coordination loop. OFF by default.
-  // The unsolicited "Coordination check" / idle-nudge posts dumped into
-  // the operator's chat thread were clogging it (Dilan, 2026-05-14:
-  // "kill this routine"). Set ATLAS_COORDINATE_ENABLED=1 to re-enable
-  // once the posting target is moved off the main operator thread.
-  ATLAS_COORDINATE_ENABLED: process.env.ATLAS_COORDINATE_ENABLED === "1",
 } as const;

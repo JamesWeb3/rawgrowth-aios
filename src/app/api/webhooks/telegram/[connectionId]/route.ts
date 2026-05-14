@@ -12,6 +12,7 @@ import { dispatchRun } from "@/lib/runs/dispatch";
 import { isHosted } from "@/lib/deploy-mode";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { chatReply, CHAT_HANDOFF_SENTINEL_PREFIX } from "@/lib/agent/chat";
+import { surfaceThinkingTelegram } from "@/lib/agent/thinking";
 import { transcribeVoice } from "@/lib/voice/transcribe";
 
 /**
@@ -356,10 +357,20 @@ export async function POST(
         return;
       }
 
+      // Reasoning trace: pull the agent's <thinking> block, log it to
+      // /trace, prepend it as a "💭 ..." line so the operator sees the
+      // plan the same way the dashboard chat does.
+      const replyWithThinking = await surfaceThinkingTelegram({
+        reply: result.reply,
+        organizationId,
+        agentId: null,
+        messagePreview: msg.text ?? "",
+      });
+
       // Brand-voice guard before send. chatReply returns raw model text;
       // org-level webhook has no agent context, so audit row gets agentId=null.
       const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
-      const guarded = await applyBrandFilter(result.reply, {
+      const guarded = await applyBrandFilter(replyWithThinking, {
         organizationId,
         agentId: null,
         surface: "telegram_chat",
@@ -547,10 +558,18 @@ export async function POST(
         return;
       }
 
+      // Reasoning trace (mirrors the chat path above).
+      const replyWithThinking = await surfaceThinkingTelegram({
+        reply: result.reply,
+        organizationId,
+        agentId: null,
+        messagePreview: msg.text ?? "",
+      });
+
       // Brand-voice guard. Second instant-path return in this route -
       // command-routine path - mirrors the chat path above.
       const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
-      const guarded = await applyBrandFilter(result.reply, {
+      const guarded = await applyBrandFilter(replyWithThinking, {
         organizationId,
         agentId: null,
         surface: "telegram_chat",

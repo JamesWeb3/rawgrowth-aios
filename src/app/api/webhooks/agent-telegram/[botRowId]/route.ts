@@ -12,6 +12,7 @@ import {
 } from "@/lib/telegram/client";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { chatReply, CHAT_HANDOFF_SENTINEL_PREFIX } from "@/lib/agent/chat";
+import { surfaceThinkingTelegram } from "@/lib/agent/thinking";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { transcribeVoice } from "@/lib/agent/voice-transcribe";
 import { describeImage } from "@/lib/agent/image-describe";
@@ -346,11 +347,20 @@ export async function POST(
       return;
     }
 
+    // Reasoning trace: pull the agent's <thinking> block, log it to
+    // /trace, prepend it as a "💭 ..." line so the operator sees the plan.
+    const replyWithThinking = await surfaceThinkingTelegram({
+      reply: result.reply,
+      organizationId,
+      agentId,
+      messagePreview: msg.text ?? "",
+    });
+
     // Brand-voice guard before send. chatReply returns raw model text;
     // without this wrap, banned words from the model reach the customer
     // and §9 auto-fail kicks in.
     const { applyBrandFilter } = await import("@/lib/brand/apply-filter");
-    const guarded = await applyBrandFilter(result.reply, {
+    const guarded = await applyBrandFilter(replyWithThinking, {
       organizationId,
       agentId,
       surface: "telegram_chat",

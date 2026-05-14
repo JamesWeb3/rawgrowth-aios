@@ -10,6 +10,7 @@ import { applyBrandFilter } from "@/lib/brand/apply-filter";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
 import { extractAndExecuteCommands } from "@/lib/agent/agent-commands";
+import { extractThinking } from "@/lib/agent/thinking";
 import { persistSharedMemoryFromReply } from "@/lib/memory/shared";
 import { badUuidResponse } from "@/lib/utils";
 
@@ -369,7 +370,7 @@ export async function DELETE(
       const next = { ...(r.metadata ?? {}), archived: true, archived_at: stamp };
       const res = await db
         .from("rgaios_agent_chat_messages")
-        .update({ metadata: next as never })
+        .update({ metadata: next } as never)
         .eq("id", r.id);
       if (res.error) {
         return { id: r.id, ok: false, error: res.error.message };
@@ -512,7 +513,7 @@ export async function POST(
       user_id: userId,
       role: "user",
       content: lastContent,
-    });
+    } as never);
   if (userInsert.error) {
     console.error("[chat] user insert failed:", userInsert.error.message);
     return NextResponse.json(
@@ -571,35 +572,6 @@ export async function POST(
           });
         }
 
-        // Chain-of-thought brief - cheap Haiku call summarises the
-        // agent's plan in <100 chars. Best-effort: any failure skips
-        // the emit silently. Surfaces what Scan is about to do BEFORE
-        // the heavy reply streams, so operator sees reasoning live.
-        try {
-          const brief = await generateThinkingBrief(lastContent);
-          if (brief) {
-            emit({ type: "thinking", brief });
-            // Persist as system msg + audit so /trace can show it.
-            await db.from("rgaios_agent_chat_messages").insert({
-              organization_id: orgId,
-              agent_id: agentId,
-              user_id: null,
-              role: "system",
-              content: `Thinking: ${brief}`,
-              metadata: { kind: "chat_thinking" },
-            } as never);
-            await db.from("rgaios_audit_log").insert({
-              organization_id: orgId,
-              kind: "chat_thinking",
-              actor_type: "agent",
-              actor_id: agentId,
-              detail: { brief, message_preview: lastContent.slice(0, 100) },
-            } as never);
-          }
-        } catch {
-          // Best-effort - never block reply on thinking.
-        }
-
         // 3. Generate the reply. chatReply is non-streaming today (Anthropic
         // OAuth + the Claude Code beta gate don't expose SSE alongside the
         // current beta header), so we emit the brand-filtered text as a
@@ -634,7 +606,7 @@ export async function POST(
             role: "system",
             content: result.error,
             metadata: { kind: "chat_reply_failed" },
-          });
+          } as never);
           // Also log to audit_log so the connections page health probe
           // can detect a stale Claude Max token without burning a real
           // /v1/messages call on every page load.
@@ -652,13 +624,56 @@ export async function POST(
           return;
         }
 
+        // 3b. Reasoning trace. The agent opens its reply with a
+        // <thinking> block (REASONING PROTOCOL in preamble.ts) - the
+        // ReAct "Thought" step, its real plan for this turn. Pull it
+        // out FIRST so the raw XML never reaches the operator, surface
+        // it as a `thinking` event + persist a system row + audit row
+        // so /trace shows it. If the model didn't emit a block (older
+        // persona, terse turn), fall back to the heuristic brief so the
+        // operator still sees SOMETHING above the reply.
+        const extractedThinking = extractThinking(result.reply);
+        const replyBody = extractedThinking.visibleReply;
+        try {
+          const brief =
+            extractedThinking.thinking ??
+            (await generateThinkingBrief(lastContent));
+          if (brief) {
+            emit({ type: "thinking", brief });
+            await db.from("rgaios_agent_chat_messages").insert({
+              organization_id: orgId,
+              agent_id: agentId,
+              user_id: null,
+              role: "system",
+              content: `Thinking: ${brief}`,
+              metadata: {
+                kind: "chat_thinking",
+                source: extractedThinking.thinking ? "agent" : "heuristic",
+              },
+            } as never);
+            await db.from("rgaios_audit_log").insert({
+              organization_id: orgId,
+              kind: "chat_thinking",
+              actor_type: "agent",
+              actor_id: agentId,
+              detail: {
+                brief,
+                source: extractedThinking.thinking ? "agent" : "heuristic",
+                message_preview: lastContent.slice(0, 100),
+              },
+            } as never);
+          }
+        } catch {
+          // Best-effort - never block the reply on the thinking trace.
+        }
+
         // 4a. Extract <task> blocks BEFORE the brand-voice filter. The
         // task description often quotes Rawgrowth's own banned-words
         // list verbatim (Atlas writes "Zero banned words: game-changer,
         // unlock, leverage..."), which trips the filter on the entire
         // reply even though the customer-visible text is clean. Pulling
         // tasks out first means filter only sees the surrounding prose.
-        let preFilterText = result.reply;
+        let preFilterText = replyBody;
         let createdTasks: Array<{
           routineId: string;
           runId: string | null;
@@ -670,9 +685,9 @@ export async function POST(
           const ext = await extractAndCreateTasks({
             orgId,
             speakerAgentId: agentId,
-            reply: result.reply,
+            reply: replyBody,
           });
-          preFilterText = ext.visibleReply || result.reply;
+          preFilterText = ext.visibleReply || replyBody;
           createdTasks = ext.tasks;
         } catch (err) {
           console.warn(
@@ -865,7 +880,7 @@ export async function POST(
             role: "assistant",
             content: visibleText,
             metadata: persistMetadata,
-          });
+          } as never);
         if (assistantInsert.error) {
           console.error(
             "[chat] assistant insert failed:",
