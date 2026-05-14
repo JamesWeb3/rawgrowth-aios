@@ -147,15 +147,130 @@ function formatRelative(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+// Pull a human-readable line out of the event detail instead of
+// dumping raw JSON. Different kinds carry different shapes - a run
+// result has output.reply, an audit row has a title, a tool call has
+// a result preview - so probe the known fields in priority order and
+// only fall back to a compact key list (never a JSON blob) for a
+// genuinely unrecognised shape.
 function detailSummary(detail: Item["detail"]): string {
   if (detail == null) return "";
-  if (typeof detail === "string") return detail.replace(/\s+/g, " ").slice(0, 160);
-  try {
-    const json = JSON.stringify(detail);
-    return json.replace(/\s+/g, " ").slice(0, 160);
-  } catch {
-    return "";
+  if (typeof detail === "string") return detail.replace(/\s+/g, " ").slice(0, 200);
+  const d = detail as Record<string, unknown>;
+  const out =
+    d.output && typeof d.output === "object" && !Array.isArray(d.output)
+      ? (d.output as Record<string, unknown>)
+      : null;
+  const pick =
+    str(out?.reply) ||
+    str(d.reply) ||
+    str(d.title) ||
+    str(d.summary) ||
+    str(d.brief) ||
+    str(d.text) ||
+    str(d.result_preview) ||
+    str(d.message_preview) ||
+    (d.error ? `Error: ${str(d.error)}` : "") ||
+    str(out?.text);
+  if (pick) return pick.replace(/\s+/g, " ").slice(0, 200);
+  const keys = Object.keys(d).slice(0, 6);
+  return keys.length ? `(${keys.join(", ")})` : "";
+}
+
+// Structured renderer for the expanded row. Known event shapes (run
+// results, audit rows, tool calls) render as labelled text with real
+// line breaks; a genuinely unknown shape still falls back to a JSON
+// dump so nothing is hidden, but that is the exception, not the norm.
+function DetailBody({ detail }: { detail: Item["detail"] }) {
+  if (detail == null) {
+    return <p className="text-muted-foreground/70">No detail.</p>;
   }
+  if (typeof detail === "string") {
+    return (
+      <p className="whitespace-pre-wrap text-foreground/90">{detail}</p>
+    );
+  }
+  const d = detail as Record<string, unknown>;
+  const out =
+    d.output && typeof d.output === "object" && !Array.isArray(d.output)
+      ? (d.output as Record<string, unknown>)
+      : null;
+  const reply = str(out?.reply) || str(d.reply) || str(out?.text);
+  const thinking = str(out?.thinking) || str(d.brief);
+  const status = str(d.status);
+  const error = str(d.error);
+  const title = str(d.title);
+  const known = reply || thinking || status || error || title;
+
+  if (known) {
+    return (
+      <div className="space-y-2">
+        {title && (
+          <p className="font-medium text-foreground">{title}</p>
+        )}
+        {(status || error) && (
+          <p className="text-[11px]">
+            {status && (
+              <span
+                className={cn(
+                  "rounded px-1.5 py-0.5",
+                  status === "succeeded"
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : status === "failed"
+                      ? "bg-rose-500/15 text-rose-300"
+                      : "bg-white/5 text-muted-foreground",
+                )}
+              >
+                {status}
+              </span>
+            )}
+            {error && (
+              <span className="ml-2 text-rose-300">{error}</span>
+            )}
+          </p>
+        )}
+        {reply && (
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60">
+              Reply
+            </p>
+            <p className="whitespace-pre-wrap text-foreground/90">{reply}</p>
+          </div>
+        )}
+        {thinking && (
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60">
+              Thinking
+            </p>
+            <p className="whitespace-pre-wrap text-muted-foreground">
+              {thinking}
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Unknown shape - show a compact key/value list rather than a wall
+  // of escaped JSON. Objects/arrays inside still stringify, but the
+  // top level stays scannable.
+  const entries = Object.entries(d).slice(0, 12);
+  return (
+    <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+      {entries.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-muted-foreground/60">{k}</dt>
+          <dd className="truncate text-foreground/90">
+            {typeof v === "string" ? v : JSON.stringify(v)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function TraceClient({
@@ -341,11 +456,9 @@ export function TraceClient({
                 </div>
               </button>
               {isOpen && (
-                <pre className="overflow-x-auto border-t border-border bg-background/40 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
-                  {typeof it.detail === "string"
-                    ? it.detail
-                    : JSON.stringify(it.detail, null, 2)}
-                </pre>
+                <div className="overflow-x-auto border-t border-border bg-background/40 px-4 py-3 text-[12px] leading-relaxed">
+                  <DetailBody detail={it.detail} />
+                </div>
               )}
             </li>
           );

@@ -94,8 +94,80 @@ async function resolveBotForInboxRow(row: {
 }
 
 /**
- * Find ANY connected bot for the org. Used when the caller passes a raw
- * chat_id with no inbox message — we need to pick a bot to send through.
+ * Resolve the bot that OWNS a given chat. There is no separate
+ * conversation table — the conversation's bot linkage lives on the
+ * inbox rows themselves (every `rgaios_telegram_messages` row carries
+ * either `agent_telegram_bot_id` or `connection_id` for the bot it
+ * arrived on). So the most recent message for this chat_id within the
+ * org tells us which bot the chat belongs to. This is the correct
+ * per-conversation routing on a multi-bot org — picking "any" bot can
+ * send the reply out through the wrong persona.
+ */
+async function resolveBotForChat(
+  organizationId: string,
+  chatId: number,
+): Promise<{ token: string; label: string; agentId: string | null } | null> {
+  const db = supabaseAdmin();
+
+  const { data: lastMsg } = await db
+    .from("rgaios_telegram_messages")
+    .select("agent_telegram_bot_id, connection_id")
+    .eq("organization_id", organizationId)
+    .eq("chat_id", chatId)
+    .order("received_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lastMsg && (lastMsg.agent_telegram_bot_id || lastMsg.connection_id)) {
+    const bot = await resolveBotForInboxRow({
+      organization_id: organizationId,
+      agent_telegram_bot_id: lastMsg.agent_telegram_bot_id,
+      connection_id: lastMsg.connection_id,
+    });
+    if (bot) return bot;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the per-head bot wired to a specific agent. Used as the
+ * second-choice route for a raw chat_id with no message history: if we
+ * know the calling agent (ctx.agentId), send through THAT agent's bot
+ * rather than guessing.
+ */
+async function resolveBotForAgent(
+  organizationId: string,
+  agentId: string,
+): Promise<{ token: string; label: string; agentId: string | null } | null> {
+  const db = supabaseAdmin();
+
+  const { data } = await db
+    .from("rgaios_agent_telegram_bots")
+    .select("bot_token, bot_username, bot_first_name, agent_id")
+    .eq("organization_id", organizationId)
+    .eq("agent_id", agentId)
+    .eq("status", "connected")
+    .maybeSingle();
+  if (data) {
+    const token = tryDecryptSecret(data.bot_token);
+    if (token) {
+      return {
+        token,
+        label: data.bot_username ? `@${data.bot_username}` : (data.bot_first_name ?? "bot"),
+        agentId: data.agent_id ?? null,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find ANY connected bot for the org. LAST-RESORT fallback only — used
+ * when the caller passes a raw chat_id with no message history AND we
+ * can't tie the call to an agent. On a multi-bot org this is a guess
+ * (oldest per-head bot, then legacy), so callers log a warning.
  * Prefers a per-head bot (newer model) and falls back to legacy.
  */
 async function pickAnyBotForOrg(
@@ -143,6 +215,38 @@ async function pickAnyBotForOrg(
   }
 
   return null;
+}
+
+/**
+ * Pick the bot to send a freeform chat_id reply through, in priority
+ * order so multi-bot orgs route to the right persona:
+ *   (a) the bot that owns this conversation — newest inbox row for the
+ *       chat_id carries the connection/bot linkage;
+ *   (b) the bot wired to the calling agent (ctx.agentId);
+ *   (c) last-resort: any connected bot, with a warning that it's a guess.
+ */
+async function resolveBotForChatIdReply(
+  organizationId: string,
+  chatId: number,
+  agentId: string | null | undefined,
+): Promise<{ token: string; label: string; agentId: string | null } | null> {
+  const owner = await resolveBotForChat(organizationId, chatId);
+  if (owner) return owner;
+
+  if (agentId) {
+    const agentBot = await resolveBotForAgent(organizationId, agentId);
+    if (agentBot) return agentBot;
+  }
+
+  const fallback = await pickAnyBotForOrg(organizationId);
+  if (fallback) {
+    console.warn(
+      `[telegram_reply] no conversation history or agent-bot link for chat ${chatId} ` +
+        `(org ${organizationId}, agent ${agentId ?? "unknown"}) — guessing bot ${fallback.label}; ` +
+        `reply may go out through the wrong bot on a multi-bot org`,
+    );
+  }
+  return fallback;
 }
 
 // ─── telegram_inbox_read ───────────────────────────────────────────
@@ -274,7 +378,11 @@ registerTool({
       });
     } else if (args.chat_id !== undefined) {
       chatId = Number(args.chat_id);
-      bot = await pickAnyBotForOrg(ctx.organizationId);
+      bot = await resolveBotForChatIdReply(
+        ctx.organizationId,
+        chatId,
+        ctx.agentId,
+      );
     } else {
       return textError("Either message_id or chat_id is required.");
     }
