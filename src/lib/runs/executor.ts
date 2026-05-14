@@ -182,10 +182,18 @@ function generateViaClaudeCli(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const bin = process.env.CLAUDE_CLI_PATH ?? "claude";
+    // Force HOME so claude CLI finds ~/.claude/.credentials.json and
+    // ~/.claude.json from the bind-mounted host paths. The Next.js
+    // container runs as `nextjs` whose HOME is /nonexistent, so without
+    // this the CLI looks at /nonexistent/.claude/* and silently exits.
+    const home = process.env.CLAUDE_CLI_HOME ?? "/home/node";
     const child = spawn(
       bin,
       ["--print", "--dangerously-skip-permissions"],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: home },
+      },
     );
 
     const onAbort = () => {
