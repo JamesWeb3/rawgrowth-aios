@@ -397,8 +397,8 @@ export async function generateInsightsForDept(input: {
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   for (const s of snapshots) {
-    // Dedup: skip if this (dept, metric) already has an open insight
-    // OR was dismissed in the last 24h.
+    // Dedup: skip if this (dept, metric) already has a still-open
+    // insight OR any insight created in the last 24h.
     //
     // Atlas-level rows are inserted with department = NULL (see the
     // insert below: `department: input.department`). The old dedup
@@ -406,6 +406,17 @@ export async function generateInsightsForDept(input: {
     // matches a NULL column - so every cross-dept Atlas anomaly
     // dodged dedup and re-fired a fresh insight + proactive chat
     // message on every cron tick. Match NULL with `.is()` instead.
+    //
+    // The 24h clause keys on created_at, not status. Migration 0050
+    // widened the status set to open|acknowledged|dismissed|resolved|
+    // executing|rejected; the old `status.eq.open,dismissed_at.gte`
+    // filter only caught open + dismissed, so the moment the operator
+    // acknowledged or approved an insight (open -> acknowledged /
+    // executing) the same anomaly re-fired a fresh insight + proactive
+    // chat message on the next tick - the notification spam. Any
+    // insight for this (org, metric, dept) under 24h old suppresses a
+    // re-fire regardless of status; a still-open insight older than
+    // 24h keeps suppressing too.
     let dedupQ = db
       .from("rgaios_insights")
       .select("id, status")
@@ -416,7 +427,7 @@ export async function generateInsightsForDept(input: {
         ? dedupQ.is("department", null)
         : dedupQ.eq("department", input.department);
     const { data: existing } = await dedupQ
-      .or(`status.eq.open,dismissed_at.gte.${since24h}`)
+      .or(`status.eq.open,created_at.gte.${since24h}`)
       .limit(1)
       .maybeSingle();
     if (existing) {
