@@ -1010,6 +1010,7 @@ export type Database = {
           error: string | null;
           scraped_at: string | null;
           created_at: string;
+          metrics: Record<string, unknown>;
         };
         Insert: {
           id?: string;
@@ -1023,6 +1024,7 @@ export type Database = {
           error?: string | null;
           scraped_at?: string | null;
           created_at?: string;
+          metrics?: Record<string, unknown>;
         };
         Update: Partial<Database["public"]["Tables"]["rgaios_scrape_snapshots"]["Row"]>;
         Relationships: [];

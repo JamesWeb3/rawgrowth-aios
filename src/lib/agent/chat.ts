@@ -645,11 +645,18 @@ export async function chatReply(input: {
     callerUserId,
   } = input;
 
+  // RUNTIME_PATH=cli (CTO brief Path A) auths through the local `claude`
+  // CLI binary - it needs NO per-org OAuth token. The token pool is only
+  // load-bearing for the raw /v1/messages path (Path B). Gating on it
+  // BEFORE the runtime branch killed the entire CLI surface for any org
+  // without a claude-max row (Session B handoff 4). Only require the
+  // pool when we are NOT in cli-mode.
+  const cliMode = process.env.RUNTIME_PATH === "cli";
   const claudeEntries = await loadClaudeMaxTokenPool(
     organizationId,
     callerUserId,
   );
-  if (claudeEntries.length === 0) {
+  if (!cliMode && claudeEntries.length === 0) {
     return {
       ok: false,
       error:

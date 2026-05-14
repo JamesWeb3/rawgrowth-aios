@@ -30,11 +30,14 @@ export async function GET() {
     if (!ctx?.activeOrgId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const user = { id: ctx.activeOrgId, userId: ctx.userId };
 
+    // No intake row yet is a normal state for a fresh org - maybeSingle()
+    // returns null instead of throwing PGRST116 (which would surface as a
+    // 500). The { intake: null } response already covers the not-found case.
     const { data: intake } = await supabaseAdmin()
       .from("rgaios_brand_intakes")
       .select("*")
       .eq("organization_id", user.id)
-      .single();
+      .maybeSingle();
 
     return NextResponse.json({ intake });
   } catch (err: unknown) {

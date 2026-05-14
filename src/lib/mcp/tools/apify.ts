@@ -12,7 +12,11 @@ import { tryDecryptSecret } from "@/lib/crypto";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_RUNS_LIMIT = 10;
-const RUN_TIMEOUT_MS = 120_000;
+// run-sync-get-dataset-items blocks until the actor finishes; a cold
+// start + a real scrape regularly needs >2min. Both call surfaces allow
+// >=300s turns (telegram webhook maxDuration=300, dashboard chat route
+// uncapped), so 180s survives most cold starts with headroom.
+const RUN_TIMEOUT_MS = 180_000;
 const MAX_BODY = 500;
 
 type ApifyMetadata = {
@@ -138,7 +142,23 @@ registerTool({
         signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
       });
     } catch (err) {
-      return textError(`apify_run_actor: ${(err as Error).message}`);
+      // AbortSignal.timeout fires a TimeoutError (DOMException name
+      // "TimeoutError"); a hard abort surfaces as "AbortError". Either
+      // way the run-sync call blew past the chat-turn budget. Return a
+      // plain-English explanation the agent can honestly relay instead
+      // of leaking "AbortError" - the scrape may still be running on
+      // Apify's side; the operator can retry or narrow it.
+      const e = err as Error;
+      if (e.name === "TimeoutError" || e.name === "AbortError") {
+        return textError(
+          `apify_run_actor: the scrape on ${actorId} is taking longer than ` +
+            `this chat turn allows (>${Math.round(RUN_TIMEOUT_MS / 1000)}s) - ` +
+            `the actor may still be running on Apify. Try again, or narrow ` +
+            `the scrape (fewer profiles/posts, a smaller resultsLimit). You ` +
+            `can also check apify_list_actor_runs to see if it finished.`,
+        );
+      }
+      return textError(`apify_run_actor: ${e.message}`);
     }
 
     if (res.status !== 200 && res.status !== 201) {
