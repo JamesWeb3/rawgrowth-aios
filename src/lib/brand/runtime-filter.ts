@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 
 import { BANNED_WORDS } from "./tokens";
+import { shouldEnforceEnglishBrandVoice, type LocaleHint } from "./language";
 
 /**
  * Runtime brand-voice guard. Build-time eslint-banned-words.mjs catches
@@ -20,6 +21,17 @@ import { BANNED_WORDS } from "./tokens";
  *      checkBrandVoice on the result. Returns {ok:true,text} on a clean
  *      pass-2 or {ok:false, hits, finalAttempt} so the caller can
  *      hard-fail and surface to the operator.
+ *
+ * Language awareness:
+ *   The 11 banned words + their REPLACEMENTS map are English. For a
+ *   non-English client (e.g. Marti Fox / InstaCEO Academy, Polish) the
+ *   substring substitution is at best a no-op and the regen pass can
+ *   actively mangle correct Polish copy. Every entry point therefore
+ *   takes an optional `lang` hint and, when it can tell the text is not
+ *   English, skips the destructive path entirely - the text is returned
+ *   untouched and flagged `skipped: "non-english"` so callers can log it
+ *   without rewriting it. Passing no hint preserves the original
+ *   behaviour for plain-English ASCII copy (see ./language.ts).
  */
 
 const REPLACEMENTS: Record<string, string> = {
@@ -46,14 +58,39 @@ function buildPattern() {
 const PATTERN = buildPattern();
 
 export type BrandFilterResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /**
+       * Set to "non-english" when the banned-word enforcement was
+       * intentionally skipped because the text is not English. The text
+       * is unchanged; callers should ship it as-is and must NOT run a
+       * regen pass on it. Absent on a normal clean English pass.
+       */
+      skipped?: "non-english";
+    }
   | {
       ok: false;
       hits: string[];
       rewritten: string;
     };
 
-export function checkBrandVoice(text: string): BrandFilterResult {
+/**
+ * Scan `text` for the 11 English banned words.
+ *
+ * @param lang Optional locale hint (BCP-47-ish, e.g. "en", "pl-PL").
+ *   When omitted the text is auto-classified by a cheap heuristic
+ *   (diacritics + Polish stopwords). When the text is determined to be
+ *   non-English the English enforcement is skipped and `{ok:true,
+ *   skipped:"non-english"}` is returned - the English path is unchanged.
+ */
+export function checkBrandVoice(
+  text: string,
+  lang?: LocaleHint,
+): BrandFilterResult {
+  if (!shouldEnforceEnglishBrandVoice(text, lang)) {
+    return { ok: true, skipped: "non-english" };
+  }
+
   const hits = new Set<string>();
   let rewritten = text;
 
@@ -118,7 +155,18 @@ export async function regenerateWithBrandReminder(
   originalText: string,
   hits: string[],
   ctx: RegenerateContext = {},
+  lang?: LocaleHint,
 ): Promise<RegenerateResult> {
+  // Defensive: the regen prompt is English-only and asks Claude to
+  // rewrite around English banned words. Running it on non-English copy
+  // can corrupt otherwise-correct text, so bail out and hand the
+  // original back untouched. Well-behaved callers (applyBrandFilter)
+  // never get here for non-English text, but tool code that calls the
+  // two passes directly might.
+  if (!shouldEnforceEnglishBrandVoice(originalText, lang)) {
+    return { ok: true, text: originalText };
+  }
+
   const banList = BANNED_WORDS.map((w) => `"${w}"`).join(", ");
   const hitsLine = hits.length
     ? `Specifically, the prior draft used: ${hits.map((h) => `"${h}"`).join(", ")}. Do not use any of these.`
@@ -138,7 +186,7 @@ export async function regenerateWithBrandReminder(
     // Network / timeout / abort  -  fall back to the substring-sanitised
     // version of the original so the operator-bound audit row is at least
     // free of banned words.
-    const fallback = checkBrandVoice(originalText);
+    const fallback = checkBrandVoice(originalText, lang);
     return {
       ok: false,
       hits,
@@ -148,7 +196,7 @@ export async function regenerateWithBrandReminder(
     clearTimeout(timer);
   }
 
-  const second = checkBrandVoice(regenerated);
+  const second = checkBrandVoice(regenerated, lang);
   if (second.ok) return { ok: true, text: regenerated };
   return { ok: false, hits: second.hits, finalAttempt: second.rewritten };
 }

@@ -21,6 +21,13 @@ export type ApplyBrandFilterResult =
  *      feed shows the trip.
  *   3. Hard-fail: audit kind=brand_voice_hard_fail and return ok:false
  *      so the caller refuses to send + surfaces a tool error.
+ *
+ * Language awareness: the banned-word list is English. For a non-English
+ * client (Marti Fox / InstaCEO Academy is Polish) the regen pass would
+ * mangle correct copy, so `ctx.lang` lets a caller pin the org locale.
+ * When the text reads as non-English (explicit hint or heuristic),
+ * checkBrandVoice short-circuits with `skipped:"non-english"` and this
+ * function returns the text untouched, never reaching the regen path.
  */
 export async function applyBrandFilter(
   text: string,
@@ -28,6 +35,13 @@ export async function applyBrandFilter(
     organizationId: string;
     agentId?: string | null;
     surface: string;
+    /**
+     * Optional locale hint (BCP-47-ish, e.g. "en", "pl-PL"). Forwarded
+     * to checkBrandVoice / regenerateWithBrandReminder. Omit it to let
+     * the cheap diacritics + Polish-stopword heuristic classify the
+     * text; pass it when the org locale is known for a reliable result.
+     */
+    lang?: string;
   },
 ): Promise<ApplyBrandFilterResult> {
   const raw = text.trim();
@@ -35,7 +49,7 @@ export async function applyBrandFilter(
     return { ok: true, text: raw, regenerated: false };
   }
 
-  const firstPass = checkBrandVoice(raw);
+  const firstPass = checkBrandVoice(raw, ctx.lang);
   if (firstPass.ok) {
     return { ok: true, text: raw, regenerated: false };
   }
@@ -43,10 +57,15 @@ export async function applyBrandFilter(
   console.warn(
     `[${ctx.surface}] brand-voice pass-1 hit: ${firstPass.hits.join(",")}, regenerating`,
   );
-  const regen = await regenerateWithBrandReminder(raw, firstPass.hits, {
-    organizationId: ctx.organizationId,
-    agentId: ctx.agentId ?? null,
-  });
+  const regen = await regenerateWithBrandReminder(
+    raw,
+    firstPass.hits,
+    {
+      organizationId: ctx.organizationId,
+      agentId: ctx.agentId ?? null,
+    },
+    ctx.lang,
+  );
 
   if (!regen.ok) {
     console.error(

@@ -27,6 +27,11 @@ import {
   finaliseRun,
   type RunContext,
 } from "./queries";
+import {
+  shouldRetry,
+  MAX_ATTEMPTS,
+  type RetryDecision,
+} from "./retry-policy";
 
 // Load every tool module so they register into the in-memory registry.
 import "@/lib/mcp/tools";
@@ -155,18 +160,19 @@ export async function executeRun(
     // clear reason so the run shows up as needing attention.
     const outText = (result.text ?? "").trim();
     if (outText.length < 2) {
-      await finaliseRun(
-        runId,
-        "failed",
-        null,
-        "Agent returned no output (empty response from the model runtime).",
-      );
+      const emptyErr =
+        "Agent returned no output (empty response from the model runtime).";
+      await finaliseRun(runId, "failed", null, emptyErr);
       await auditLog(run.organization_id, "run_failed", {
         run_id: run.id,
         routine_id: routine.id,
         agent_id: agent?.id ?? null,
         error: "empty model output",
       });
+      // Durable orchestration: empty output is a failure too. Run it
+      // through the retry / escalation policy (empty output classifies
+      // as transient - cheap to try once more, bounded by MAX_ATTEMPTS).
+      await handleRunFailure(ctx, emptyErr);
     } else {
       await finaliseRun(
         runId,
@@ -193,10 +199,194 @@ export async function executeRun(
         run_id: ctx.run.id,
         error: message,
       });
+      // Durable orchestration: a thrown failure is still a failure - run
+      // it through the retry / escalation policy just like the empty-output
+      // branch does. ctx.run carries the org-scoped row + input_payload the
+      // attempt counter lives in.
+      await handleRunFailure(ctx, message);
     }
     // Swallow the throw  -  callers fire-and-forget.
     console.error("[executor]", runId, message);
   }
+}
+
+// ─── Durable orchestration: retry / escalation ─────────────────────
+//
+// GAP being closed: a failed delegated/scheduled run used to just get
+// marked `failed` with no structured follow-up. The orchestrator preamble
+// says "retry once OR escalate" but that was only a prompt instruction.
+// The functions below are the actual mechanism:
+//   - attempt count is carried in input_payload.attempt_count (jsonb) -
+//     rgaios_routine_runs has no dedicated column (see types.ts); a real
+//     column would be cleaner but needs a migration, out of scope here.
+//   - shouldRetry() (retry-policy.ts) classifies the failure + enforces
+//     the MAX_ATTEMPTS hard stop so this can never loop forever.
+//   - a retry re-enqueues a fresh pending run (same routine/trigger/org/
+//     source) with attempt_count+1 and re-dispatches it.
+//   - an escalation (or exhausted attempts) writes a distinct
+//     `run_escalated` audit row and leaves the run failed.
+
+/**
+ * Read the current attempt number off a run's input_payload. The original
+ * run carries no counter (or attempt_count = 1); each re-enqueued retry
+ * bumps it. Defaults to 1 so a first failure is treated as "attempt 1 of
+ * MAX_ATTEMPTS just failed".
+ */
+function attemptCountOf(run: RunContext["run"]): number {
+  const raw = (run.input_payload ?? {})["attempt_count"];
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+/**
+ * Decide what to do with a failed run and act on it. Called from both
+ * failure sites in executeRun (empty output + thrown error). Never throws -
+ * orchestration bookkeeping must not turn one failed run into an unhandled
+ * rejection. Every DB call is scoped to ctx.run.organization_id, matching
+ * the org-scoping discipline the rest of this file follows.
+ */
+async function handleRunFailure(
+  ctx: RunContext,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    const { run, routine, agent } = ctx;
+    const attemptCount = attemptCountOf(run);
+    const decision: RetryDecision = shouldRetry(
+      { id: run.id, error: errorMessage },
+      attemptCount,
+    );
+
+    if (decision.retry) {
+      await reEnqueueRun(ctx, attemptCount + 1, decision);
+      return;
+    }
+
+    // Escalate: distinct audit kind so it's filterable in the audit log /
+    // agent memory tab, separate from the plain `run_failed` row already
+    // written by the caller. The run row itself stays `failed`.
+    await auditLog(run.organization_id, "run_escalated", {
+      run_id: run.id,
+      routine_id: routine.id,
+      agent_id: agent?.id ?? null,
+      attempt_count: attemptCount,
+      max_attempts: MAX_ATTEMPTS,
+      error: errorMessage.slice(0, 500),
+      reason: decision.reason,
+    });
+    console.warn(
+      `[executor.orchestration] run ${run.id} escalated after ${attemptCount} attempt(s): ${decision.reason}`,
+    );
+  } catch (err) {
+    // Orchestration is best-effort observability + recovery; a failure
+    // here must not mask the original run failure.
+    console.error(
+      "[executor.orchestration] handleRunFailure failed for run",
+      ctx.run.id,
+      (err as Error).message,
+    );
+  }
+}
+
+/**
+ * Re-enqueue a failed run for another attempt. Inserts a fresh pending
+ * `rgaios_routine_runs` row (mirrors the insert shape in agent-invoke.ts /
+ * schedule-tick) carrying the original input_payload plus an incremented
+ * attempt_count + a retry breadcrumb, then re-dispatches it through the
+ * same dispatch path the original run used. The MAX_ATTEMPTS bound is
+ * enforced upstream in shouldRetry, so this cannot be reached unboundedly.
+ */
+async function reEnqueueRun(
+  ctx: RunContext,
+  nextAttempt: number,
+  decision: RetryDecision,
+): Promise<void> {
+  const { run, routine, agent } = ctx;
+  const db = supabaseAdmin();
+
+  // Carry the original payload forward verbatim (the retry must run the
+  // same work) and stamp the attempt bookkeeping on top.
+  const nextPayload: Record<string, unknown> = {
+    ...(run.input_payload ?? {}),
+    attempt_count: nextAttempt,
+    retry_of: run.id,
+    retry_reason: decision.reason,
+  };
+
+  const { data: retryRun, error: insErr } = await db
+    .from("rgaios_routine_runs")
+    .insert({
+      organization_id: run.organization_id,
+      routine_id: run.routine_id,
+      trigger_id: run.trigger_id,
+      source: run.source,
+      status: "pending",
+      input_payload: nextPayload,
+    })
+    .select("id")
+    .single();
+
+  if (insErr || !retryRun) {
+    // Couldn't queue the retry - fall back to escalation so the failure
+    // still gets a human-visible audit row instead of vanishing.
+    await auditLog(run.organization_id, "run_escalated", {
+      run_id: run.id,
+      routine_id: routine.id,
+      agent_id: agent?.id ?? null,
+      attempt_count: nextAttempt - 1,
+      max_attempts: MAX_ATTEMPTS,
+      error: `retry re-enqueue failed: ${insErr?.message ?? "unknown"}`,
+      reason: "could not enqueue retry run; escalating",
+    });
+    console.error(
+      `[executor.orchestration] re-enqueue failed for run ${run.id}: ${insErr?.message ?? "unknown"}`,
+    );
+    return;
+  }
+
+  await auditLog(run.organization_id, "run_retry_scheduled", {
+    run_id: run.id,
+    retry_run_id: retryRun.id,
+    routine_id: routine.id,
+    agent_id: agent?.id ?? null,
+    attempt_count: nextAttempt,
+    max_attempts: MAX_ATTEMPTS,
+    backoff_ms: decision.backoffMs,
+    reason: decision.reason,
+  });
+
+  // Dispatch the retry. dispatchRun is imported dynamically: dispatch.ts
+  // imports executeRun from this file, so a static import would be a
+  // circular dependency. The backoff is applied as a pre-dispatch delay;
+  // it stays well under the executor's own 120s wall-clock budget.
+  const dispatchAndLog = async () => {
+    try {
+      const { dispatchRun } = await import("./dispatch");
+      dispatchRun(retryRun.id, run.organization_id);
+    } catch (err) {
+      // If dispatch itself can't fire, the run still sits `pending` and
+      // the schedule-tick sweep will pick it up - log and move on.
+      console.error(
+        `[executor.orchestration] retry dispatch failed for run ${retryRun.id}; left pending for sweep:`,
+        (err as Error).message,
+      );
+    }
+  };
+
+  if (decision.backoffMs > 0) {
+    // Detached delayed dispatch - don't block executeRun's return on the
+    // backoff. The row is already pending + audited, so even if this
+    // process dies during the wait the schedule-tick sweep recovers it.
+    setTimeout(() => {
+      void dispatchAndLog();
+    }, decision.backoffMs).unref?.();
+  } else {
+    await dispatchAndLog();
+  }
+
+  console.warn(
+    `[executor.orchestration] run ${run.id} failed transiently; re-enqueued as ${retryRun.id} (attempt ${nextAttempt}/${MAX_ATTEMPTS}, backoff ${decision.backoffMs}ms)`,
+  );
 }
 
 /**
