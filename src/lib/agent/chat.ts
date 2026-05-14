@@ -671,7 +671,24 @@ export async function chatReply(input: {
     };
   }
 
-  const data = (await res.json()) as AnthropicMessageResponse;
+  // Guard res.json(): a 200 with a non-JSON body (proxy/CDN HTML error
+  // page, truncated response) would otherwise throw a raw SyntaxError
+  // that escapes past every caller's ok/error handling.
+  let data: AnthropicMessageResponse;
+  try {
+    data = (await res.json()) as AnthropicMessageResponse;
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Anthropic returned a non-JSON body: ${(err as Error).message}`,
+    };
+  }
+  if (!data || !Array.isArray(data.content)) {
+    return {
+      ok: false,
+      error: "Anthropic response had no content array",
+    };
+  }
   const reply = data.content
     .filter((b) => b.type === "text" && typeof b.text === "string")
     .map((b) => b.text!)

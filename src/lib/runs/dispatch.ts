@@ -30,7 +30,7 @@ export function dispatchRun(runId: string, organizationId: string) {
     void dispatchV3(runId, organizationId);
     return;
   }
-  fireInProcess(runId);
+  fireInProcess(runId, organizationId);
 }
 
 /**
@@ -89,7 +89,7 @@ async function dispatchV3(runId: string, organizationId: string) {
   // doesn't lose the run. Brief double-execute risk if the drain wakes
   // late is bounded by claimRun's atomic status=pending→running -
   // whichever side wins, the loser bails on a no-op.
-  fireInProcess(runId);
+  fireInProcess(runId, organizationId);
 }
 
 /**
@@ -98,17 +98,17 @@ async function dispatchV3(runId: string, organizationId: string) {
  * or other background context where it throws, fall back to a detached
  * executeRun() so the run still progresses past pending.
  */
-function fireInProcess(runId: string) {
+function fireInProcess(runId: string, organizationId: string) {
   try {
     after(async () => {
-      await executeRun(runId);
+      await executeRun(runId, organizationId);
     });
   } catch (err) {
     console.error(
       "[dispatch] after() unavailable, falling back to direct executor:",
       (err as Error).message,
     );
-    void executeRun(runId).catch((e) => {
+    void executeRun(runId, organizationId).catch((e) => {
       console.error("[dispatch] direct executor failed", runId, e);
     });
   }

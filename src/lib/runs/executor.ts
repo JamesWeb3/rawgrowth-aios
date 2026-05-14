@@ -60,12 +60,19 @@ function runtimeToModel(runtime: string | null | undefined): string {
  *
  * Errors are caught and recorded to the run's error column; never rethrown
  * from the top-level so webhook callers don't see 500s.
+ *
+ * `orgId` scopes the claim + every downstream read to the tenant that
+ * owns the run. The service-role client bypasses RLS, so without this a
+ * runId from another tenant could be claimed and executed.
  */
-export async function executeRun(runId: string): Promise<void> {
+export async function executeRun(
+  runId: string,
+  orgId: string,
+): Promise<void> {
   let ctx: RunContext | null = null;
   try {
-    ctx = await claimRun(runId);
-    if (!ctx) return; // already claimed by another worker, or not pending
+    ctx = await claimRun(runId, orgId);
+    if (!ctx) return; // already claimed by another worker, not pending, or wrong org
 
     const { routine, agent, run, trigger } = ctx;
     const toolCtx: ToolContext = { organizationId: run.organization_id };

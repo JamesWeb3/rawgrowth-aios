@@ -18,18 +18,28 @@ export type RunContext = {
 /**
  * Atomically claim a pending run for execution. Uses an UPDATE-with-WHERE
  * so two concurrent workers can't both pick up the same run.
+ *
+ * Every query here is scoped by `organizationId` as well as the row id:
+ * the service-role client bypasses RLS, so a runId (or its routine /
+ * trigger ids) from another tenant must not be claimable, readable, or
+ * able to stamp last_run_at on a foreign routine. An org mismatch falls
+ * through to the same `null` return as a lost claim race.
  */
-export async function claimRun(runId: string): Promise<RunContext | null> {
+export async function claimRun(
+  runId: string,
+  orgId: string,
+): Promise<RunContext | null> {
   const db = supabaseAdmin();
   const { data: run, error } = await db
     .from("rgaios_routine_runs")
     .update({ status: "running", started_at: new Date().toISOString() })
     .eq("id", runId)
+    .eq("organization_id", orgId)
     .eq("status", "pending")
     .select("*")
     .maybeSingle();
   if (error) throw new Error(`claimRun: ${error.message}`);
-  if (!run) return null; // already claimed or gone
+  if (!run) return null; // already claimed, gone, or wrong org
 
   // Routine + trigger are independent of each other; fire them in
   // parallel. Agent depends on routine.assignee_agent_id so it's the
@@ -39,12 +49,14 @@ export async function claimRun(runId: string): Promise<RunContext | null> {
       .from("rgaios_routines")
       .select("*")
       .eq("id", run.routine_id)
+      .eq("organization_id", orgId)
       .single(),
     run.trigger_id
       ? db
           .from("rgaios_routine_triggers")
           .select("*")
           .eq("id", run.trigger_id)
+          .eq("organization_id", orgId)
           .maybeSingle()
       : Promise.resolve({ data: null as TriggerRow | null }),
   ]);
@@ -62,7 +74,8 @@ export async function claimRun(runId: string): Promise<RunContext | null> {
   await db
     .from("rgaios_routines")
     .update({ last_run_at: new Date().toISOString() })
-    .eq("id", run.routine_id);
+    .eq("id", run.routine_id)
+    .eq("organization_id", orgId);
 
   let agent: AgentRow | null = null;
   if (routine.assignee_agent_id) {

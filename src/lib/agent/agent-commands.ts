@@ -670,7 +670,9 @@ async function execAgentInvoke(
     // poll deadline. Awaiting executeRun here blocks the agent_invoke
     // command result by ~5-30s but makes the orchestration deterministic.
     try {
-      await import("@/lib/runs/executor").then((m) => m.executeRun(runId));
+      await import("@/lib/runs/executor").then((m) =>
+        m.executeRun(runId, orgId),
+      );
     } catch (err) {
       console.warn(
         `[agent-commands] executeRun failed inline for run ${runId}: ${(err as Error).message}`,
