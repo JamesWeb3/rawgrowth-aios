@@ -145,22 +145,43 @@ export async function executeRun(
       clearTimeout(wallClockTimer);
     }
 
-    await finaliseRun(
-      runId,
-      "succeeded",
-      {
-        text: result.text,
-        stepCount: result.stepCount,
-        toolCalls: result.toolCalls,
-      },
-    );
+    // "no exception thrown" is not "succeeded". The CLI path can exit 0
+    // with an empty string, and either path can return a bare refusal -
+    // recording those as succeeded hides real failures. Require some
+    // actual output before calling it a success; otherwise fail with a
+    // clear reason so the run shows up as needing attention.
+    const outText = (result.text ?? "").trim();
+    if (outText.length < 2) {
+      await finaliseRun(
+        runId,
+        "failed",
+        null,
+        "Agent returned no output (empty response from the model runtime).",
+      );
+      await auditLog(run.organization_id, "run_failed", {
+        run_id: run.id,
+        routine_id: routine.id,
+        agent_id: agent?.id ?? null,
+        error: "empty model output",
+      });
+    } else {
+      await finaliseRun(
+        runId,
+        "succeeded",
+        {
+          text: result.text,
+          stepCount: result.stepCount,
+          toolCalls: result.toolCalls,
+        },
+      );
 
-    await auditLog(run.organization_id, "run_succeeded", {
-      run_id: run.id,
-      routine_id: routine.id,
-      agent_id: agent?.id ?? null,
-      text_preview: result.text.slice(0, 500),
-    });
+      await auditLog(run.organization_id, "run_succeeded", {
+        run_id: run.id,
+        routine_id: routine.id,
+        agent_id: agent?.id ?? null,
+        text_preview: result.text.slice(0, 500),
+      });
+    }
   } catch (err) {
     const message = (err as Error).message ?? "unknown error";
     if (ctx) {

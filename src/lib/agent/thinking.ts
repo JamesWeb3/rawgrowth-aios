@@ -42,15 +42,42 @@ export function extractThinking(reply: string): ExtractedThinking {
   if (!reply) return { thinking: null, visibleReply: reply ?? "" };
 
   const m = reply.match(THINKING_RE);
-  if (!m) return { thinking: null, visibleReply: reply.trim() };
+  if (!m) {
+    // Truncation case: the model is told to OPEN every reply with a
+    // <thinking> block. If max_tokens cut the reply before the closing
+    // </thinking>, THINKING_RE (which needs the close tag) does not
+    // match - and the raw `<thinking>` open tag + reasoning would leak
+    // into the operator-visible reply. Detect a lone open tag with no
+    // close: everything after it is the (truncated) thinking, whatever
+    // preceded it is the visible reply.
+    const openOnly = reply.match(/<thinking>/i);
+    if (openOnly && !/<\/thinking>/i.test(reply)) {
+      const idx = openOnly.index ?? 0;
+      const raw = reply
+        .slice(idx + openOnly[0].length)
+        .replace(/\s*\n\s*/g, " ")
+        .trim();
+      return {
+        thinking: raw ? raw.slice(0, 600) : null,
+        visibleReply: reply.slice(0, idx).trim(),
+      };
+    }
+    // No thinking markup at all - but still strip any stray lone tag.
+    return {
+      thinking: null,
+      visibleReply: reply.replace(/<\/?thinking>/gi, "").trim(),
+    };
+  }
 
   const raw = (m[1] ?? "").replace(/\s*\n\s*/g, " ").trim();
   const thinking = raw ? raw.slice(0, 600) : null;
 
-  // Strip ALL <thinking> blocks (the matched one + any extras) so no raw
-  // XML survives into the visible reply.
+  // Strip ALL <thinking> blocks (the matched one + any extras) PLUS any
+  // stray unpaired <thinking>/</thinking> tag so no raw XML survives
+  // into the visible reply.
   const visibleReply = reply
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<\/?thinking>/gi, "")
     .trim();
 
   return { thinking, visibleReply };
