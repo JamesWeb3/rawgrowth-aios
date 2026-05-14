@@ -103,8 +103,13 @@ registerTool({
     const resolved = await resolveApifyKey(ctx.organizationId);
     if ("error" in resolved) return textError(resolved.error);
 
+    // Apify API expects the actor id in the path as `username~actorname`.
+    // Models naturally write `apify/instagram-scraper` (the slash form
+    // shown on apify.com) - left as-is that becomes an extra path
+    // segment and the API 404s ("no API endpoint at this URL").
+    const actorPath = actorId.replace("/", "~");
     const url =
-      `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items` +
+      `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
       `?token=${encodeURIComponent(resolved.key)}&limit=${limit}`;
 
     let res: Response;
@@ -175,8 +180,10 @@ registerTool({
     const resolved = await resolveApifyKey(ctx.organizationId);
     if ("error" in resolved) return textError(resolved.error);
 
+    // Slash form (`apify/instagram-scraper`) -> tilde form for the path.
+    const actorPath = actorId.replace("/", "~");
     const url =
-      `https://api.apify.com/v2/acts/${actorId}/runs` +
+      `https://api.apify.com/v2/acts/${actorPath}/runs` +
       `?token=${encodeURIComponent(resolved.key)}&limit=${limit}&desc=true`;
 
     let res: Response;

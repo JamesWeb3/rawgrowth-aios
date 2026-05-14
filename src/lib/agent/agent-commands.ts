@@ -360,6 +360,7 @@ async function execToolCall(
           ok: false,
           type: "tool_call",
           summary: `${tool} failed: ${out.slice(0, 240) || "unknown error"}`,
+          detail: { tool },
         };
       }
       return {
@@ -373,6 +374,7 @@ async function execToolCall(
         ok: false,
         type: "tool_call",
         summary: `${tool} failed: ${(err as Error).message.slice(0, 200)}`,
+        detail: { tool },
       };
     }
   }
