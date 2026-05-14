@@ -115,7 +115,8 @@ export async function buildAgentChatPreamble(input: {
     "  - NEVER invent a history you did not live: no '5th escalation', no 'prior messages unacknowledged', no fabricated timeline. You only know what is in this conversation, your memory blocks, and tool results. If you have not actually done a thing, do not refer to having done it.\n" +
     "  - NEVER issue ultimatums or deadlines, and NEVER threaten to escalate to the client, the CEO, or anyone else ('if no reply by EOD I will...'). You flag, you recommend, the operator decides. That is the whole loop.\n" +
     "  - A real blocker (infra down, integration failing, missing data) is surfaced as PLAIN TEXT in your reply with your reasoning - 'Blocker: <what>, <why it matters>. Want me to <option A> or <option B>?' - never as a self-dispatched outbound action.\n" +
-    "Being proactive and staying inside these boundaries are the same skill. An agent that fires unprompted messages at people is not proactive, it is unsafe.\n";
+    "Being proactive and staying inside these boundaries are the same skill. An agent that fires unprompted messages at people is not proactive, it is unsafe.\n\n" +
+    "GROUND every proactive suggestion in a REAL signal. A proactive flag must be ANCHORED to a concrete number or fact you can actually see this turn: a row in the RECENT SIGNALS & METRICS block below, a fact in SHARED ORG MEMORY, a tool result you got back, the pending-tasks list, or the company corpus. Cite it - 'open rate dropped to X% (RECENT SIGNALS above)' or 'lead #4 has been stuck 9 days (CRM result)'. If there is NO real signal pointing at a problem, the honest move is to NOT raise one - do not invent a metric, a trend, a backlog, or an incident to look attentive. A grounded 'nothing flagged right now' beats a fabricated concern every time.\n";
 
   // 0-pre. Shared org memory. Facts every agent should "just know" -
   //   client uses Shopify, the operator's Instagram is @x, decided to
@@ -151,6 +152,105 @@ export async function buildAgentChatPreamble(input: {
     // best-effort - a memory-lookup failure never blocks the reply
     console.warn(
       "[preamble] shared org memory skipped:",
+      (err as Error).message,
+    );
+  }
+
+  // 0-pre-a2. Recent signals & metrics. The whole point of "be proactive"
+  //   is that a flag must point at something REAL - a live agent once
+  //   hallucinated a 15-failure infra incident because the preamble gave
+  //   it no actual numbers to anchor on. Inject a TIGHT snapshot of what
+  //   the system has already computed/scraped for this org: the few open
+  //   rgaios_insights anomalies (dept + metric + what moved) and the
+  //   latest scrape-snapshot engagement metrics. Capped hard like the
+  //   shared-memory block - this is per-turn context, not a report.
+  //   Best-effort: a failed query just skips the block.
+  try {
+    const signalLines: string[] = [];
+
+    // Open insights = the system's own anomaly/opportunity detector.
+    // Pull a handful of the most recent still-open rows, newest first.
+    const { data: insightRows } = await db
+      .from("rgaios_insights")
+      .select(
+        "department, metric, title, severity, current_value, prior_value, delta_pct, status, created_at",
+      )
+      .eq("organization_id", orgId)
+      .in("status", ["open", "acknowledged", "executing"])
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const insights = (insightRows ?? []) as Array<{
+      department: string | null;
+      metric: string;
+      title: string;
+      severity: string;
+      current_value: number | null;
+      prior_value: number | null;
+      delta_pct: number | null;
+      status: string;
+    }>;
+    for (const r of insights) {
+      const dept = r.department ?? "org-wide";
+      const move =
+        r.prior_value != null && r.current_value != null
+          ? ` (${r.prior_value} -> ${r.current_value}${
+              r.delta_pct != null
+                ? `, ${r.delta_pct > 0 ? "+" : ""}${Math.round(
+                    r.delta_pct * 100,
+                  )}%`
+                : ""
+            })`
+          : "";
+      signalLines.push(
+        `  - [${r.severity}/${r.status}] ${dept}: ${r.title}${move}`,
+      );
+    }
+
+    // Latest scrape snapshots with engagement metrics - what the org's
+    // own content / ads actually pulled. Keep it to the newest few.
+    const { data: snapRows } = await db
+      .from("rgaios_scrape_snapshots")
+      .select("kind, title, metrics, scraped_at, created_at")
+      .eq("organization_id", orgId)
+      .eq("status", "succeeded")
+      .order("created_at", { ascending: false })
+      .limit(4);
+    const snaps = (snapRows ?? []) as Array<{
+      kind: string;
+      title: string | null;
+      metrics: Record<string, unknown> | null;
+      scraped_at: string | null;
+    }>;
+    for (const s of snaps) {
+      const m = s.metrics ?? {};
+      const num = (k: string): string | null => {
+        const v = m[k];
+        return typeof v === "number" ? String(v) : null;
+      };
+      const parts = [
+        num("view_count") && `${num("view_count")} views`,
+        num("like_count") && `${num("like_count")} likes`,
+        num("comment_count") && `${num("comment_count")} comments`,
+        num("engagement_score") && `eng ${num("engagement_score")}`,
+      ].filter(Boolean) as string[];
+      if (parts.length === 0) continue;
+      const label = (s.title ?? "").replace(/\s+/g, " ").slice(0, 50);
+      signalLines.push(
+        `  - [${s.kind}]${label ? ` ${label}:` : ""} ${parts.join(", ")}`,
+      );
+    }
+
+    if (signalLines.length > 0) {
+      preamble +=
+        "\n\n═══ RECENT SIGNALS & METRICS (real, system-computed) ═══\n\n" +
+        "These are REAL signals the system has already computed or scraped for this org - open anomaly cards and the latest content/ads engagement numbers. They are your source for proactive flags: if you raise something proactively, anchor it to a line here (or to shared memory / a tool result / the corpus) and cite it. Do NOT invent signals that are not in this list.\n" +
+        signalLines.join("\n") +
+        "\n";
+    }
+  } catch (err) {
+    // best-effort - a signals-lookup failure never blocks the reply
+    console.warn(
+      "[preamble] recent signals & metrics skipped:",
       (err as Error).message,
     );
   }
