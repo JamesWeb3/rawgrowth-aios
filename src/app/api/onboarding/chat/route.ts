@@ -759,7 +759,7 @@ async function completeOnboarding(
   const transcriptRow = {
     organization_id: userId,
     full_transcript: cleanTranscript,
-  } as Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"];
+  } as unknown as Database["public"]["Tables"]["rgaios_brand_intakes"]["Insert"];
 
   const { error: transcriptErr } = await supabaseAdmin()
     .from("rgaios_brand_intakes")

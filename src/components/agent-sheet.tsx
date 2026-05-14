@@ -37,6 +37,7 @@ import {
 import {
   AGENT_ROLES,
   AGENT_RUNTIMES,
+  DEFAULT_AGENT_RUNTIME,
   type AgentRole,
   type AgentRuntime,
 } from "@/lib/agents/constants";
@@ -57,7 +58,10 @@ const NONE = "__none__";
 // Quick-hire defaults per Chris's spec: drop-files-and-go flow. The full
 // form is still available behind the Advanced toggle, so power users can
 // still tune runtime / budget / tools when they need to.
-const QUICK_HIRE_RUNTIME: AgentRuntime = "anthropic-cli" as AgentRuntime;
+// runtime is the MODEL the agent runs on, not a provider id. The old
+// "anthropic-cli" was a provider/runtime mixup hidden by an `as` cast;
+// quick hires now get the standard default model (matches agent-blocks.ts).
+const QUICK_HIRE_RUNTIME: AgentRuntime = DEFAULT_AGENT_RUNTIME;
 const QUICK_HIRE_BUDGET = 50;
 
 // Map a freeform role text or a role-templates label onto the

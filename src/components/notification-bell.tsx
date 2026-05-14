@@ -38,13 +38,60 @@ export function NotificationBell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const { data } = useSWR<{ notifications: Notification[] }>(
+  const { data, mutate } = useSWR<{ notifications: Notification[] }>(
     "/api/notifications/agents",
     jsonFetcher,
     { refreshInterval: 5000 },
   );
   const notifs = data?.notifications ?? [];
   const count = notifs.length;
+
+  // Dismiss = soft-archive on the server so it never comes back. We
+  // mutate SWR optimistically (drop the row from the local list,
+  // revalidate: false) so the badge ticks down instantly instead of
+  // waiting on the 5s poll. Before this the bell had no dismiss path
+  // at all - the badge was stuck on every proactive message from the
+  // last 7 days.
+  async function dismiss(id: string) {
+    await mutate(
+      async (cur) => {
+        await fetch("/api/notifications/agents", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        return {
+          notifications: (cur?.notifications ?? []).filter((n) => n.id !== id),
+        };
+      },
+      {
+        optimisticData: (cur) => ({
+          notifications: (cur?.notifications ?? []).filter((n) => n.id !== id),
+        }),
+        rollbackOnError: true,
+        revalidate: false,
+      },
+    );
+  }
+
+  async function dismissAll() {
+    await mutate(
+      async () => {
+        await fetch("/api/notifications/agents", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ all: true }),
+        });
+        return { notifications: [] };
+      },
+      {
+        optimisticData: { notifications: [] },
+        rollbackOnError: true,
+        revalidate: false,
+      },
+    );
+    setOpen(false);
+  }
 
   return (
     <div className="relative">
@@ -82,13 +129,25 @@ export function NotificationBell() {
               <h4 className="text-[11px] font-semibold uppercase tracking-[1.5px] text-muted-foreground">
                 Agent messages ({count})
               </h4>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3.5" strokeWidth={1.8} />
-              </button>
+              <div className="flex items-center gap-3">
+                {count > 0 && (
+                  <button
+                    type="button"
+                    onClick={dismissAll}
+                    className="text-[10px] font-medium uppercase tracking-[1px] text-muted-foreground hover:text-foreground"
+                  >
+                    Dismiss all
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="Close menu"
+                  onClick={() => setOpen(false)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" strokeWidth={1.8} />
+                </button>
+              </div>
             </div>
             <ul className="max-h-[420px] divide-y divide-border/40 overflow-y-auto">
               {notifs.length === 0 && (
@@ -103,11 +162,17 @@ export function NotificationBell() {
                 const Icon =
                   n.kind === "data_ask" ? MessageCircleQuestion : Sparkles;
                 return (
-                  <li key={n.id}>
+                  <li key={n.id} className="group relative">
                     <Link
                       href={`/chat?agent=${n.agent_id}`}
-                      onClick={() => setOpen(false)}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
+                      // Clicking through also dismisses: an opened
+                      // notification is a read notification, so it
+                      // shouldn't keep inflating the badge.
+                      onClick={() => {
+                        void dismiss(n.id);
+                        setOpen(false);
+                      }}
+                      className="flex gap-3 py-3 pl-4 pr-9 transition-colors hover:bg-muted/30"
                     >
                       <Icon className="mt-0.5 size-3.5 shrink-0 text-primary" strokeWidth={1.8} />
                       <div className="min-w-0 flex-1">
@@ -124,6 +189,14 @@ export function NotificationBell() {
                         </p>
                       </div>
                     </Link>
+                    <button
+                      type="button"
+                      aria-label="Dismiss notification"
+                      onClick={() => void dismiss(n.id)}
+                      className="absolute right-2 top-2.5 rounded p-1 text-muted-foreground/50 opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <X className="size-3" strokeWidth={2} />
+                    </button>
                   </li>
                 );
               })}
