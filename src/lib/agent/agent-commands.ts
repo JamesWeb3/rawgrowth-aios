@@ -587,6 +587,60 @@ async function execToolCall(
   }
 }
 
+// Hard ceiling on delegation chain length. A -> B -> C -> D is depth 3
+// (three hops from the original speaker); a fourth hop is refused. Keeps
+// fan-out bounded so a council that re-delegates can't recurse without
+// limit - each hop still spawns a routine + run + inline executeRun.
+const MAX_DELEGATION_DEPTH = 3;
+
+/**
+ * Best-effort discovery of the delegation chain that led to THIS
+ * speaker's turn. The chat surface that calls extractAndExecuteCommands
+ * only hands us `speakerId` + `orgId` - it does not thread the incoming
+ * run's input_payload through. So when the speaker is itself a delegated
+ * agent, the only reachable signal is the DB: find the most recent
+ * delegation run assigned to this speaker and read the chain we wrote
+ * onto its input_payload. Returns the chain (agent ids, oldest first)
+ * and its depth. Empty chain => speaker is an original (operator-driven)
+ * caller, not part of a delegation chain.
+ */
+async function loadIncomingChain(
+  orgId: string,
+  speakerId: string,
+): Promise<{ chain: string[]; depth: number }> {
+  try {
+    const db = supabaseAdmin();
+    // Join runs -> routines so we can match the routine's assignee to
+    // the speaker. delegation/agent_invoke runs are the only ones that
+    // carry a delegation_chain on input_payload.
+    const { data } = await db
+      .from("rgaios_routine_runs")
+      .select("input_payload, created_at, rgaios_routines!inner(assignee_agent_id)")
+      .eq("organization_id", orgId)
+      .eq("rgaios_routines.assignee_agent_id", speakerId)
+      .in("source", ["chat_command", "agent_invoke"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ip = (data as { input_payload?: unknown } | null)?.input_payload;
+    if (ip && typeof ip === "object" && !Array.isArray(ip)) {
+      const o = ip as Record<string, unknown>;
+      const chain = Array.isArray(o.delegation_chain)
+        ? (o.delegation_chain as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      const depth =
+        typeof o.delegation_depth === "number" ? o.delegation_depth : chain.length;
+      return { chain, depth };
+    }
+  } catch {
+    // DB hiccup must not block delegation - fall back to "no known
+    // chain" so the direct-self-invoke guard below still applies.
+  }
+  return { chain: [], depth: 0 };
+}
+
 async function execAgentInvoke(
   orgId: string,
   speakerId: string,
@@ -599,16 +653,43 @@ async function execAgentInvoke(
       summary: "agent_invoke payload must be a JSON object",
     };
   }
-  const { agent, task } = payload as { agent?: string; task?: string };
+  // task/prompt stays the freeform objective string (backward compatible).
+  // output_format + constraints are optional structured-handoff fields:
+  // Anthropic guidance says every subagent handoff needs an objective, an
+  // output format, and clear boundaries - we append them as labelled
+  // blocks to the task text the delegated run receives.
+  const {
+    agent,
+    task,
+    output_format: outputFormat,
+    constraints,
+  } = payload as {
+    agent?: string;
+    task?: string;
+    output_format?: string;
+    constraints?: string;
+  };
   const target = (agent ?? "").trim();
-  const taskText = (task ?? "").trim();
-  if (!target || !taskText) {
+  const baseTask = (task ?? "").trim();
+  if (!target || !baseTask) {
     return {
       ok: false,
       type: "agent_invoke",
       summary: "agent_invoke requires agent + task",
     };
   }
+  // Compose the delegated task: objective first, then the optional
+  // OUTPUT FORMAT / CONSTRAINTS blocks so the sub-agent has explicit
+  // boundaries. A payload with only `task` produces exactly baseTask.
+  const fmt = (outputFormat ?? "").trim();
+  const cons = (constraints ?? "").trim();
+  const taskText = [
+    baseTask,
+    fmt ? `OUTPUT FORMAT: ${fmt}` : "",
+    cons ? `CONSTRAINTS: ${cons}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const resolved = await resolveAgent(orgId, target);
   if (!resolved) {
     return {
@@ -625,6 +706,28 @@ async function execAgentInvoke(
       ok: false,
       type: "agent_invoke",
       summary: "agent_invoke refused - cannot invoke yourself; emit a <task> block instead",
+    };
+  }
+  // Cycle + depth guard. The incoming chain is whatever we can recover
+  // from the DB (see loadIncomingChain) - it is the chain that led to
+  // this speaker's turn. The outgoing chain appends the speaker. Refuse
+  // if the target is already somewhere in the chain (A->B->A, A->B->C->A)
+  // or if appending the speaker would exceed MAX_DELEGATION_DEPTH.
+  const incoming = await loadIncomingChain(orgId, speakerId);
+  const outgoingChain = [...incoming.chain, speakerId];
+  const outgoingDepth = outgoingChain.length;
+  if (incoming.chain.includes(resolved.id)) {
+    return {
+      ok: false,
+      type: "agent_invoke",
+      summary: `agent_invoke refused - delegation cycle: ${resolved.name} is already in this chain`,
+    };
+  }
+  if (outgoingDepth > MAX_DELEGATION_DEPTH) {
+    return {
+      ok: false,
+      type: "agent_invoke",
+      summary: `agent_invoke refused - delegation depth limit (${MAX_DELEGATION_DEPTH}) reached; chain is too long to fan out further`,
     };
   }
   const db = supabaseAdmin();
@@ -679,6 +782,14 @@ async function execAgentInvoke(
       input_payload: {
         delegated_by_agent_id: speakerId,
         title: taskText.slice(0, 200),
+        // Delegation chain bookkeeping. delegation_chain is the ordered
+        // list of agent ids that delegated to reach this run (oldest
+        // first, includes the speaker); delegation_depth is its length.
+        // loadIncomingChain reads these back when the assignee later
+        // emits its own agent_invoke, so the depth/cycle guard works
+        // across hops even though the chat surface doesn't thread them.
+        delegation_depth: outgoingDepth,
+        delegation_chain: outgoingChain,
       },
     } as never)
     .select("id")
@@ -1017,57 +1128,103 @@ export async function extractAndExecuteCommands(input: {
     };
   }
 
-  const results: CommandResult[] = [];
-  for (const m of pending) {
-    const type = m.type;
-    const payload = tryParseJson(m.body);
+  // Fires the "about to run" progress signal for one command. Hoisted
+  // out of the loop so the parallel agent_invoke path can still emit a
+  // per-invoke signal just before its concurrent batch starts.
+  const fireProgress = (type: string, payload: unknown): void => {
+    if (!onProgress) return;
+    let label = type;
+    if (type === "agent_invoke") {
+      label = (payload as { agent?: string }).agent?.trim() || "an agent";
+    } else if (type === "tool_call") {
+      const tp = payload as {
+        tool?: string;
+        args?: { app?: string; action?: string };
+      };
+      label =
+        tp.tool === "composio_use_tool"
+          ? (tp.args?.app || tp.args?.action || "a tool")
+          : tp.tool || "a tool";
+    } else if (type === "routine_create") {
+      label = (payload as { title?: string }).title?.trim() || "a routine";
+    }
+    try {
+      onProgress({ type, label });
+    } catch {
+      /* progress is best-effort - never block execution */
+    }
+  };
+
+  // Executes one already-parsed command. payload === null means the body
+  // failed to parse. Pure dispatch - no progress firing - so the caller
+  // controls progress timing (sequential vs. parallel batch).
+  const runOne = async (
+    type: string,
+    payload: unknown,
+  ): Promise<CommandResult> => {
     if (payload === null) {
-      results.push({
+      return {
         ok: false,
         type,
         summary: `command type=${type}: body is not valid JSON`,
-      });
-      continue;
-    }
-    // Live progress: tell the operator what is about to run BEFORE the
-    // (slow) call starts - "Basia is answering now", "Running gmail".
-    if (onProgress) {
-      let label = type;
-      if (type === "agent_invoke") {
-        label = (payload as { agent?: string }).agent?.trim() || "an agent";
-      } else if (type === "tool_call") {
-        const tp = payload as {
-          tool?: string;
-          args?: { app?: string; action?: string };
-        };
-        label =
-          tp.tool === "composio_use_tool"
-            ? (tp.args?.app || tp.args?.action || "a tool")
-            : tp.tool || "a tool";
-      } else if (type === "routine_create") {
-        label = (payload as { title?: string }).title?.trim() || "a routine";
-      }
-      try {
-        onProgress({ type, label });
-      } catch {
-        /* progress is best-effort - never block execution */
-      }
+      };
     }
     if (type === "tool_call") {
-      results.push(
-        await execToolCall(orgId, speakerAgentId, payload, callerUserId ?? null),
-      );
-    } else if (type === "agent_invoke") {
-      results.push(await execAgentInvoke(orgId, speakerAgentId, payload));
-    } else if (type === "routine_create") {
-      results.push(await execRoutineCreate(orgId, speakerAgentId, payload));
-    } else {
-      results.push({
-        ok: false,
-        type,
-        summary: `unknown command type "${type}" - supported: tool_call, agent_invoke, routine_create`,
-      });
+      return execToolCall(orgId, speakerAgentId, payload, callerUserId ?? null);
     }
+    if (type === "agent_invoke") {
+      return execAgentInvoke(orgId, speakerAgentId, payload);
+    }
+    if (type === "routine_create") {
+      return execRoutineCreate(orgId, speakerAgentId, payload);
+    }
+    return {
+      ok: false,
+      type,
+      summary: `unknown command type "${type}" - supported: tool_call, agent_invoke, routine_create`,
+    };
+  };
+
+  // Pre-parse every command once so the parallel path and the progress
+  // labels share the same payload object.
+  const parsed = pending.map((m) => ({
+    type: m.type,
+    payload: tryParseJson(m.body),
+  }));
+
+  // results[] is index-aligned with `pending` no matter the execution
+  // order - the audit log + the operator-visible reply stay deterministic.
+  const results: CommandResult[] = new Array(parsed.length);
+
+  // FIX: a COO/Atlas council is several agent_invoke blocks in one turn.
+  // Those are independent delegations to different agents, so run each
+  // contiguous run of agent_invoke commands CONCURRENTLY (Promise.all) -
+  // Anthropic's multi-agent speedup comes from subagents running in
+  // parallel, not back-to-back. tool_call / routine_create stay strictly
+  // sequential and in their original order: they may carry ordering
+  // intent (do X, then schedule a routine about X).
+  let i = 0;
+  while (i < parsed.length) {
+    const cmd = parsed[i];
+    if (cmd.type === "agent_invoke") {
+      // Greedily collect the contiguous agent_invoke batch.
+      let j = i;
+      while (j < parsed.length && parsed[j].type === "agent_invoke") j++;
+      const batch = parsed.slice(i, j);
+      // Emit each "about to run" signal up front so the operator sees the
+      // whole council convene at once, then fan the batch out concurrently.
+      for (const b of batch) fireProgress(b.type, b.payload);
+      const settled = await Promise.all(
+        batch.map((b) => runOne(b.type, b.payload)),
+      );
+      for (let k = 0; k < settled.length; k++) results[i + k] = settled[k];
+      i = j;
+      continue;
+    }
+    // Non-invoke command: fire progress then run it inline, in order.
+    fireProgress(cmd.type, cmd.payload);
+    results[i] = await runOne(cmd.type, cmd.payload);
+    i++;
   }
 
   // Audit one row per command. Best-effort - chat reply still surfaces

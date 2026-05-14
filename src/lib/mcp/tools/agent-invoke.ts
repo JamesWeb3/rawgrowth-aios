@@ -14,13 +14,66 @@ import { registerTool, text, textError } from "../registry";
  * by the 4-spawn cap.
  */
 
+// Hard ceiling on delegation chain length, mirrored from the chat
+// agent-commands surface. A -> B -> C -> D is depth 3 (three hops); a
+// fourth hop is refused so re-delegation can't recurse unbounded.
+const MAX_DELEGATION_DEPTH = 3;
+
+/**
+ * Best-effort discovery of the delegation chain that led to the CALLER
+ * of this tool. The MCP ToolContext only carries organizationId +
+ * userId - no run id, no input_payload - so the incoming chain is not
+ * cleanly threadable. The reachable signal is the DB: find the most
+ * recent delegation/agent_invoke run assigned to the caller and read
+ * the delegation_chain we wrote onto its input_payload. Empty chain =>
+ * the caller is not itself a delegated agent.
+ */
+async function loadIncomingChain(
+  db: ReturnType<typeof supabaseAdmin>,
+  orgId: string,
+  callerAgentId: string,
+): Promise<{ chain: string[]; depth: number }> {
+  if (!callerAgentId) return { chain: [], depth: 0 };
+  try {
+    const { data } = await db
+      .from("rgaios_routine_runs")
+      .select("input_payload, created_at, rgaios_routines!inner(assignee_agent_id)")
+      .eq("organization_id", orgId)
+      .eq("rgaios_routines.assignee_agent_id", callerAgentId)
+      .in("source", ["chat_command", "agent_invoke"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ip = (data as { input_payload?: unknown } | null)?.input_payload;
+    if (ip && typeof ip === "object" && !Array.isArray(ip)) {
+      const o = ip as Record<string, unknown>;
+      const chain = Array.isArray(o.delegation_chain)
+        ? (o.delegation_chain as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      const depth =
+        typeof o.delegation_depth === "number"
+          ? o.delegation_depth
+          : chain.length;
+      return { chain, depth };
+    }
+  } catch {
+    // DB hiccup must not block delegation - fall back to "no known chain".
+  }
+  return { chain: [], depth: 0 };
+}
+
 registerTool({
   name: "agent_invoke",
   description:
     "Delegate a task to another agent in this organization. The target " +
     "agent runs the task and returns a single text reply. Use when the " +
     "current manager persona needs a sub-agent's specialty (e.g., a " +
-    "Copywriter's draft) mid-conversation.",
+    "Copywriter's draft) mid-conversation. For a clean handoff, pass " +
+    "output_format (the exact shape you want the reply in) and " +
+    "constraints (boundaries: what to avoid, scope limits, tone) - a " +
+    "well-scoped handoff gives a sharper sub-agent reply.",
   inputSchema: {
     type: "object",
     required: ["agent_id", "prompt"],
@@ -33,6 +86,20 @@ registerTool({
         type: "string",
         description: "The task for the target agent, in plain English.",
       },
+      output_format: {
+        type: "string",
+        description:
+          "Optional. The exact output shape you expect back (e.g. " +
+          "'3 bullet points', 'a JSON object with keys x,y', 'one " +
+          "paragraph'). Appended to the task as a labelled block.",
+      },
+      constraints: {
+        type: "string",
+        description:
+          "Optional. Boundaries for the sub-agent: what to avoid, " +
+          "scope limits, tone, tools to prefer. Appended to the task " +
+          "as a labelled block.",
+      },
       timeout_ms: {
         type: "number",
         description:
@@ -42,11 +109,23 @@ registerTool({
   },
   handler: async (args, ctx) => {
     const agentId = String(args.agent_id ?? "").trim();
-    const prompt = String(args.prompt ?? "").trim();
+    const basePrompt = String(args.prompt ?? "").trim();
+    const outputFormat = String(args.output_format ?? "").trim();
+    const constraints = String(args.constraints ?? "").trim();
     const timeoutMs = Math.min(Number(args.timeout_ms ?? 90_000) || 90_000, 120_000);
-    if (!agentId || !prompt) {
+    if (!agentId || !basePrompt) {
       return textError("agent_id and prompt are required.");
     }
+    // Structured handoff: objective first, then optional OUTPUT FORMAT /
+    // CONSTRAINTS blocks. A call with only `prompt` produces exactly
+    // basePrompt - fully backward compatible with existing callers.
+    const prompt = [
+      basePrompt,
+      outputFormat ? `OUTPUT FORMAT: ${outputFormat}` : "",
+      constraints ? `CONSTRAINTS: ${constraints}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const db = supabaseAdmin();
 
@@ -57,6 +136,34 @@ registerTool({
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     if (!target) return textError("Agent not found in this organization.");
+
+    // Cycle + depth guard. The MCP context does not identify the calling
+    // agent directly (no run id, no input_payload), so the reachable
+    // signal is the incoming chain recovered from the DB keyed on
+    // ctx.userId. Refuse a hop that would re-enter the chain or exceed
+    // the depth cap. When no chain is discoverable the call proceeds
+    // (treated as an original operator-driven invoke).
+    const incoming = await loadIncomingChain(
+      db,
+      ctx.organizationId,
+      String(ctx.userId ?? ""),
+    );
+    if (incoming.chain.includes(agentId)) {
+      return textError(
+        `agent_invoke refused - delegation cycle: ${target.name} is already in this chain.`,
+      );
+    }
+    if (incoming.depth + 1 > MAX_DELEGATION_DEPTH) {
+      return textError(
+        `agent_invoke refused - delegation depth limit (${MAX_DELEGATION_DEPTH}) reached; chain is too long to fan out further.`,
+      );
+    }
+    // Outgoing chain = incoming chain + this hop's target. We append the
+    // target (the MCP surface can't supply a verified caller id) so the
+    // assignee's own follow-up agent_invoke sees a chain that includes
+    // it, and the cycle check above still fires on re-entry.
+    const outgoingChain = [...incoming.chain, agentId];
+    const outgoingDepth = outgoingChain.length;
 
     // Find-or-create an "ad-hoc invocation" routine for this agent. We use
     // one long-lived routine per agent so run history stays grouped in the
@@ -104,7 +211,15 @@ registerTool({
         routine_id: routineId,
         source: "agent_invoke",
         status: "pending",
-        input_payload: { prompt, invoked_by: "manager" },
+        input_payload: {
+          prompt,
+          invoked_by: "manager",
+          // Delegation chain bookkeeping (see loadIncomingChain). Written
+          // on every run so the depth/cycle guard has data to read when
+          // the assignee later invokes another agent.
+          delegation_depth: outgoingDepth,
+          delegation_chain: outgoingChain,
+        },
       })
       .select("id")
       .single();
