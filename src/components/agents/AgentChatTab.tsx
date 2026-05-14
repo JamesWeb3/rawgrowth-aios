@@ -25,6 +25,7 @@ import {
 
 import { Response } from "@/components/ui/response";
 import { Button } from "@/components/ui/button";
+import AgentPlanPanel from "@/components/agents/AgentPlanPanel";
 import { AGENT_ROLES } from "@/lib/agents/constants";
 
 // One executed <command> block: a Composio tool call, an agent
@@ -761,6 +762,12 @@ export default function AgentChatTab({
           </div>
         </div>
       )}
+
+      {/* Plan panel - collapsed chip showing the orchestrator's durable
+          active plan (rgaios_plans) + per-step status. Sits below the
+          thread-controls strip so it never clutters the message
+          timeline; renders nothing when there is no active plan. */}
+      <AgentPlanPanel agentId={agentId} />
 
       {/* History drawer */}
       {historyOpen && (
