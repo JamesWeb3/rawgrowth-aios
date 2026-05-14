@@ -304,10 +304,14 @@ export function TraceClient({
                       {it.actor.name}
                     </span>
                     {it.routine && (
+                      // Link to the routines list, not /routines/<id> -
+                      // there is no per-routine detail route, and the
+                      // deep link 404s a Next.js RSC prefetch on hover.
                       <Link
-                        href={`/routines/${it.routine.id}`}
+                        href="/routines"
                         onClick={(e) => e.stopPropagation()}
                         className="text-[11px] text-primary hover:underline"
+                        title={it.routine.id}
                       >
                         {it.routine.title ?? it.routine.id.slice(0, 8)}
                       </Link>
