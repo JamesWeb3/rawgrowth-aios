@@ -631,8 +631,17 @@ function buildSystemPrompt(
   recentMemory: MemoryEntry[],
   pendingInbox: InboxEntry[],
 ): string {
+  // Prefer the role-template system_prompt (the agent's real persona,
+  // written by auto-train on hire) over the one-line description.
+  // buildAgentChatPreamble uses this exact precedence - without it,
+  // every executor run (scheduled routines AND agent_invoke
+  // delegations) drops the persona and the agent runs generic.
+  const personaBlock =
+    (agent?.system_prompt && agent.system_prompt.trim()) ||
+    (agent?.description && agent.description.trim()) ||
+    "";
   const agentIntro = agent
-    ? `You are ${agent.name}${agent.title ? `, ${agent.title}` : ""}, an AI employee at this organization. Role: ${agent.role}.${agent.description ? `\n\nYour responsibilities: ${agent.description}` : ""}`
+    ? `You are ${agent.name}${agent.title ? `, ${agent.title}` : ""}, an AI employee at this organization. Role: ${agent.role}.${personaBlock ? `\n\n${personaBlock}` : ""}`
     : `You are an autonomous AI agent running a routine for this organization.`;
 
   const lines = [
