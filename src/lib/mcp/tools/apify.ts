@@ -129,15 +129,20 @@ registerTool({
     // shown on apify.com) - left as-is that becomes an extra path
     // segment and the API 404s ("no API endpoint at this URL").
     const actorPath = actorId.replace("/", "~");
+    // Token goes in the Authorization header, not the query string - a
+    // secret in a URL leaks into access logs / proxy logs / error traces.
     const url =
       `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
-      `?token=${encodeURIComponent(resolved.key)}&limit=${fetchLimit}`;
+      `?limit=${fetchLimit}`;
 
     let res: Response;
     try {
       res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${resolved.key}`,
+        },
         body: JSON.stringify(runInput),
         signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
       });
@@ -271,14 +276,17 @@ registerTool({
 
     // Slash form (`apify/instagram-scraper`) -> tilde form for the path.
     const actorPath = actorId.replace("/", "~");
+    // Token in the Authorization header, not the query string (no secret
+    // in URLs - logs / proxies / error traces).
     const url =
       `https://api.apify.com/v2/acts/${actorPath}/runs` +
-      `?token=${encodeURIComponent(resolved.key)}&limit=${limit}&desc=true`;
+      `?limit=${limit}&desc=true`;
 
     let res: Response;
     try {
       res = await fetch(url, {
         method: "GET",
+        headers: { authorization: `Bearer ${resolved.key}` },
         signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
       });
     } catch (err) {
