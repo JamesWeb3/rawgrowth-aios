@@ -10,6 +10,7 @@ import {
 
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { tryDecryptSecret } from "@/lib/crypto";
+import { extractThinking } from "@/lib/agent/thinking";
 import {
   callTool,
   listTools,
@@ -153,12 +154,22 @@ export async function executeRun(
       clearTimeout(wallClockTimer);
     }
 
+    // Split the <thinking> ReAct block off the reply BEFORE finalising.
+    // The dashboard chat route + executeChatTask already do this; the
+    // executor did not, so a run's output.text carried the raw
+    // <thinking>...</thinking> XML straight into every downstream reader
+    // (the orchestration card, the agent_invoke summary, /trace). Store
+    // visibleReply for display + thinking separately, same shape as
+    // executeChatTask's run output.
+    const { thinking, visibleReply } = extractThinking(result.text ?? "");
+
     // "no exception thrown" is not "succeeded". The CLI path can exit 0
-    // with an empty string, and either path can return a bare refusal -
-    // recording those as succeeded hides real failures. Require some
-    // actual output before calling it a success; otherwise fail with a
-    // clear reason so the run shows up as needing attention.
-    const outText = (result.text ?? "").trim();
+    // with an empty string, either path can return a bare refusal, and
+    // a reply that was ONLY a <thinking> block has no real output -
+    // recording any of those as succeeded hides real failures. Require
+    // some actual VISIBLE output (post-thinking-strip) before calling
+    // it a success; otherwise fail with a clear reason.
+    const outText = visibleReply.trim();
     if (outText.length < 2) {
       const emptyErr =
         "Agent returned no output (empty response from the model runtime).";
@@ -178,7 +189,8 @@ export async function executeRun(
         runId,
         "succeeded",
         {
-          text: result.text,
+          text: visibleReply,
+          thinking: thinking ?? null,
           stepCount: result.stepCount,
           toolCalls: result.toolCalls,
         },
@@ -188,7 +200,7 @@ export async function executeRun(
         run_id: run.id,
         routine_id: routine.id,
         agent_id: agent?.id ?? null,
-        text_preview: result.text.slice(0, 500),
+        text_preview: visibleReply.slice(0, 500),
       });
     }
   } catch (err) {
