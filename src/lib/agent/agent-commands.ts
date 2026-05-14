@@ -39,6 +39,80 @@ const COMMAND_BLOCK_RE =
   /<command\s+type="([^"]+)"\s*>([\s\S]*?)<\/command>/gi;
 
 /**
+ * Render a Composio tool result as one natural-language line for the
+ * operator-visible "Commands executed" row. The raw JSON still rides
+ * along in `detail` for the expandable trace view - this is just the
+ * human-readable headline so Marti sees "Fetched 3 emails" instead of
+ * a wall of {"data":{"messages":[{"attachmentList":[]...}]}}.
+ */
+function humanizeToolResult(
+  app: string,
+  action: string,
+  result: unknown,
+): string {
+  const a = action.toUpperCase();
+  // Composio v3 wraps payloads as { data: ..., successful, error }.
+  const data =
+    result && typeof result === "object" && "data" in result
+      ? (result as { data?: unknown }).data
+      : result;
+  const countOf = (v: unknown): number | null => {
+    if (Array.isArray(v)) return v.length;
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      for (const k of ["messages", "items", "events", "data", "results"]) {
+        if (Array.isArray(o[k])) return (o[k] as unknown[]).length;
+      }
+    }
+    return null;
+  };
+  // Gmail
+  if (app === "gmail" || a.startsWith("GMAIL")) {
+    if (a.includes("FETCH") || a.includes("LIST")) {
+      const n = countOf(data);
+      return n === null
+        ? "Checked Gmail - got a response."
+        : `Fetched ${n} email${n === 1 ? "" : "s"} from the inbox.`;
+    }
+    if (a.includes("SEND")) return "Sent the email.";
+    if (a.includes("DRAFT")) return "Created an email draft.";
+    if (a.includes("PROFILE")) {
+      const d = data as { response_data?: { emailAddress?: string; messagesTotal?: number } } | undefined;
+      const email = d?.response_data?.emailAddress;
+      const total = d?.response_data?.messagesTotal;
+      return email
+        ? `Confirmed Gmail is connected (${email}${total ? `, ${total} total messages` : ""}).`
+        : "Confirmed the Gmail connection.";
+    }
+  }
+  // Google Calendar
+  if (app === "googlecalendar" || a.startsWith("GOOGLECALENDAR")) {
+    if (a.includes("EVENTS") || a.includes("LIST")) {
+      const n = countOf(data);
+      return n === null
+        ? "Checked the calendar."
+        : `Found ${n} calendar event${n === 1 ? "" : "s"}.`;
+    }
+    if (a.includes("CREATE")) return "Created a calendar event.";
+  }
+  // Instagram
+  if (app === "instagram" || a.startsWith("INSTAGRAM")) {
+    const n = countOf(data);
+    return n === null
+      ? "Pulled Instagram data."
+      : `Pulled ${n} Instagram post${n === 1 ? "" : "s"}.`;
+  }
+  // Slack
+  if (app === "slack" || a.startsWith("SLACK")) {
+    if (a.includes("POST") || a.includes("SEND")) return "Posted to Slack.";
+  }
+  // Generic fallback - still readable, no JSON wall.
+  const n = countOf(data);
+  if (n !== null) return `Ran ${app} ${action} - returned ${n} item${n === 1 ? "" : "s"}.`;
+  return `Ran ${app} ${action}.`;
+}
+
+/**
  * Tolerant fallback: when LLMs (Atlas in particular) emit the right JSON
  * payload but forget the <command type="..."> wrapper, scan the reply for
  * bare JSON objects whose top-level shape matches a known command type and
@@ -300,16 +374,22 @@ async function execToolCall(
       }
       throw raceErr;
     }
+    // Natural-language summary instead of a raw JSON dump. The old code
+    // pasted `JSON.stringify(result).slice(0,400)` straight into the
+    // operator-visible "Commands executed" row - Marti saw walls of
+    // {"data":{"messages":[{"attachmentList":[]...}]}}. Now we render a
+    // human line ("Fetched 3 emails", "Sent the message") and keep the
+    // raw payload only in `detail` for the expandable trace view.
     let preview: string;
     try {
-      preview = JSON.stringify(result).slice(0, 400);
+      preview = JSON.stringify(result).slice(0, 1000);
     } catch {
-      preview = String(result).slice(0, 400);
+      preview = String(result).slice(0, 1000);
     }
     return {
       ok: true,
       type: "tool_call",
-      summary: `Ran composio ${app}/${action} - ${preview}`,
+      summary: humanizeToolResult(app, action, result),
       detail: { app, action, result_preview: preview },
     };
   } catch (err) {

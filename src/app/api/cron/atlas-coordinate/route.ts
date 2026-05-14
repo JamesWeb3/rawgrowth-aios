@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireCronAuth } from "@/lib/cron/auth";
+import { env } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -26,6 +27,21 @@ export const maxDuration = 120;
 export async function GET(req: NextRequest) {
   const denied = requireCronAuth(req);
   if (denied) return denied;
+
+  // Kill switch (Dilan, 2026-05-14: "kill this routine, it clogs
+  // Marti's scan chat"). The 15-min loop posted unsolicited
+  // "Coordination check" + idle-nudge messages straight into the
+  // operator's chat thread. OFF by default; flip
+  // ATLAS_COORDINATE_ENABLED=1 to bring it back once the posting
+  // target is moved off the main thread.
+  if (!env.ATLAS_COORDINATE_ENABLED) {
+    return NextResponse.json({
+      ok: true,
+      processed: 0,
+      results: [],
+      disabled: "ATLAS_COORDINATE_ENABLED",
+    });
+  }
 
   const db = supabaseAdmin();
   const { data: orgs } = await db
