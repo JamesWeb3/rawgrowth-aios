@@ -633,3 +633,210 @@ registerTool({
     );
   },
 });
+
+/**
+ * apify_batch_scrape - server-side parallel batches.
+ *
+ * The agent passes a full handle list; this tool splits it into
+ * N-sized batches and fires apify run-sync calls in parallel via
+ * Promise.all. Total wall-clock = max(batch durations) instead of
+ * the sum, so a 13-handle scrape that would take 4-5 minutes
+ * sequentially completes in ~90-120s.
+ *
+ * Marti retest pattern (eval 1-4) showed: agent fires multiple
+ * apify_run_actor calls itself and loops, never synthesizing.
+ * Pull the parallelism server-side so the agent makes ONE tool
+ * call, gets ONE merged dataset back, and can synthesize.
+ */
+registerTool({
+  name: "apify_batch_scrape",
+  description:
+    "Scrape an Apify actor on N handles via PARALLEL server-side batches and return ONE merged dataset. Use this when the creator list is >5 handles - it's wall-clock-faster than calling apify_run_actor multiple times in sequence, because the batches run concurrently in the same tool call.",
+  isWrite: true,
+  requiresIntegration: "apify",
+  inputSchema: {
+    type: "object",
+    properties: {
+      actor_id: {
+        type: "string",
+        description: 'Apify actor id, e.g. "apify/instagram-reel-scraper".',
+      },
+      handles: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Bare handles to scrape. For Instagram, NOT URLs - the actor's `username` field.",
+      },
+      results_per_handle: {
+        type: "number",
+        description: "How many items per handle. Default 5, cap 20.",
+      },
+      batch_size: {
+        type: "number",
+        description: "Handles per parallel batch. Default 5, cap 8.",
+      },
+    },
+    required: ["actor_id", "handles"],
+  },
+  handler: async (args, ctx) => {
+    const actorId = String(args.actor_id ?? "").trim();
+    if (!actorId) return textError("actor_id is required");
+    const handlesArg = args.handles;
+    if (!Array.isArray(handlesArg) || handlesArg.length === 0) {
+      return textError("handles must be a non-empty array of strings");
+    }
+    const handles = handlesArg
+      .map((h) => String(h ?? "").trim())
+      .filter((h) => h.length > 0);
+    if (handles.length === 0) {
+      return textError("handles array is empty after trimming");
+    }
+    const perHandle = clampLimit(args.results_per_handle, 5, 20);
+    const batchSize = clampLimit(args.batch_size, 5, 8);
+
+    const resolved = await resolveApifyKey(ctx.organizationId);
+    if ("error" in resolved) return textError(resolved.error);
+
+    // Split into batches.
+    const batches: string[][] = [];
+    for (let i = 0; i < handles.length; i += batchSize) {
+      batches.push(handles.slice(i, i + batchSize));
+    }
+
+    const actorPath = actorId.replace("/", "~");
+    const fetchLimit = Math.min(perHandle * batchSize, MAX_LIMIT);
+    const url =
+      `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
+      `?limit=${fetchLimit}`;
+
+    type BatchResult = {
+      batchIndex: number;
+      batchHandles: string[];
+      items: unknown[];
+      error: string | null;
+    };
+
+    // Fire all batches concurrently. Each carries its own 280s budget.
+    const results: BatchResult[] = await Promise.all(
+      batches.map(async (batch, idx): Promise<BatchResult> => {
+        const runInput = { username: batch, resultsLimit: perHandle };
+        let res: Response;
+        try {
+          res = await fetch(url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${resolved.key}`,
+            },
+            body: JSON.stringify(runInput),
+            signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+          });
+        } catch (err) {
+          const e = err as Error;
+          return {
+            batchIndex: idx,
+            batchHandles: batch,
+            items: [],
+            error:
+              e.name === "TimeoutError" || e.name === "AbortError"
+                ? `batch ${idx + 1} timed out after ${Math.round(RUN_TIMEOUT_MS / 1000)}s`
+                : e.message,
+          };
+        }
+        if (res.status !== 200 && res.status !== 201) {
+          const body = await readBodySafe(res);
+          return {
+            batchIndex: idx,
+            batchHandles: batch,
+            items: [],
+            error: `batch ${idx + 1} HTTP ${res.status} ${body.slice(0, 150)}`,
+          };
+        }
+        try {
+          const parsed = await res.json();
+          const arr = Array.isArray(parsed) ? parsed : [];
+          return { batchIndex: idx, batchHandles: batch, items: arr, error: null };
+        } catch (err) {
+          return {
+            batchIndex: idx,
+            batchHandles: batch,
+            items: [],
+            error: `batch ${idx + 1} bad JSON: ${(err as Error).message}`,
+          };
+        }
+      }),
+    );
+
+    // Merge + summarize.
+    const allItems: unknown[] = [];
+    const okBatches: number[] = [];
+    const failedBatches: string[] = [];
+    for (const r of results) {
+      if (r.error) {
+        failedBatches.push(
+          `batch ${r.batchIndex + 1} (${r.batchHandles.join(", ")}): ${r.error}`,
+        );
+      } else {
+        okBatches.push(r.batchIndex + 1);
+        for (const it of r.items) allItems.push(it);
+      }
+    }
+
+    // Sort newest-first by timestamp - same logic as apify_run_actor
+    // so the agent can read the same shape from both tools.
+    const postTime = (o: unknown): number => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      const raw =
+        r.timestamp ??
+        r.takenAt ??
+        r.taken_at_timestamp ??
+        r.takenAtTimestamp ??
+        r.created_time;
+      if (typeof raw === "number") return raw > 1e12 ? raw : raw * 1000;
+      const p = Date.parse(String(raw ?? ""));
+      return Number.isFinite(p) ? p : 0;
+    };
+    const sorted = [...allItems].sort((a, b) => postTime(b) - postTime(a));
+
+    const s = (v: unknown): string =>
+      typeof v === "string" ? v : v == null ? "" : String(v);
+    const cap = Math.min(sorted.length, 50);
+    const lines = sorted.slice(0, cap).map((raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const title = s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";
+      const url = s(o.url) || s(o.link) || s(o.postUrl);
+      const who = s(o.ownerUsername) || s(o.username) || s(o.author);
+      const likes = o.likesCount ?? o.likeCount ?? o.likes;
+      const comments = o.commentsCount ?? o.commentCount ?? o.comments;
+      const ts = postTime(o);
+      const tsStr = ts > 0 ? new Date(ts).toISOString().slice(0, 10) : "";
+      const meta = [
+        who && `@${who}`,
+        likes != null && `${likes} likes`,
+        comments != null && `${comments} comments`,
+        tsStr && `posted ${tsStr}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const head =
+        title.replace(/\s+/g, " ").slice(0, 120) ||
+        (url ? "(no caption)" : JSON.stringify(o).slice(0, 120));
+      return `• ${head}${meta ? ` (${meta})` : ""}${url ? `\n  ${url}` : ""}`;
+    });
+    const more = sorted.length > cap ? `\n…and ${sorted.length - cap} more` : "";
+
+    const header =
+      `Batch scrape on ${actorId}: ${batches.length} batch(es), ` +
+      `${okBatches.length} OK, ${failedBatches.length} failed. ` +
+      `${allItems.length} total items merged.`;
+    const failBlock =
+      failedBatches.length > 0
+        ? `\nFailed batches (you can retry just these):\n${failedBatches.join("\n")}`
+        : "";
+    return text(
+      sorted.length === 0
+        ? `${header}\n(no items - all batches failed)${failBlock}`
+        : `${header}${failBlock}\n${lines.join("\n")}${more}`,
+    );
+  },
+});

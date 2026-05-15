@@ -367,6 +367,7 @@ async function execToolCall(
     "apify_list_actor_runs",
     "apify_start_run",
     "apify_poll_run",
+    "apify_batch_scrape",
     "composio_list_tools",
     "web_search",
     "plan_create",
