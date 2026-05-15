@@ -84,7 +84,7 @@ const ORCHESTRATION_TAGS = [
  * Pass 2 sweeps any stray unpaired open/close tag of the same names.
  * Result is trimmed.
  */
-function stripOrchestrationMarkup(text: string): string {
+export function stripOrchestrationMarkup(text: string): string {
   let out = text;
   for (const tag of ORCHESTRATION_TAGS) {
     // Paired block: <tag ...> ... </tag> - non-greedy so adjacent
@@ -96,7 +96,102 @@ function stripOrchestrationMarkup(text: string): string {
     // Stray unpaired open or close tag left behind by malformed markup.
     out = out.replace(new RegExp(`</?${tag}\\b[^>]*>`, "gi"), "");
   }
+  out = stripBareJsonCommands(out);
   return out.trim();
+}
+
+/**
+ * Cosmetic-only strip of bare-JSON command shapes that a dept-head's
+ * reply may have emitted as text. The client's Kasia screenshot leaked
+ * `{ "tool": "apify_run_actor", "args": { ... } }` inline with her
+ * prose - extractBareJsonCommands only matches `obj.tool === "composio_use_tool"`
+ * so non-composio bare-JSON shapes were never detected, never executed,
+ * never stripped, and rendered raw in the delegation card.
+ *
+ * Same recognised shapes as extractBareJsonCommands plus any
+ * `{ "tool": <string>, "args": {...} }` so the broader leak is covered.
+ * Strips the matched span (and any wrapping ```json fence) from the
+ * visible reply. The executor is not a command surface, so we never
+ * execute - only remove.
+ */
+function stripBareJsonCommands(text: string): string {
+  type Range = { start: number; end: number };
+  const ranges: Range[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const open = text.indexOf("{", cursor);
+    if (open === -1) break;
+    let depth = 0;
+    let inStr = false;
+    let escaped = false;
+    let close = -1;
+    for (let i = open; i < text.length; i++) {
+      const ch = text[i];
+      if (inStr) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          close = i + 1;
+          break;
+        }
+      }
+    }
+    if (close === -1) break;
+    const span = text.slice(open, close);
+    cursor = close;
+    const stripped = span
+      .replace(/^```(?:json)?\s*\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripped);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+    const obj = parsed as Record<string, unknown>;
+    const isToolCall =
+      typeof obj.tool === "string" &&
+      obj.args !== undefined &&
+      typeof obj.args === "object" &&
+      obj.args !== null;
+    const isAgentInvoke =
+      typeof obj.agent === "string" && typeof obj.task === "string";
+    const isRoutineCreate =
+      typeof obj.title === "string" &&
+      typeof obj.description === "string" &&
+      typeof obj.assignee === "string";
+    if (!isToolCall && !isAgentInvoke && !isRoutineCreate) continue;
+    // Extend the range to swallow a wrapping ```json fence if one is
+    // immediately adjacent - leaving naked fence tokens would still
+    // look like leaked markup.
+    let start = open;
+    let end = close;
+    const beforeWindow = text.slice(Math.max(0, open - 12), open);
+    const fenceOpen = beforeWindow.match(/```(?:json)?\s*\n?$/);
+    if (fenceOpen) start -= fenceOpen[0].length;
+    const afterWindow = text.slice(end, end + 4);
+    const fenceClose = afterWindow.match(/^\n?```/);
+    if (fenceClose) end += fenceClose[0].length;
+    ranges.push({ start, end });
+  }
+  if (ranges.length === 0) return text;
+  // Splice out the matches back-to-front so earlier indices stay valid.
+  let out = text;
+  for (let i = ranges.length - 1; i >= 0; i--) {
+    out = out.slice(0, ranges[i].start) + out.slice(ranges[i].end);
+  }
+  return out;
 }
 
 /**
