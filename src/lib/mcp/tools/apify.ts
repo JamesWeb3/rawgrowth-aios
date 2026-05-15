@@ -1539,3 +1539,84 @@ registerTool({
     );
   },
 });
+
+/**
+ * apify_probe_handle - TEMP DIAGNOSTIC. Operator-only.
+ *
+ * Single-handle scrape to test "is this handle returning data when
+ * isolated?". Built for the marti eval iteration to disambiguate
+ * data-ceiling vs code-bug when 5/13 handles came back empty from a
+ * multi-handle race scrape.
+ *
+ * Strict scope:
+ *   - registered ONLY when process.env.RAWCLAW_DIAGNOSTICS === "1"
+ *   - NOT in MCP_DIRECT_TOOLS allowlist (agent cannot call from chat)
+ *   - one fetch, resultsLimit 3, returns counts + first-item shape
+ */
+if (process.env.RAWCLAW_DIAGNOSTICS === "1") {
+  registerTool({
+    name: "apify_probe_handle",
+    description:
+      "DIAGNOSTIC: one apify/instagram-scraper run for a single handle. Returns item count + first-item field names. Operator-only.",
+    isWrite: true,
+    requiresIntegration: "apify",
+    inputSchema: {
+      type: "object",
+      required: ["handle"],
+      properties: {
+        handle: {
+          type: "string",
+          description: "Bare instagram handle (no @), e.g. 'martifox.official'.",
+        },
+      },
+    },
+    handler: async (args, ctx) => {
+      const handle = String(args.handle ?? "").trim().replace(/^@/, "");
+      if (!handle) return textError("handle is required");
+      const resolved = await resolveApifyKey(ctx.organizationId);
+      if ("error" in resolved) return textError(resolved.error);
+      const url =
+        "https://api.apify.com/v2/acts/apify~instagram-scraper" +
+        "/run-sync-get-dataset-items?limit=3";
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${resolved.key}`,
+          },
+          body: JSON.stringify({
+            directUrls: [`https://www.instagram.com/${handle}/`],
+            resultsType: "posts",
+            resultsLimit: 3,
+            addParentData: false,
+          }),
+          signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+        });
+        const apifyStatus = r.status;
+        if (apifyStatus !== 200 && apifyStatus !== 201) {
+          const body = await readBodySafe(r);
+          return textError(
+            `probe @${handle}: http ${apifyStatus} ${body.slice(0, MAX_BODY)}`,
+          );
+        }
+        const j = await r.json();
+        const items: unknown[] = Array.isArray(j) ? j : [];
+        const itemCount = items.length;
+        const first = (items[0] ?? null) as Record<string, unknown> | null;
+        const shape = first ? Object.keys(first).slice(0, 30) : [];
+        const firstPreview = first
+          ? JSON.stringify(first, null, 2).slice(0, 400)
+          : "(no items)";
+        return text(
+          `probe @${handle}: apifyStatus=${apifyStatus} itemCount=${itemCount} shape=[${shape.join(
+            ", ",
+          )}]\nfirstItem(400c):\n${firstPreview}`,
+        );
+      } catch (e) {
+        const msg = (e as Error)?.message ?? "fetch error";
+        return textError(`probe @${handle}: ${msg}`);
+      }
+    },
+  });
+}
