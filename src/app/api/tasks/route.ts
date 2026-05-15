@@ -5,6 +5,7 @@ import {
   getAllowedDepartments,
 } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { buildTaskResponse, type TaskRow } from "@/lib/tasks/dedupe";
 
 export const runtime = "nodejs";
 
@@ -111,25 +112,7 @@ export async function GET(req: Request) {
     runsByRoutine.get(r.routine_id)!.push(r);
   }
 
-  const counts = {
-    total: routines.length,
-    pending: 0,
-    running: 0,
-    succeeded: 0,
-    failed: 0,
-  };
-  // Count by latest run status per routine, not total run volume.
-  // Prevents failed > total when a routine ran many times.
-  for (const routine of routines) {
-    const taskRuns = runsByRoutine.get(routine.id) ?? [];
-    const latestStatus = taskRuns[0]?.status ?? "pending";
-    if (latestStatus === "pending") counts.pending += 1;
-    else if (latestStatus === "running") counts.running += 1;
-    else if (latestStatus === "succeeded") counts.succeeded += 1;
-    else if (latestStatus === "failed") counts.failed += 1;
-  }
-
-  const tasks = routines.map((r) => {
+  const rawTasks: TaskRow[] = routines.map((r) => {
     const taskRuns = runsByRoutine.get(r.id) ?? [];
     const lastRun = taskRuns[0] ?? null;
     const agent = r.assignee_agent_id ? agentById.get(r.assignee_agent_id) : null;
@@ -169,6 +152,28 @@ export async function GET(req: Request) {
           : null,
     };
   });
+
+  // Marti GAP #4: collapse near-duplicate titles inside a 60-minute
+  // window and flag rows that carry a real deliverable (succeeded +
+  // non-empty output). Counts are recomputed over the DEDUPED list so
+  // the StatCards reflect what the operator actually sees.
+  const tasks = buildTaskResponse(rawTasks, 60 * 60 * 1000);
+
+  const counts = {
+    total: tasks.length,
+    pending: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+  };
+  // Count by latest run status per routine, not total run volume.
+  // Prevents failed > total when a routine ran many times.
+  for (const t of tasks) {
+    if (t.latestStatus === "pending") counts.pending += 1;
+    else if (t.latestStatus === "running") counts.running += 1;
+    else if (t.latestStatus === "succeeded") counts.succeeded += 1;
+    else if (t.latestStatus === "failed") counts.failed += 1;
+  }
 
   return NextResponse.json({ counts, tasks, includeDelegations });
 }
