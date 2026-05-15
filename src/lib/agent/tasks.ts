@@ -4,6 +4,8 @@ import { dispatchRun } from "@/lib/runs/dispatch";
 import { chatReply } from "@/lib/agent/chat";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractThinking } from "@/lib/agent/thinking";
+import { stripOrchestrationMarkup } from "@/lib/runs/executor";
+import { persistSharedMemoryFromReply } from "@/lib/memory/shared";
 
 /**
  * Chat-driven task creation. The agent ends a reply with one or more
@@ -511,17 +513,62 @@ export async function executeChatTask(input: {
       );
     }
 
+    // GAP #3 (Marti Loom acceptance): before this fix the mirror
+    // dumped chatReply's raw output - <command>/<task>/<shared_memory>
+    // markup, bare-JSON tool blocks, the works - straight into the
+    // assignee's chat thread, polluting the operator's Q&A view with
+    // orchestration noise the dashboard chat route already strips on
+    // its own insert path. The mirror layer is COSMETIC (the executor
+    // is not a command surface - sub-agent authority is gated upstream
+    // by extractAndExecuteCommands / extractAndCreateTasks BEFORE the
+    // task ever ran), so we apply the same passes the dashboard chat
+    // route runs but DO NOT dispatch: just strip + persist facts.
+    //
+    //   1. stripOrchestrationMarkup: drop <command|need|task|
+    //      shared_memory|agent> blocks + bare-JSON tool shapes (the
+    //      Kasia "apify_run_actor" leak).
+    //   2. persistSharedMemoryFromReply: peel <shared_memory> blocks
+    //      off and persist them as real shared-memory rows so the
+    //      facts aren't lost when the visible markup is stripped.
+    //
+    // Reference pattern is src/app/api/agents/[id]/chat/route.ts
+    // around the assistantInsert site - same order, same intent.
+    let mirrorBody = visibleReply;
+    try {
+      const sm = await persistSharedMemoryFromReply({
+        orgId: input.orgId,
+        sourceAgentId: input.assigneeAgentId,
+        sourceChatId: null,
+        reply: mirrorBody,
+      });
+      mirrorBody = sm.visibleReply || mirrorBody;
+    } catch (err) {
+      console.warn(
+        `[tasks] shared-memory strip failed for run ${input.runId}: ${(err as Error).message}`,
+      );
+    }
+    mirrorBody = stripOrchestrationMarkup(mirrorBody);
+
     // Mirror the output as an assistant chat message so the assignee's
     // Chat tab shows the work that just happened (operator can scroll
     // there to see the deliverable in context).
+    //
+    // Thread routing: this is an autonomous delegated run (a sibling
+    // agent emitted a <task> block, NOT the operator typing in the
+    // assignee's chat input). The dashboard chat route + SSR seed
+    // already filter `metadata.thread === "proactive"` into the
+    // Proactive (CEO) view, so tagging it here keeps autonomous run
+    // output OUT of the operator's main operator/agent Q&A thread.
     await db.from("rgaios_agent_chat_messages").insert({
       organization_id: input.orgId,
       agent_id: input.assigneeAgentId,
       user_id: null,
       role: "assistant",
-      content: `${input.title}\n\n${visibleReply}`,
+      content: `${input.title}\n\n${mirrorBody}`,
       metadata: {
-        kind: "chat_task_output",
+        kind: "autonomous_run",
+        thread: "proactive",
+        subkind: "chat_task_output",
         run_id: input.runId,
         delegated_by: input.delegatedByAgentId,
       },
