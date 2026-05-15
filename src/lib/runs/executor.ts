@@ -56,6 +56,49 @@ function runtimeToModel(runtime: string | null | undefined): string {
   return RUNTIME_ALIASES[runtime] ?? runtime;
 }
 
+// Orchestration tags a dept-head reply can carry. The dashboard chat
+// route parses + ACTS on these (extractAndExecuteCommands /
+// extractAndCreateTasks / shared-memory strip); the executor must not -
+// a delegated/scheduled run is not a command surface, so its job is
+// only to keep the raw markup out of the visible output.
+const ORCHESTRATION_TAGS = [
+  "command",
+  "need",
+  "task",
+  "shared_memory",
+  "agent",
+] as const;
+
+/**
+ * Cosmetically strip orchestration markup from a run's visible reply.
+ *
+ * A delegated/scheduled run is NOT a command surface: any
+ * <command>/<need>/<task>/<shared_memory>/<agent> block a dept-head's
+ * reply emits is intentionally NOT executed here (sub-agent authority
+ * is gated elsewhere). But without this strip the raw markup leaked
+ * verbatim into output.text and polluted chat / the orchestration card
+ * / the agent_invoke summary. So this removes the markup ONLY - the
+ * block's intent is deliberately lost, not acted on.
+ *
+ * Pass 1 removes paired blocks (case-insensitive, non-greedy body).
+ * Pass 2 sweeps any stray unpaired open/close tag of the same names.
+ * Result is trimmed.
+ */
+function stripOrchestrationMarkup(text: string): string {
+  let out = text;
+  for (const tag of ORCHESTRATION_TAGS) {
+    // Paired block: <tag ...> ... </tag> - non-greedy so adjacent
+    // blocks of the same name don't get swallowed into one match.
+    out = out.replace(
+      new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "gi"),
+      "",
+    );
+    // Stray unpaired open or close tag left behind by malformed markup.
+    out = out.replace(new RegExp(`</?${tag}\\b[^>]*>`, "gi"), "");
+  }
+  return out.trim();
+}
+
 /**
  * Execute a single pending run end-to-end:
  *   1. Claim it (atomic status=pending→running).
@@ -163,13 +206,28 @@ export async function executeRun(
     // executeChatTask's run output.
     const { thinking, visibleReply } = extractThinking(result.text ?? "");
 
+    // Strip leftover orchestration markup from the visible reply. The
+    // dashboard chat route runs extractAndExecuteCommands /
+    // extractAndCreateTasks / a shared-memory strip to BOTH act on and
+    // remove these blocks; executeRun must NOT act on them - a
+    // delegated/scheduled run is not a command surface, and a sub-agent
+    // emitting <command>/<need>/<task>/<agent> blocks is a separate
+    // authority concern that's rejected elsewhere. But the raw markup
+    // still leaked into output.text and surfaced as garbage in chat /
+    // the orchestration card / the agent_invoke summary. So the strip
+    // here is purely COSMETIC: the blocks' intent is intentionally lost
+    // (not executed), we only remove the visible markup so it doesn't
+    // pollute the operator thread.
+    const visibleClean = stripOrchestrationMarkup(visibleReply);
+
     // "no exception thrown" is not "succeeded". The CLI path can exit 0
     // with an empty string, either path can return a bare refusal, and
-    // a reply that was ONLY a <thinking> block has no real output -
-    // recording any of those as succeeded hides real failures. Require
-    // some actual VISIBLE output (post-thinking-strip) before calling
-    // it a success; otherwise fail with a clear reason.
-    const outText = visibleReply.trim();
+    // a reply that was ONLY a <thinking> block (or only orchestration
+    // markup) has no real output - recording any of those as succeeded
+    // hides real failures. Require some actual VISIBLE output (post
+    // thinking-strip + markup-strip) before calling it a success;
+    // otherwise fail with a clear reason.
+    const outText = visibleClean.trim();
     if (outText.length < 2) {
       const emptyErr =
         "Agent returned no output (empty response from the model runtime).";
@@ -189,7 +247,9 @@ export async function executeRun(
         runId,
         "succeeded",
         {
-          text: visibleReply,
+          // Persist the fully-stripped text (thinking + orchestration
+          // markup removed) so no raw markup leaks downstream.
+          text: visibleClean,
           thinking: thinking ?? null,
           stepCount: result.stepCount,
           toolCalls: result.toolCalls,
@@ -200,7 +260,7 @@ export async function executeRun(
         run_id: run.id,
         routine_id: routine.id,
         agent_id: agent?.id ?? null,
-        text_preview: visibleReply.slice(0, 500),
+        text_preview: visibleClean.slice(0, 500),
       });
     }
   } catch (err) {
