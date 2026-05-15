@@ -14,8 +14,16 @@ export const runtime = "nodejs";
  * Returns flattened (routine + latest run) view for the active org's
  * Tasks page. Used by the SWR-driven client so the list refreshes
  * every 5s without a full server re-render.
+ *
+ * `?include=delegations` opts back in the one-shot kind='delegation'
+ * rows (agent_invoke holders + chat `<task>` blocks - see migration
+ * 0069). By default they are excluded: a busy org racks up ~200 of
+ * them as council-vote / re-task churn and they bury the real
+ * routines. The delegation run history is still surfaced inside the
+ * agent's orchestration cards, so excluding them here de-clutters
+ * without losing genuinely useful task history.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const ctx = await getOrgContext();
   if (!ctx?.activeOrgId || !ctx.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -23,19 +31,27 @@ export async function GET() {
   const orgId = ctx.activeOrgId;
   const db = supabaseAdmin();
 
+  const includeDelegations =
+    new URL(req.url).searchParams.get("include") === "delegations";
+
   const allowedDepts = await getAllowedDepartments({
     userId: ctx.userId,
     organizationId: orgId,
     isAdmin: ctx.isAdmin,
   });
 
+  let routinesQuery = db
+    .from("rgaios_routines")
+    .select(
+      "id, title, description, assignee_agent_id, status, kind, created_at",
+    )
+    .eq("organization_id", orgId);
+  if (!includeDelegations) {
+    routinesQuery = routinesQuery.neq("kind", "delegation");
+  }
+
   const [{ data: routinesRaw }, { data: agentsRaw }] = await Promise.all([
-    db
-      .from("rgaios_routines")
-      .select("id, title, description, assignee_agent_id, status, created_at")
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false })
-      .limit(200),
+    routinesQuery.order("created_at", { ascending: false }).limit(200),
     db
       .from("rgaios_agents")
       .select("id, name, role, department")
@@ -54,6 +70,7 @@ export async function GET() {
     description: string | null;
     assignee_agent_id: string | null;
     status: string | null;
+    kind: string | null;
     created_at: string | null;
   };
   const allAgents = (agentsRaw ?? []) as AgentRow[];
@@ -120,6 +137,7 @@ export async function GET() {
       routineId: r.id,
       title: r.title ?? "Untitled",
       description: r.description ?? null,
+      kind: r.kind ?? "workflow",
       createdAt: r.created_at,
       assignee: agent
         ? { id: agent.id, name: agent.name, role: agent.role }
@@ -152,5 +170,5 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ counts, tasks });
+  return NextResponse.json({ counts, tasks, includeDelegations });
 }

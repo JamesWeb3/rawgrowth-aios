@@ -168,6 +168,18 @@ registerTool({
 
     if (res.status !== 200 && res.status !== 201) {
       const respBody = await readBodySafe(res);
+      // A 404 here almost always means the actor_id is wrong or
+      // hallucinated - the API has no endpoint for an actor that does
+      // not exist. Say so plainly and point the agent back at the
+      // documented presets instead of leaving it to re-guess.
+      if (res.status === 404) {
+        return textError(
+          `apify_run_actor: actor "${actorId}" not found - check the ` +
+            `actor_id; use one of the documented Apify presets in your ` +
+            `instructions, or apify_list_actor_runs to confirm an actor ` +
+            `exists. ${respBody.slice(0, MAX_BODY)}`,
+        );
+      }
       return textError(
         `apify_run_actor: ${res.status} ${respBody.slice(0, MAX_BODY)}`,
       );

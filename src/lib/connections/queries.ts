@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
+import { invalidateConnectionMemory } from "@/lib/memory/shared";
 
 type ConnectionRow =
   Database["public"]["Tables"]["rgaios_connections"]["Row"];
@@ -104,6 +105,7 @@ export async function upsertConnection(input: {
       .select("*")
       .single();
     if (error) throw new Error(`upsertConnection: ${error.message}`);
+    await clearStaleConnectionMemory(data);
     return data;
   }
 
@@ -130,6 +132,7 @@ export async function upsertConnection(input: {
       .select("*")
       .single();
     if (error) throw new Error(`upsertConnection: ${error.message}`);
+    await clearStaleConnectionMemory(data);
     return data;
   }
 
@@ -139,7 +142,35 @@ export async function upsertConnection(input: {
     .select("*")
     .single();
   if (error) throw new Error(`upsertConnection: ${error.message}`);
+  await clearStaleConnectionMemory(data);
   return data;
+}
+
+/**
+ * After a connection row is written with status='connected', drop any
+ * stale "<provider> isn't connected" facts an agent may have stashed in
+ * shared memory - otherwise the preamble keeps telling agents the tool
+ * is dead. Invalidates on both the human display name and the provider
+ * config key so a fact phrased either way ("Gmail not connected" /
+ * "google-mail not wired") gets cleared. Best-effort: invalidation is
+ * already try/catch-wrapped, this guard is just belt-and-suspenders so
+ * a memory hiccup never blocks the connection save.
+ */
+async function clearStaleConnectionMemory(
+  row: ConnectionRow,
+): Promise<void> {
+  if (!row || row.status !== "connected") return;
+  const labels = new Set<string>();
+  if (row.display_name) labels.add(row.display_name);
+  if (row.provider_config_key) labels.add(row.provider_config_key);
+  for (const label of labels) {
+    try {
+      await invalidateConnectionMemory(row.organization_id, label);
+    } catch {
+      // invalidateConnectionMemory never throws, but stay defensive:
+      // a connection save must not fail on memory cleanup.
+    }
+  }
 }
 
 export async function deleteConnection(

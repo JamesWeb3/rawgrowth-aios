@@ -240,6 +240,84 @@ export async function archiveSharedMemory(input: {
     .eq("organization_id", input.orgId);
 }
 
+/**
+ * Phrases that mark a fact as a NEGATIVE connection claim ("X isn't
+ * connected"). Kept deliberately tight: a stale negative fact ("Apify
+ * isn't connected") is worse than no fact once the integration is
+ * wired, so we only delete a row when it BOTH names the provider AND
+ * carries one of these phrases. A positive fact ("Gmail is connected")
+ * or an unrelated mention never matches.
+ */
+const NOT_CONNECTED_RE =
+  /\b(?:not connected|isn'?t connected|is not connected|are not connected|aren'?t connected|not wired(?: up)?|isn'?t wired(?: up)?|not set up|isn'?t set up|not hooked up|not integrated|no access|unavailable|not available|missing(?: an?)? integration|no integration)\b/i;
+
+/**
+ * Drop stale "X isn't connected" shared-memory facts once X actually
+ * gets connected. An agent can emit <shared_memory>Apify isn't
+ * connected</shared_memory>; that row then sticks around and the
+ * preamble keeps telling the agent the tool is dead even after the
+ * OAuth/key save succeeds. Call this right after a connection flips to
+ * status='connected'.
+ *
+ * Match heuristic: an active row in the org whose fact (case-insensitive)
+ * mentions the provider name AND matches NOT_CONNECTED_RE. Matching rows
+ * are deleted outright (archive would still leave them queryable; the
+ * point is to make the stale negative fact disappear). Conservative by
+ * design - a positive or unrelated fact is never touched.
+ *
+ * Best-effort: any failure is swallowed so a connection save never
+ * breaks because of memory cleanup.
+ */
+export async function invalidateConnectionMemory(
+  orgId: string,
+  providerLabel: string,
+): Promise<void> {
+  try {
+    const provider = (providerLabel ?? "").trim();
+    if (!orgId || !provider) return;
+    const providerNeedle = provider.toLowerCase();
+
+    const db = supabaseAdmin();
+    const { data: rows, error } = await db
+      .from("rgaios_shared_memory")
+      .select("id, fact")
+      .eq("organization_id", orgId)
+      .is("archived_at", null)
+      .ilike("fact", `%${provider}%`)
+      .limit(500);
+    if (error || !rows) return;
+
+    const staleIds = (rows as { id: string; fact: string }[])
+      .filter((r) => {
+        const fact = (r.fact ?? "").toLowerCase();
+        return fact.includes(providerNeedle) && NOT_CONNECTED_RE.test(fact);
+      })
+      .map((r) => r.id);
+    if (staleIds.length === 0) return;
+
+    const { error: delError } = await db
+      .from("rgaios_shared_memory")
+      .delete()
+      .eq("organization_id", orgId)
+      .in("id", staleIds);
+    if (delError) {
+      console.warn(
+        `[shared-memory] invalidateConnectionMemory delete failed: ${delError.message}`,
+      );
+      return;
+    }
+    console.info(
+      `[shared-memory] invalidated ${staleIds.length} stale "${provider} not connected" fact(s) for org ${orgId}`,
+    );
+  } catch (err) {
+    console.warn(
+      `[shared-memory] invalidateConnectionMemory failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
 const SHARED_MEMORY_BLOCK_RE =
   /<shared_memory(?:\s+importance="([^"]*)")?(?:\s+scope="([^"]*)")?\s*>([\s\S]*?)<\/shared_memory>/gi;
 

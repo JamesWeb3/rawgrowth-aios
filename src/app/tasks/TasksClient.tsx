@@ -10,6 +10,7 @@ type Task = {
   routineId: string;
   title: string;
   description: string | null;
+  kind: string;
   createdAt: string | null;
   assignee: { id: string; name: string; role: string | null } | null;
   runCount: number;
@@ -28,6 +29,7 @@ type Resp = {
     failed: number;
   };
   tasks: Task[];
+  includeDelegations: boolean;
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -52,10 +54,19 @@ function fmtRelative(iso: string | null): string {
 }
 
 export function TasksClient() {
-  const { data, isLoading } = useSWR<Resp>("/api/tasks", jsonFetcher, {
-    refreshInterval: 5_000,
-    revalidateOnFocus: true,
-  });
+  // Delegation rows (kind='delegation') are one-shot agent_invoke /
+  // chat-task churn - a busy org piles up ~200 and they bury the real
+  // routines. Hidden by default; the toggle flips the SWR key so the
+  // route opts them back in via ?include=delegations.
+  const [showDelegations, setShowDelegations] = useState(false);
+  const { data, isLoading } = useSWR<Resp>(
+    showDelegations ? "/api/tasks?include=delegations" : "/api/tasks",
+    jsonFetcher,
+    {
+      refreshInterval: 5_000,
+      revalidateOnFocus: true,
+    },
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   if (isLoading || !data) {
@@ -88,8 +99,17 @@ export function TasksClient() {
         <StatCard label="Failed" value={counts.failed} accent="red" />
       </div>
 
-      <div className="mt-2 text-right text-[11px] text-muted-foreground">
-        Auto-refreshing every 5s
+      <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => setShowDelegations((v) => !v)}
+          className="rounded-md border border-border bg-card/40 px-2 py-1 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+        >
+          {showDelegations
+            ? "Hide delegation churn"
+            : "Show delegation churn"}
+        </button>
+        <span>Auto-refreshing every 5s</span>
       </div>
 
       <div className="mt-6 space-y-3">
@@ -128,6 +148,11 @@ export function TasksClient() {
                     <h3 className="truncate text-[13px] font-medium text-foreground">
                       {t.title}
                     </h3>
+                    {t.kind === "delegation" && (
+                      <span className="inline-block rounded bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[1.5px] text-muted-foreground">
+                        delegation
+                      </span>
+                    )}
                     {t.assignee && (
                       <Link
                         href={`/agents/${t.assignee.id}`}

@@ -608,6 +608,71 @@ async function execToolCall(
 const MAX_DELEGATION_DEPTH = 3;
 
 /**
+ * Per-step orchestration trace. /trace already shows chat_thinking +
+ * chat_command_* rows, but those only mark the START and the FINAL
+ * outcome of a delegation - the operator can't see the individual STEP
+ * transitions (dispatched round 1, round 1 returned, verification
+ * verdict, dispatched round 2) on the timeline, only the final card.
+ *
+ * This writes ONE rgaios_audit_log row per real transition under a
+ * distinct `orchestration_step` kind, so the trace page can render the
+ * orchestration as a sequence instead of a single opaque card.
+ *
+ * STRICTLY best-effort: the promise is voided + the insert is wrapped
+ * in its own try/catch, so a trace-write failure can NEVER block, slow,
+ * or fail the delegation it is describing. Matches the fire-and-forget
+ * audit pattern used at the end of extractAndExecuteCommands. Columns
+ * (organization_id / kind / actor_type / actor_id / detail) match the
+ * existing chat_command_* audit insert.
+ */
+type OrchestrationStep =
+  | "dispatch"
+  | "result"
+  | "verification"
+  | "round1_dispatch"
+  | "round1_result"
+  | "round2_dispatch"
+  | "round2_result";
+
+function traceOrchestrationStep(
+  orgId: string,
+  actorId: string,
+  step: OrchestrationStep,
+  detail: {
+    agent?: string;
+    round?: 1 | 2;
+    verdict?: "pass" | "refine";
+    note?: string;
+  },
+): void {
+  // Fire-and-forget: void the promise and swallow every error. The
+  // delegation must not wait on - or be broken by - a trace write.
+  void (async () => {
+    try {
+      await supabaseAdmin()
+        .from("rgaios_audit_log")
+        .insert({
+          organization_id: orgId,
+          kind: "orchestration_step",
+          actor_type: "agent",
+          actor_id: actorId,
+          detail: {
+            step,
+            ...(detail.agent ? { agent: detail.agent } : {}),
+            ...(detail.round ? { round: detail.round } : {}),
+            ...(detail.verdict ? { verdict: detail.verdict } : {}),
+            ...(detail.note ? { note: detail.note.slice(0, 240) } : {}),
+          },
+        } as never);
+    } catch (err) {
+      console.warn(
+        `[agent-commands] orchestration_step trace insert failed (${step}): ${(err as Error).message}`,
+      );
+    }
+  })();
+}
+
+/**
  * Best-effort discovery of the delegation chain that led to THIS
  * speaker's turn. The chat surface that calls extractAndExecuteCommands
  * only hands us `speakerId` + `orgId` - it does not thread the incoming
@@ -955,6 +1020,12 @@ async function execAgentInvoke(
     .select("id")
     .single();
   const runId = (run as { id: string } | null)?.id ?? null;
+  // Trace the dispatch transition: the orchestrator has just farmed the
+  // task out to `resolved.name`. Best-effort - never blocks.
+  traceOrchestrationStep(orgId, speakerId, "dispatch", {
+    agent: resolved.name,
+    note: taskText.slice(0, 120),
+  });
   if (runId) {
     // Inline-execute the delegated run so the caller's reply can include
     // the actual delegated output. dispatchRun used to fire-and-forget
@@ -1014,6 +1085,13 @@ async function execAgentInvoke(
       }
       await new Promise((r) => setTimeout(r, 1500));
     }
+
+    // Trace the result transition: the delegated run has returned (or
+    // timed out - finalStatus stays null). Best-effort - never blocks.
+    traceOrchestrationStep(orgId, speakerId, "result", {
+      agent: resolved.name,
+      note: `run ${finalStatus ?? "timeout"}`,
+    });
 
     try {
       if (finalStatus === "succeeded") {
@@ -1097,6 +1175,13 @@ async function execAgentInvoke(
     null;
   if (delegationOk && delegatedOutput) {
     verification = await verifyDelegatedOutput(taskText, delegatedOutput);
+    // Trace the verification transition: the independent critic has
+    // returned a verdict on the deliverable. Best-effort - never blocks.
+    traceOrchestrationStep(orgId, speakerId, "verification", {
+      agent: resolved.name,
+      verdict: verification.verdict,
+      note: verification.note,
+    });
   }
   const needsRefine = verification?.verdict === "refine";
 
@@ -1466,6 +1551,19 @@ export async function extractAndExecuteCommands(input: {
       // whole council convene at once, then fan the batch out concurrently.
       for (const b of batch) fireProgress(b.type, b.payload);
 
+      // Council round-1 dispatch transition: only meaningful when this
+      // batch is an actual council (2+ heads). A single agent_invoke
+      // skips round 2, so its step transitions are already traced
+      // inside execAgentInvoke - no round-level row needed.
+      if (batch.length >= 2) {
+        for (const b of batch) {
+          traceOrchestrationStep(orgId, speakerAgentId, "round1_dispatch", {
+            agent: agentLabelOf(b.payload),
+            round: 1,
+          });
+        }
+      }
+
       // Round 1: every head concurrently, with only the base framing
       // context (no peers yet).
       const round1 = await Promise.all(
@@ -1479,11 +1577,30 @@ export async function extractAndExecuteCommands(input: {
         continue;
       }
 
+      // Council round-1 result transition: every head has returned its
+      // first position. Best-effort - never blocks.
+      for (let k = 0; k < batch.length; k++) {
+        traceOrchestrationStep(orgId, speakerAgentId, "round1_result", {
+          agent: agentLabelOf(batch[k].payload),
+          round: 1,
+          note: round1[k].ok ? "returned" : "failed",
+        });
+      }
+
       // Council: capture each head's round-1 position labelled by agent.
       const round1Positions = batch.map((b, k) => ({
         label: agentLabelOf(b.payload),
         text: delegatedOutputOf(round1[k]),
       }));
+
+      // Council round-2 dispatch transition: re-dispatching every head
+      // with the peers' round-1 positions so it can rebut / refine.
+      for (const b of batch) {
+        traceOrchestrationStep(orgId, speakerAgentId, "round2_dispatch", {
+          agent: agentLabelOf(b.payload),
+          round: 2,
+        });
+      }
 
       // Round 2: re-dispatch each head concurrently, handing it the
       // OTHER heads' round-1 positions as peer_positions so it can
@@ -1507,6 +1624,18 @@ export async function extractAndExecuteCommands(input: {
       for (let k = 0; k < round2.length; k++) {
         results[i + k] =
           round2[k].ok || !round1[k].ok ? round2[k] : round1[k];
+        // Council round-2 result transition: note which pass actually
+        // won for this head. Best-effort - never blocks.
+        traceOrchestrationStep(orgId, speakerAgentId, "round2_result", {
+          agent: agentLabelOf(batch[k].payload),
+          round: 2,
+          note:
+            round2[k].ok || !round1[k].ok
+              ? round2[k].ok
+                ? "round2 returned"
+                : "round2 failed"
+              : "kept round1",
+        });
       }
       i = j;
       continue;
