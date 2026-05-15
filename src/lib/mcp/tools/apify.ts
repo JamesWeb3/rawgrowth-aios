@@ -1280,6 +1280,41 @@ function extractHandles(input: string): string[] {
   const handles = new Set<string>();
   const atRe = /@([A-Za-z0-9._]{2,30})\b/g;
   const urlRe = /instagram\.com\/([A-Za-z0-9._]{2,30})(?:\/|\b)/g;
+  // Bare-handle line pattern: a markdown bullet or empty line prefix,
+  // optionally a "- " or "* ", then a handle. Marti's creator-list-v2.md
+  // uses bare handles (one per line, no `@` prefix). Without this branch
+  // the tool failed in eval 12 with "file found but no @handles".
+  // The pattern requires the handle to START a line (after optional
+  // bullet + whitespace) and END at whitespace / comma / end-of-line -
+  // that's strict enough to avoid catching arbitrary words in prose
+  // paragraphs while still picking up plain markdown list items.
+  const lineRe =
+    /(?:^|\n)\s*(?:[-*]\s+)?([A-Za-z0-9_][A-Za-z0-9._]{1,29})(?=\s|,|$)/g;
+  const BARE_BLOCKLIST = new Set([
+    "instagram",
+    "tiktok",
+    "youtube",
+    "twitter",
+    "facebook",
+    "linkedin",
+    "creator",
+    "creators",
+    "list",
+    "handles",
+    "username",
+    "usernames",
+    "name",
+    "names",
+    "v1",
+    "v2",
+    "v3",
+    "todo",
+    "done",
+    "n/a",
+    "na",
+    "tba",
+    "tbd",
+  ]);
   let m: RegExpExecArray | null;
   while ((m = atRe.exec(input)) !== null) handles.add(m[1].toLowerCase());
   while ((m = urlRe.exec(input)) !== null) {
@@ -1287,6 +1322,17 @@ function extractHandles(input: string): string[] {
     if (!["p", "reel", "reels", "explore", "stories", "tv"].includes(h)) {
       handles.add(h);
     }
+  }
+  while ((m = lineRe.exec(input)) !== null) {
+    const h = m[1].toLowerCase();
+    // Skip obviously non-handle tokens. Also skip too-short (<3) and
+    // tokens that look like headings / sentence words by their position
+    // in the file: we already require start-of-line, but heading lines
+    // ("# CREATORS") have the leading marker stripped by the regex so
+    // we still need the blocklist + length floor.
+    if (h.length < 3) continue;
+    if (BARE_BLOCKLIST.has(h)) continue;
+    handles.add(h);
   }
   return [...handles];
 }
