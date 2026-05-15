@@ -990,7 +990,7 @@ export async function POST(
                 "\n\n═══ TOOL RESULTS - YOU ALREADY RAN THESE ═══\n" +
                 "You emitted command block(s) on the previous turn and the system executed them. The real results are below.\n\n" +
                 "Open your reply with a <thinking> block that is your OBSERVATION step: in one or two sentences, say what the results actually show and what you make of them (\"3 emails back, all the same membership-confirmation template\" / \"Kasia delivered 3 usable hooks, the contrarian one is strongest\"). This is the Observation in Thought -> Action -> Observation - it must reference the real data, not be generic.\n\n" +
-                "Then write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' (the work is done). Do NOT emit new <command> blocks.\n\n" +
+                "Then write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' for the work that is already done. You MAY emit ONE follow-on <command> block IF the results genuinely call for a next action you could not have known to take before seeing them - e.g. now that you have the top post, dispatch Kasia to draft hooks off it. If you do, the system runs it and shows the card; if you only say you are doing it, you MUST emit it (SAY-IT-MEANS-DO-IT). Do NOT re-run a command that already ran above.\n\n" +
                 resultsBlock,
               noHandoff: true,
               // Same per-agent reasoning budget as pass 1.
@@ -998,11 +998,44 @@ export async function POST(
               callerUserId: userId,
             });
             if (pass2.ok && pass2.reply.trim()) {
-              // Strip any stray command blocks pass 2 emitted despite the
-              // instruction - we do NOT re-execute them.
-              const pass2Thinking = extractThinking(
-                pass2.reply.replace(/<command[\s\S]*?<\/command>/gi, ""),
-              );
+              // Pass 2 CAN legitimately emit a command - a delegation or
+              // tool call that only makes sense after seeing the pass-1
+              // results ("now that I have the top post, dispatch Kasia").
+              // The old code stripped + discarded those, so the agent
+              // narrated a dispatch it never actually emitted (the e2e
+              // test caught exactly this). Execute pass-2 commands ONCE
+              // more - bounded, no pass 3 - and append their cards to
+              // commandResults so they render + persist with the rest.
+              let pass2Visible = pass2.reply;
+              try {
+                const ext2 = await extractAndExecuteCommands({
+                  orgId,
+                  speakerAgentId: agentId,
+                  reply: pass2.reply,
+                  callerUserId: userId,
+                  onProgress: (ev) => {
+                    const verb =
+                      ev.type === "agent_invoke"
+                        ? `${ev.label} is answering now`
+                        : ev.type === "tool_call"
+                          ? `Running ${ev.label}`
+                          : ev.type === "routine_create"
+                            ? `Creating routine "${ev.label}"`
+                            : `Working on ${ev.label}`;
+                    emit({ type: "command_running", verb, label: ev.label });
+                  },
+                });
+                if (ext2.results.length > 0) {
+                  pass2Visible = ext2.visibleReply || pass2.reply;
+                  commandResults = [...commandResults, ...ext2.results];
+                }
+              } catch (err) {
+                console.warn(
+                  "[chat] pass-2 command extraction failed:",
+                  (err as Error).message,
+                );
+              }
+              const pass2Thinking = extractThinking(pass2Visible);
               // Pass 2's <thinking> is the Observation step - emit it as
               // a second reasoning trace so the operator sees the full
               // ReAct chain: plan (pass 1) -> tool cards -> observation
