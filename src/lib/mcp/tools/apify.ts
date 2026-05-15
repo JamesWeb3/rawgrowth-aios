@@ -889,3 +889,191 @@ registerTool({
     );
   },
 });
+
+/**
+ * apify_race_scrape - race multiple Instagram scrapers in parallel,
+ * return whichever surfaces a dataset first. apify/instagram-reel-scraper
+ * has known 'extremely slow' issues in 2026; apify/instagram-scraper +
+ * apidojo/instagram-scraper return on different schedules. Racing them
+ * gets the operator data from whichever happens to be healthy NOW.
+ *
+ * Input shape: handles (bare). Tool maps to each actor's native shape:
+ *   apify/instagram-scraper       -> directUrls profile URLs + resultsType:"posts"
+ *   apidojo/instagram-scraper     -> directUrls profile URLs
+ *   apify/instagram-reel-scraper  -> username bare handles
+ * Then Promise.any picks the FIRST one that returns >0 items.
+ */
+registerTool({
+  name: "apify_race_scrape",
+  description:
+    "Race 2-3 Instagram scrapers in parallel for the same handles and return whichever surfaces a dataset first. Use this when one specific actor has been hanging - racing means the operator gets data from whichever is healthy. Single tool call.",
+  isWrite: true,
+  requiresIntegration: "apify",
+  inputSchema: {
+    type: "object",
+    properties: {
+      handles: {
+        type: "array",
+        items: { type: "string" },
+        description: "Bare Instagram handles to scrape across the racing actors.",
+      },
+      results_per_handle: {
+        type: "number",
+        description: "How many items per handle. Default 5, cap 20.",
+      },
+    },
+    required: ["handles"],
+  },
+  handler: async (args, ctx) => {
+    const handlesArg = args.handles;
+    if (!Array.isArray(handlesArg) || handlesArg.length === 0) {
+      return textError("handles must be a non-empty array of bare handles");
+    }
+    const handles = handlesArg
+      .map((h) => String(h ?? "").trim())
+      .filter((h) => h.length > 0);
+    if (handles.length === 0) return textError("handles array is empty");
+    const perHandle = clampLimit(args.results_per_handle, 5, 20);
+
+    const resolved = await resolveApifyKey(ctx.organizationId);
+    if ("error" in resolved) return textError(resolved.error);
+
+    // Per-actor request shapers.
+    type ActorRace = {
+      id: string;
+      url: string;
+      body: Record<string, unknown>;
+    };
+    const profileUrls = handles.map((h) => `https://www.instagram.com/${h}/`);
+    const fetchLimit = Math.min(perHandle * handles.length, MAX_LIMIT);
+    const sync = (actorId: string) =>
+      `https://api.apify.com/v2/acts/${actorId.replace("/", "~")}/run-sync-get-dataset-items?limit=${fetchLimit}`;
+    const races: ActorRace[] = [
+      {
+        id: "apify/instagram-scraper",
+        url: sync("apify/instagram-scraper"),
+        body: {
+          directUrls: profileUrls,
+          resultsType: "posts",
+          resultsLimit: perHandle,
+        },
+      },
+      {
+        id: "apidojo/instagram-scraper",
+        url: sync("apidojo/instagram-scraper"),
+        body: { directUrls: profileUrls, resultsLimit: perHandle },
+      },
+    ];
+
+    type RaceResult = {
+      actor: string;
+      items: unknown[];
+      error: string | null;
+    };
+    // Use Promise.allSettled to capture every actor's outcome, then
+    // pick the winner: first non-empty dataset by completion order. If
+    // every actor times out or returns 0, surface the per-actor errors
+    // so the operator can see WHICH path failed.
+    const settled = await Promise.allSettled(
+      races.map(async (race): Promise<RaceResult> => {
+        try {
+          const r = await fetch(race.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${resolved.key}`,
+            },
+            body: JSON.stringify(race.body),
+            signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+          });
+          if (r.status !== 200 && r.status !== 201) {
+            const body = await readBodySafe(r);
+            return {
+              actor: race.id,
+              items: [],
+              error: `${r.status} ${body.slice(0, 150)}`,
+            };
+          }
+          const j = await r.json();
+          const arr = Array.isArray(j) ? j : [];
+          return { actor: race.id, items: arr, error: null };
+        } catch (err) {
+          const e = err as Error;
+          return {
+            actor: race.id,
+            items: [],
+            error:
+              e.name === "TimeoutError" || e.name === "AbortError"
+                ? `timed out at ${Math.round(RUN_TIMEOUT_MS / 1000)}s`
+                : e.message,
+          };
+        }
+      }),
+    );
+    const results: RaceResult[] = settled.map((s) =>
+      s.status === "fulfilled"
+        ? s.value
+        : { actor: "?", items: [], error: (s.reason as Error).message },
+    );
+
+    // Pick the winning actor: first non-empty dataset.
+    const winner = results.find((r) => r.items.length > 0);
+    if (!winner) {
+      const errs = results
+        .map((r) => `${r.actor}: ${r.error ?? "0 items"}`)
+        .join("; ");
+      return textError(`All racing actors failed - ${errs}`);
+    }
+
+    // Format the winner's dataset same shape as apify_run_actor so
+    // the agent reads both paths identically.
+    const postTime = (o: unknown): number => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      const raw =
+        r.timestamp ??
+        r.takenAt ??
+        r.taken_at_timestamp ??
+        r.takenAtTimestamp ??
+        r.created_time;
+      if (typeof raw === "number") return raw > 1e12 ? raw : raw * 1000;
+      const p = Date.parse(String(raw ?? ""));
+      return Number.isFinite(p) ? p : 0;
+    };
+    const sorted = [...winner.items]
+      .sort((a, b) => postTime(b) - postTime(a))
+      .slice(0, MAX_LIMIT);
+    const s = (v: unknown): string =>
+      typeof v === "string" ? v : v == null ? "" : String(v);
+    const cap = Math.min(sorted.length, 50);
+    const lines = sorted.slice(0, cap).map((raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const title = s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";
+      const url = s(o.url) || s(o.link) || s(o.postUrl);
+      const who = s(o.ownerUsername) || s(o.username) || s(o.author);
+      const likes = o.likesCount ?? o.likeCount ?? o.likes;
+      const comments = o.commentsCount ?? o.commentCount ?? o.comments;
+      const ts = postTime(o);
+      const tsStr = ts > 0 ? new Date(ts).toISOString().slice(0, 10) : "";
+      const meta = [
+        who && `@${who}`,
+        likes != null && `${likes} likes`,
+        comments != null && `${comments} comments`,
+        tsStr && `posted ${tsStr}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const head =
+        title.replace(/\s+/g, " ").slice(0, 120) ||
+        (url ? "(no caption)" : JSON.stringify(o).slice(0, 120));
+      return `• ${head}${meta ? ` (${meta})` : ""}${url ? `\n  ${url}` : ""}`;
+    });
+    const more = sorted.length > cap ? `\n…and ${sorted.length - cap} more` : "";
+    const others = results
+      .filter((r) => r.actor !== winner.actor)
+      .map((r) => `${r.actor}: ${r.error ?? `${r.items.length} items`}`)
+      .join("; ");
+    return text(
+      `Winner: ${winner.actor} (${winner.items.length} items). Others: ${others}.\n${lines.join("\n")}${more}`,
+    );
+  },
+});
