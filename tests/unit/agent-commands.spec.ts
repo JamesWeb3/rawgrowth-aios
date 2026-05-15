@@ -314,3 +314,51 @@ test("extractAndExecuteCommands: unknown command type produces explicit rejectio
   assert.equal(out.results[0].ok, false);
   assert.match(out.results[0].summary, /unknown command type/);
 });
+
+test("extractBareJsonCommands: classifies bare {tool, args} for MCP-direct tool names (Kasia screenshot leak repro)", async () => {
+  const { extractBareJsonCommands } = await import("@/lib/agent/agent-commands");
+  const reply =
+    'Odpalam scraper na pillar AI creators.\n\n' +
+    '{ "tool": "apify_run_actor", "args": { "actor_id": "apify/instagram-reel-scraper", "run_input": { "username": ["advicewithjean","aiwithremy"], "resultsLimit": 15 } } } ' +
+    '{ "tool": "apify_run_actor", "args": { "actor_id": "apify/instagram-reel-scraper", "run_input": { "username": ["natalie.marie.ai","thedankoe"], "resultsLimit": 15 } } }\n\n' +
+    'Po powrocie filtruję timestamp >= now-7d.';
+  const blocks = extractBareJsonCommands(reply);
+  assert.equal(blocks.length, 2, "both apify_run_actor blocks must be detected");
+  assert.equal(blocks[0].type, "tool_call");
+  assert.equal(blocks[1].type, "tool_call");
+  // The body must still be valid JSON the dispatcher can parse.
+  const parsed = JSON.parse(blocks[0].body) as { tool: string; args: unknown };
+  assert.equal(parsed.tool, "apify_run_actor");
+});
+
+test("extractBareJsonCommands: still recognises bare composio_use_tool shape (no regression)", async () => {
+  const { extractBareJsonCommands } = await import("@/lib/agent/agent-commands");
+  const reply =
+    'Sending the message:\n{ "tool": "composio_use_tool", "args": { "app": "slack", "action": "SLACK_SEND_MESSAGE", "input": { "channel": "#a", "text": "hi" } } }\nDone.';
+  const blocks = extractBareJsonCommands(reply);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, "tool_call");
+});
+
+test("extractBareJsonCommands: agent_invoke shape still classified", async () => {
+  const { extractBareJsonCommands } = await import("@/lib/agent/agent-commands");
+  const reply = 'Dispatching:\n{ "agent": "Kasia", "task": "draft 3 hooks" }\nWait.';
+  const blocks = extractBareJsonCommands(reply);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, "agent_invoke");
+});
+
+test("extractBareJsonCommands: rejects non-command JSON (raw result payloads must NOT classify)", async () => {
+  const { extractBareJsonCommands } = await import("@/lib/agent/agent-commands");
+  // Pure data payload - no tool/agent/title+description+assignee keys.
+  const reply = 'Top post stats: {"likes": 320, "comments": 2125, "url": "https://example.com/p/X"}';
+  const blocks = extractBareJsonCommands(reply);
+  assert.equal(blocks.length, 0, "result JSON must NOT be misclassified as a command");
+});
+
+test("extractBareJsonCommands: rejects {tool} without args (incomplete shape)", async () => {
+  const { extractBareJsonCommands } = await import("@/lib/agent/agent-commands");
+  const reply = '{ "tool": "apify_run_actor" }';
+  const blocks = extractBareJsonCommands(reply);
+  assert.equal(blocks.length, 0, "incomplete tool shape (no args) must NOT classify");
+});

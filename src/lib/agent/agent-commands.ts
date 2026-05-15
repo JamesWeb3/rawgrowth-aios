@@ -202,7 +202,7 @@ function humanizeToolResult(
  *
  * Returns { type, body } pairs. Optionally fenced with ```json...```.
  */
-function extractBareJsonCommands(
+export function extractBareJsonCommands(
   reply: string,
 ): Array<{ type: string; body: string; rawSpan: string }> {
   const out: Array<{ type: string; body: string; rawSpan: string }> = [];
@@ -279,10 +279,22 @@ function extractBareJsonCommands(
     const obj = parsed as Record<string, unknown>;
     if (
       typeof obj.tool === "string" &&
-      obj.tool === "composio_use_tool" &&
-      obj.args &&
-      typeof obj.args === "object"
+      obj.tool.trim() !== "" &&
+      obj.args !== undefined &&
+      typeof obj.args === "object" &&
+      obj.args !== null &&
+      !Array.isArray(obj.args)
     ) {
+      // Broadened from `obj.tool === "composio_use_tool"` to any string
+      // tool name. The original strict check missed bare-JSON calls to
+      // the MCP-direct tools (apify_run_actor, apify_list_actor_runs,
+      // composio_list_tools, web_search, plan_*, agent_message,
+      // agent_inbox) - execToolCall already routes those through the
+      // registry. Kasia's leak in Marti's screenshot was
+      // `{"tool":"apify_run_actor","args":{...}}` x3 - extractor ignored
+      // it, dispatcher never fired, the raw JSON rendered as chat text.
+      // Now: classify as tool_call here so the dispatcher runs it (or
+      // returns a clean per-tool failure card) instead of leaking.
       out.push({ type: "tool_call", body: stripped, rawSpan: span });
     } else if (
       typeof obj.agent === "string" &&
