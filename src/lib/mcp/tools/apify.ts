@@ -130,12 +130,27 @@ registerTool({
     // 5-handle parallel sub-runs (Promise.all) so total wall-clock
     // = max(batch durations) instead of sum. Single tool call from
     // the agent's POV, hidden parallelism, same return shape.
+    // Auto-split key + value: prefer `username` (reel-scraper shape),
+    // fall back to `directUrls` (general instagram-scraper shape). The
+    // general scraper is the recommended actor in the preamble; it
+    // takes profile URLs under directUrls.
     const usernameArg = runInputObj.username;
-    const handles =
+    const directUrlsArg = runInputObj.directUrls;
+    let splitKey: "username" | "directUrls" | null = null;
+    let handles: string[] | null = null;
+    if (
       Array.isArray(usernameArg) &&
       usernameArg.every((u) => typeof u === "string")
-        ? (usernameArg as string[])
-        : null;
+    ) {
+      splitKey = "username";
+      handles = usernameArg as string[];
+    } else if (
+      Array.isArray(directUrlsArg) &&
+      directUrlsArg.every((u) => typeof u === "string")
+    ) {
+      splitKey = "directUrls";
+      handles = directUrlsArg as string[];
+    }
     const AUTO_SPLIT_AT = 5;
     const actorPath = actorId.replace("/", "~");
     // Token goes in the Authorization header, not the query string - a
@@ -149,14 +164,14 @@ registerTool({
     // Parallel auto-split path: >5 handles -> Promise.all across
     // 5-handle batches. Each carries its own RUN_TIMEOUT_MS budget.
     // Single tool call from the agent's POV, hidden parallelism.
-    if (handles && handles.length > AUTO_SPLIT_AT) {
+    if (handles && splitKey && handles.length > AUTO_SPLIT_AT) {
       const batches: string[][] = [];
       for (let i = 0; i < handles.length; i += AUTO_SPLIT_AT) {
         batches.push(handles.slice(i, i + AUTO_SPLIT_AT));
       }
       const batchResults = await Promise.all(
         batches.map(async (batch): Promise<unknown[]> => {
-          const subInput = { ...runInputObj, username: batch };
+          const subInput = { ...runInputObj, [splitKey]: batch };
           try {
             const r = await fetch(url, {
               method: "POST",
