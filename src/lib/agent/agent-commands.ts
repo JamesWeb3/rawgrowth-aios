@@ -1,6 +1,11 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { composioAction } from "@/lib/mcp/proxy";
 import { extractThinking } from "@/lib/agent/thinking";
+import {
+  classifyBareJsonObject,
+  scanBalancedObject,
+  stripJsonFence,
+} from "@/lib/agent/markup";
 import { chatComplete } from "@/lib/llm/provider";
 
 /**
@@ -206,48 +211,9 @@ export function extractBareJsonCommands(
   reply: string,
 ): Array<{ type: string; body: string; rawSpan: string }> {
   const out: Array<{ type: string; body: string; rawSpan: string }> = [];
-  // Find every top-level JSON object via a balanced brace scan. The old
-  // lazy regex /\{[\s\S]*?\}(?=...)/ stopped at the FIRST `}` followed by
-  // a newline, so a pretty-printed multi-line object (inner `}` then
-  // `\n`) got truncated to an unparseable fragment. Instead, locate each
-  // `{` and walk forward counting `{`/`}` depth - skipping braces inside
-  // string literals and respecting `\` escapes - until depth returns to
-  // zero. That captures the complete balanced object regardless of
-  // internal whitespace or nesting.
-  const scanBalancedObject = (
-    src: string,
-    start: number,
-  ): { end: number } | null => {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < src.length; i++) {
-      const ch = src[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-      } else if (ch === "{") {
-        depth++;
-      } else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          // i is the matching close brace; end is exclusive.
-          return { end: i + 1 };
-        }
-      }
-    }
-    return null;
-  };
-
+  // Balanced brace scan via the shared helper in @/lib/agent/markup;
+  // the dispatcher (here) and the cosmetic stripper (executor) read
+  // the same scanner + shape classifier so they can't drift.
   let cursor = 0;
   while (cursor < reply.length) {
     const open = reply.indexOf("{", cursor);
@@ -255,59 +221,18 @@ export function extractBareJsonCommands(
     const match = scanBalancedObject(reply, open);
     if (!match) break;
     const span = reply.slice(open, match.end);
-    // Resume scanning right after this object - top-level objects don't
-    // overlap, so the next `{` we care about is past this one's close.
     cursor = match.end;
     if (!span) continue;
-    // Preserve the fenced ```json``` handling: an LLM may wrap the bare
-    // object in a code fence. The brace scan already isolates just the
-    // `{...}`, but keep the strip for parity with the prior behaviour in
-    // case a fence marker leaked into the slice.
-    const stripped = span
-      .replace(/^```(?:json)?\s*\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
+    const stripped = stripJsonFence(span);
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripped);
     } catch {
       continue;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      continue;
-    }
-    const obj = parsed as Record<string, unknown>;
-    if (
-      typeof obj.tool === "string" &&
-      obj.tool.trim() !== "" &&
-      obj.args !== undefined &&
-      typeof obj.args === "object" &&
-      obj.args !== null &&
-      !Array.isArray(obj.args)
-    ) {
-      // Broadened from `obj.tool === "composio_use_tool"` to any string
-      // tool name. The original strict check missed bare-JSON calls to
-      // the MCP-direct tools (apify_run_actor, apify_list_actor_runs,
-      // composio_list_tools, web_search, plan_*, agent_message,
-      // agent_inbox) - execToolCall already routes those through the
-      // registry. Kasia's leak in Marti's screenshot was
-      // `{"tool":"apify_run_actor","args":{...}}` x3 - extractor ignored
-      // it, dispatcher never fired, the raw JSON rendered as chat text.
-      // Now: classify as tool_call here so the dispatcher runs it (or
-      // returns a clean per-tool failure card) instead of leaking.
-      out.push({ type: "tool_call", body: stripped, rawSpan: span });
-    } else if (
-      typeof obj.agent === "string" &&
-      typeof obj.task === "string"
-    ) {
-      out.push({ type: "agent_invoke", body: stripped, rawSpan: span });
-    } else if (
-      typeof obj.title === "string" &&
-      typeof obj.description === "string" &&
-      typeof obj.assignee === "string"
-    ) {
-      out.push({ type: "routine_create", body: stripped, rawSpan: span });
-    }
+    const shape = classifyBareJsonObject(parsed);
+    if (!shape) continue;
+    out.push({ type: shape, body: stripped, rawSpan: span });
   }
   return out;
 }

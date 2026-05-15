@@ -17,7 +17,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { stripOrchestrationMarkup } from "@/lib/runs/executor";
+import { stripOrchestrationMarkup } from "@/lib/agent/markup";
 
 const THINKING_RE = /<thinking>\s*([\s\S]*?)\s*<\/thinking>/i;
 
