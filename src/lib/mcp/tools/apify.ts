@@ -1096,12 +1096,55 @@ registerTool({
         .join("; ");
       return textError(`All racing actors failed quality bar - ${errs}`);
     }
-    const sorted = [...winner.items]
-      .sort((a, b) => postTime(b) - postTime(a))
-      .slice(0, MAX_LIMIT);
+    const commentCount = (raw: unknown): number => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const v = o.commentsCount ?? o.commentCount ?? o.comments;
+      return typeof v === "number" ? v : Number(v) || 0;
+    };
+    // Default sort = comments desc (most common ranking metric for IG reels).
+    // Caller asking for top-by-comments wants the highest-commented items
+    // surfaced first, not the latest. Time desc would skew toward whichever
+    // creator posts most often and hide higher-commented older posts within
+    // the time window.
+    const handleOf = (raw: unknown): string => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const v =
+        (typeof o.ownerUsername === "string" && o.ownerUsername) ||
+        (typeof o.username === "string" && o.username) ||
+        (typeof o.author === "string" && o.author) ||
+        "";
+      return String(v).toLowerCase();
+    };
+    // Diversify ranking: cap each creator at max 2 reels in the top output.
+    // Without this, one prolific creator (e.g. someone posting daily) can fill
+    // the top N globally when other handles in the user's list have lower-
+    // volume but still high-quality items. Cap matches Marti's bar that top-N
+    // "from my creator list" surfaces multiple creators, not one dominator.
+    const PER_CREATOR_CAP = 2;
+    const byCreator = new Map<string, number>();
+    const sortedAll = [...winner.items].sort(
+      (a, b) => commentCount(b) - commentCount(a),
+    );
+    const diversified: unknown[] = [];
+    const overflow: unknown[] = [];
+    for (const item of sortedAll) {
+      const h = handleOf(item);
+      const seen = byCreator.get(h) ?? 0;
+      if (!h || seen < PER_CREATOR_CAP) {
+        diversified.push(item);
+        if (h) byCreator.set(h, seen + 1);
+      } else {
+        overflow.push(item);
+      }
+    }
+    // Append the overflow at the end so callers can still see what was
+    // dropped, but the top of the list is creator-diverse.
+    const sorted = [...diversified, ...overflow].slice(0, MAX_LIMIT);
     const s = (v: unknown): string =>
       typeof v === "string" ? v : v == null ? "" : String(v);
-    const cap = Math.min(sorted.length, 50);
+    // Bumped cap 50 -> 100 so the agent can apply its own per-creator
+    // diversification on a wider candidate pool.
+    const cap = Math.min(sorted.length, 100);
     const lines = sorted.slice(0, cap).map((raw) => {
       const o = (raw ?? {}) as Record<string, unknown>;
       const title = s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";

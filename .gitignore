@@ -48,3 +48,4 @@ next-env.d.ts
 
 clientslocal_cache/
 local_cache/
+.claude/worktrees/

@@ -162,24 +162,61 @@ function humanizeToolResult(
     }
     if (a.includes("CREATE")) return "Created a calendar event.";
   }
-  // Instagram
+  // Instagram - surface commentsCount alongside likes in the summary
+  // line. Pre-fix the summary showed "@x · 320 likes" only, so the
+  // model ranked by likes even when the operator asked "top by
+  // comments". commentsCount lived in result_preview JSON but the
+  // model anchors on the high-attention summary text. Now the per-post
+  // line carries BOTH metrics + a "Top 5 by commentsCount" header that
+  // forces the comment-ranking onto the model's eye (inv-tool-quality D4).
   if (app === "instagram" || a.startsWith("INSTAGRAM")) {
     const list = listOf(data);
     if (!list) return "Pulled Instagram data.";
     if (list.length === 0) return "No Instagram posts matched.";
+    const commentsOf = (o: Record<string, unknown>): number => {
+      const v = o.commentsCount ?? o.commentCount ?? o.comments;
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const likesOf = (o: Record<string, unknown>): number | null => {
+      const v = o.likesCount ?? o.likeCount ?? o.likes;
+      if (v == null) return null;
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    // Top 5 by commentsCount on the FULL list - lets the model rank
+    // accurately when operator says "top by comments" even if upstream
+    // returned in time order.
+    const ranked = list
+      .map((p, idx) => ({ p, idx, c: commentsOf((p ?? {}) as Record<string, unknown>) }))
+      .filter((r) => r.c > 0)
+      .sort((a, b) => b.c - a.c);
+    const top5 = ranked.slice(0, 5).map((r) => {
+      const o = (r.p ?? {}) as Record<string, unknown>;
+      const who = str(o.ownerUsername) || str(o.username) || str(o.owner);
+      return who ? `@${who} (${r.c} comments)` : `(${r.c} comments)`;
+    });
     const lines = list.slice(0, 10).map((p) => {
       const o = (p ?? {}) as Record<string, unknown>;
       const cap =
         str(o.caption) || str(o.text) || str(o.title) || "(no caption)";
       const who = str(o.ownerUsername) || str(o.username) || str(o.owner);
-      const likes = o.likesCount ?? o.likeCount ?? o.likes;
-      const meta = [who && `@${who}`, likes != null && `${likes} likes`]
+      const likes = likesOf(o);
+      const comments = commentsOf(o);
+      const meta = [
+        who && `@${who}`,
+        likes != null && `${likes} likes`,
+        comments > 0 && `${comments} comments`,
+      ]
         .filter(Boolean)
         .join(" · ");
       return `• ${cap.slice(0, 100).replace(/\s+/g, " ")}${meta ? ` (${meta})` : ""}`;
     });
     const more = list.length > 10 ? `\n…and ${list.length - 10} more` : "";
-    return `Pulled ${list.length} Instagram post${list.length === 1 ? "" : "s"}:\n${lines.join("\n")}${more}`;
+    const header = top5.length > 0
+      ? `Top by comments: ${top5.join(", ")}.\n\n`
+      : "";
+    return `${header}Pulled ${list.length} Instagram post${list.length === 1 ? "" : "s"}:\n${lines.join("\n")}${more}`;
   }
   // Slack
   if (app === "slack" || a.startsWith("SLACK")) {
