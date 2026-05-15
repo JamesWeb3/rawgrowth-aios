@@ -365,6 +365,8 @@ async function execToolCall(
   const MCP_DIRECT_TOOLS = new Set([
     "apify_run_actor",
     "apify_list_actor_runs",
+    "apify_start_run",
+    "apify_poll_run",
     "composio_list_tools",
     "web_search",
     "plan_create",

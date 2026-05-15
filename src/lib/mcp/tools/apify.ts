@@ -342,3 +342,287 @@ registerTool({
     return text(`Actor ${actorId} - ${list.length} recent run(s).\n${summary}`);
   },
 });
+
+/**
+ * apify_start_run + apify_poll_run - async pattern. Use these when
+ * the synchronous apify_run_actor would exceed the chat turn budget
+ * (>180s): wide scrapes across many handles, large resultsLimit, or
+ * any cold-start actor. The flow:
+ *
+ *   1. apify_start_run(actor_id, run_input)
+ *      -> kicks off the actor, returns { run_id, dataset_id, status }
+ *      in ~1-2s without waiting. Emit MULTIPLE in parallel for batch
+ *      scrapes.
+ *
+ *   2. apify_poll_run(run_id, max_wait_seconds)
+ *      -> polls the run for up to max_wait_seconds (cap 60s). If the
+ *      actor finishes within that window, returns the dataset items
+ *      formatted the same way as apify_run_actor. If it's still
+ *      running, returns "in-flight, retry the poll" - the agent can
+ *      decide to poll again next turn instead of holding the chat.
+ *
+ * This pattern keeps each individual tool call well under the chat
+ * turn budget and lets a 13-handle scrape complete in 2-3 polled
+ * turns instead of one stalled 10-minute call.
+ */
+
+const POLL_DEFAULT_WAIT_S = 30;
+const POLL_MAX_WAIT_S = 60;
+const POLL_INTERVAL_MS = 5_000;
+const RUN_KICKOFF_TIMEOUT_MS = 15_000;
+
+type ApifyRunSnapshot = {
+  id?: string;
+  status?: string;
+  defaultDatasetId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  buildId?: string;
+};
+
+registerTool({
+  name: "apify_start_run",
+  description:
+    "Start an Apify actor run WITHOUT waiting for it to finish. Returns a run_id + dataset_id so a subsequent apify_poll_run can fetch the results. Use this for wide scrapes that would exceed the chat turn budget under apify_run_actor.",
+  isWrite: true,
+  requiresIntegration: "apify",
+  inputSchema: {
+    type: "object",
+    properties: {
+      actor_id: {
+        type: "string",
+        description: 'Apify actor id, e.g. "apify/instagram-reel-scraper".',
+      },
+      run_input: {
+        type: "object",
+        description: "The actor's input JSON (passed as the request body).",
+      },
+    },
+    required: ["actor_id", "run_input"],
+  },
+  handler: async (args, ctx) => {
+    const actorId = String(args.actor_id ?? "").trim();
+    if (!actorId) return textError("actor_id is required");
+    const runInput = args.run_input;
+    if (
+      runInput === undefined ||
+      runInput === null ||
+      typeof runInput !== "object"
+    ) {
+      return textError("run_input is required");
+    }
+    const resolved = await resolveApifyKey(ctx.organizationId);
+    if ("error" in resolved) return textError(resolved.error);
+
+    const actorPath = actorId.replace("/", "~");
+    const url = `https://api.apify.com/v2/acts/${actorPath}/runs`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${resolved.key}`,
+        },
+        body: JSON.stringify(runInput),
+        signal: AbortSignal.timeout(RUN_KICKOFF_TIMEOUT_MS),
+      });
+    } catch (err) {
+      const e = err as Error;
+      return textError(`apify_start_run: ${e.message}`);
+    }
+    if (res.status !== 200 && res.status !== 201) {
+      const respBody = await readBodySafe(res);
+      if (res.status === 404) {
+        return textError(
+          `apify_start_run: actor "${actorId}" not found - check the actor_id. ${respBody.slice(0, MAX_BODY)}`,
+        );
+      }
+      return textError(
+        `apify_start_run: ${res.status} ${respBody.slice(0, MAX_BODY)}`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch (err) {
+      return textError(`apify_start_run: bad JSON - ${(err as Error).message}`);
+    }
+    const run = (parsed as { data?: ApifyRunSnapshot } | null)?.data ?? {};
+    if (!run.id) {
+      return textError(`apify_start_run: response missing run id`);
+    }
+    return text(
+      `Started run on ${actorId}.\n` +
+        `run_id: ${run.id}\n` +
+        `dataset_id: ${run.defaultDatasetId ?? "(pending)"}\n` +
+        `status: ${run.status ?? "READY"}\n` +
+        `Call apify_poll_run with run_id="${run.id}" to fetch results once it finishes.`,
+    );
+  },
+});
+
+registerTool({
+  name: "apify_poll_run",
+  description:
+    "Poll an Apify run started via apify_start_run. Waits up to max_wait_seconds (default 30, cap 60) for the run to finish. Returns the dataset items if it completes within the window, or a still-running status if not.",
+  isWrite: false,
+  requiresIntegration: "apify",
+  inputSchema: {
+    type: "object",
+    properties: {
+      run_id: { type: "string", description: "The run id from apify_start_run." },
+      max_wait_seconds: {
+        type: "number",
+        description: `Up to this many seconds to wait for the run. Default ${POLL_DEFAULT_WAIT_S}, cap ${POLL_MAX_WAIT_S}.`,
+      },
+      limit: {
+        type: "number",
+        description: `Max dataset items to return when the run finishes. Default ${DEFAULT_LIMIT}, cap ${MAX_LIMIT}.`,
+      },
+    },
+    required: ["run_id"],
+  },
+  handler: async (args, ctx) => {
+    const runId = String(args.run_id ?? "").trim();
+    if (!runId) return textError("run_id is required");
+    const waitSec = clampLimit(
+      args.max_wait_seconds,
+      POLL_DEFAULT_WAIT_S,
+      POLL_MAX_WAIT_S,
+    );
+    const limit = clampLimit(args.limit, DEFAULT_LIMIT, MAX_LIMIT);
+    const resolved = await resolveApifyKey(ctx.organizationId);
+    if ("error" in resolved) return textError(resolved.error);
+
+    const deadline = Date.now() + waitSec * 1000;
+    let snapshot: ApifyRunSnapshot | null = null;
+    while (Date.now() < deadline) {
+      let res: Response;
+      try {
+        res = await fetch(`https://api.apify.com/v2/actor-runs/${runId}`, {
+          headers: { authorization: `Bearer ${resolved.key}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (err) {
+        return textError(`apify_poll_run: ${(err as Error).message}`);
+      }
+      if (res.status !== 200) {
+        const body = await readBodySafe(res);
+        return textError(
+          `apify_poll_run: ${res.status} ${body.slice(0, MAX_BODY)}`,
+        );
+      }
+      let parsed: unknown;
+      try {
+        parsed = await res.json();
+      } catch (err) {
+        return textError(
+          `apify_poll_run: bad JSON - ${(err as Error).message}`,
+        );
+      }
+      snapshot = (parsed as { data?: ApifyRunSnapshot } | null)?.data ?? null;
+      const status = snapshot?.status ?? "UNKNOWN";
+      if (status === "SUCCEEDED") break;
+      if (
+        status === "FAILED" ||
+        status === "ABORTED" ||
+        status === "TIMED-OUT"
+      ) {
+        return textError(`apify_poll_run: run ${runId} ${status}`);
+      }
+      // RUNNING / READY: sleep + poll again.
+      if (Date.now() + POLL_INTERVAL_MS >= deadline) break;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+
+    if (snapshot?.status !== "SUCCEEDED") {
+      return text(
+        `Run ${runId} is still ${snapshot?.status ?? "running"} after ${waitSec}s. ` +
+          `Call apify_poll_run again in a moment - the agent should hold the operator with a one-liner and re-poll, not stall the turn.`,
+      );
+    }
+
+    // Fetch the dataset items.
+    const datasetId = snapshot.defaultDatasetId;
+    if (!datasetId) {
+      return text(`Run ${runId} SUCCEEDED but has no dataset id.`);
+    }
+    let dres: Response;
+    try {
+      dres = await fetch(
+        `https://api.apify.com/v2/datasets/${datasetId}/items?limit=${MAX_LIMIT}`,
+        {
+          headers: { authorization: `Bearer ${resolved.key}` },
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
+    } catch (err) {
+      return textError(`apify_poll_run: dataset fetch ${(err as Error).message}`);
+    }
+    if (dres.status !== 200) {
+      const body = await readBodySafe(dres);
+      return textError(
+        `apify_poll_run: dataset ${dres.status} ${body.slice(0, MAX_BODY)}`,
+      );
+    }
+    let items: unknown;
+    try {
+      items = await dres.json();
+    } catch (err) {
+      return textError(
+        `apify_poll_run: dataset bad JSON - ${(err as Error).message}`,
+      );
+    }
+    const arr = Array.isArray(items) ? items : [];
+
+    // Format dataset items - same shape as apify_run_actor so the
+    // agent reads both paths identically.
+    const postTime = (o: unknown): number => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      const raw =
+        r.timestamp ??
+        r.takenAt ??
+        r.taken_at_timestamp ??
+        r.takenAtTimestamp ??
+        r.created_time;
+      if (typeof raw === "number") return raw > 1e12 ? raw : raw * 1000;
+      const p = Date.parse(String(raw ?? ""));
+      return Number.isFinite(p) ? p : 0;
+    };
+    const sorted = [...arr]
+      .sort((a, b) => postTime(b) - postTime(a))
+      .slice(0, limit);
+    const s = (v: unknown): string =>
+      typeof v === "string" ? v : v == null ? "" : String(v);
+    const lines = sorted.slice(0, 15).map((raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const title = s(o.caption) || s(o.title) || s(o.text) || s(o.name) || "";
+      const url = s(o.url) || s(o.link) || s(o.postUrl);
+      const who = s(o.ownerUsername) || s(o.username) || s(o.author);
+      const likes = o.likesCount ?? o.likeCount ?? o.likes;
+      const comments = o.commentsCount ?? o.commentCount ?? o.comments;
+      const ts = postTime(o);
+      const tsStr = ts > 0 ? new Date(ts).toISOString() : "";
+      const meta = [
+        who && `@${who}`,
+        likes != null && `${likes} likes`,
+        comments != null && `${comments} comments`,
+        tsStr && `posted ${tsStr.slice(0, 10)}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const head =
+        title.replace(/\s+/g, " ").slice(0, 120) ||
+        (url ? "(no caption)" : JSON.stringify(o).slice(0, 120));
+      return `• ${head}${meta ? ` (${meta})` : ""}${url ? `\n  ${url}` : ""}`;
+    });
+    const more =
+      sorted.length > 15 ? `\n…and ${sorted.length - 15} more` : "";
+    return text(
+      sorted.length === 0
+        ? `Run ${runId} SUCCEEDED but returned 0 items.`
+        : `Run ${runId} SUCCEEDED with ${sorted.length} item(s):\n${lines.join("\n")}${more}`,
+    );
+  },
+});
