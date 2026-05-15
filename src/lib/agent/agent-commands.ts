@@ -484,7 +484,17 @@ async function execToolCall(
   // it breaks them. CANCEL / ARCHIVE - context-dependent (cancel a
   // calendar hold, archive a thread) and not unambiguously destructive,
   // so left callable to stay conservative.
-  const destructive = /(?:^|[_\-])(DELETE|DROP|PURGE|REMOVE|WIPE|TRUNCATE|TRASH|REVOKE)(?:[_\-]|$)/i;
+  //
+  // GAP #20: composio action names are sometimes CamelCase (e.g.
+  // LINEAR_DELETE_ISSUE in catalog vs `DeleteIssue` / `RemoveLabel`
+  // surfaced by the SDK for certain apps). The old boundary set was
+  // only `_` / `-` / `^` / `$` so CamelCase tokens slipped past. Add
+  // CamelCase boundaries: left edge accepts a preceding lowercase
+  // letter (asserted via lookbehind), right edge accepts a following
+  // uppercase letter (asserted via lookahead). Keeps the `i` flag so
+  // any-case spelling of the keyword still matches.
+  const destructive =
+    /(?:^|[_\-]|(?<=[a-z]))(DELETE|DROP|PURGE|REMOVE|WIPE|TRUNCATE|TRASH|REVOKE)(?=[_\-]|[A-Z]|$)/i;
   if (destructive.test(action)) {
     return {
       ok: false,

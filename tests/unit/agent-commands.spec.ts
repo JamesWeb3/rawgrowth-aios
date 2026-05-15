@@ -362,3 +362,54 @@ test("extractBareJsonCommands: rejects {tool} without args (incomplete shape)", 
   const blocks = extractBareJsonCommands(reply);
   assert.equal(blocks.length, 0, "incomplete tool shape (no args) must NOT classify");
 });
+
+// GAP #20 - composio action names are sometimes CamelCase. The old
+// denylist regex required `_` / `-` / start / end boundaries, so the
+// CamelCase form `DeleteIssue` slipped past the destructive check and
+// would have hit Composio. The fixed regex adds CamelCase boundaries
+// (lowercase-letter lookbehind + uppercase-letter lookahead) so the
+// CamelCase form is refused at the chat-command surface.
+test("extractAndExecuteCommands: tool_call rejects CamelCase destructive action `DeleteIssue` (GAP #20)", async () => {
+  installFetchRouter((req) => {
+    if (req.url.includes("/rest/v1/rgaios_agents")) {
+      return jsonResponse({
+        id: "atlas-1",
+        role: "ceo",
+        is_department_head: true,
+        name: "Atlas",
+      });
+    }
+    if (req.url.includes("/rest/v1/rgaios_audit_log")) {
+      return jsonResponse([]);
+    }
+    if (req.url.includes("backend.composio.dev")) {
+      throw new Error(
+        "CamelCase destructive action must NEVER reach Composio - the denylist must catch DeleteIssue",
+      );
+    }
+    return jsonResponse(null);
+  });
+  const { extractAndExecuteCommands } = await import(
+    "@/lib/agent/agent-commands"
+  );
+  const reply = `Closing the bug.
+
+<command type="tool_call">
+{ "tool": "composio_use_tool",
+  "args": { "app": "linear", "action": "DeleteIssue",
+            "input": { "id": "LIN-42" } } }
+</command>`;
+  const out = await extractAndExecuteCommands({
+    orgId: "org-1",
+    speakerAgentId: "atlas-1",
+    reply,
+    callerUserId: "user-atlas",
+  });
+  assert.equal(out.results.length, 1);
+  assert.equal(
+    out.results[0].ok,
+    false,
+    "CamelCase DeleteIssue must be refused by the destructive denylist",
+  );
+  assert.match(out.results[0].summary, /denylist|destructive/);
+});
