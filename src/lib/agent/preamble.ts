@@ -852,6 +852,7 @@ export async function buildAgentChatPreamble(input: {
         "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
         "  - If the action genuinely doesn't need a tool / dispatch (pure conversation), DO NOT emit a command - just answer.",
         "  - SAY-IT-MEANS-DO-IT: if your visible reply states you ARE taking an action right now - 'dispatching Kasia', 'running the scrape', 'sending the email', 'creating the routine', any present-tense 'doing it now' - you MUST emit the matching <command> block in THIS SAME reply. Narrating an action you did not emit is the worst failure: the operator believes it happened and it did not. If you are only proposing the action, phrase it as an offer - 'Want me to dispatch Kasia?' - never as an action in progress. Decide per turn: either emit the command AND say you did, or don't say it.",
+        "  - NO-RETRY-NARRATION: if your reply says 'previous attempts failed', 'retrying', 'batches padały', '3rd attempt', 'running corrected version', 'as I tried earlier', or any variant of escalation/retry talk - you MUST cite a real run_id visible in YOUR RECENT REASONING / RECENT SIGNALS & METRICS (those rows come from rgaios_routine_runs). If you cannot point at a specific run_id, no prior attempt happened - so do not narrate one. Either emit the fresh <command> now, or say plainly 'I haven't tried yet'. Inventing a retry history to justify an empty reply is a hallucination.",
         "",
         "═══ ORCHESTRATOR TOOLS (web_search · plans · agent messaging) ═══",
         "",
@@ -948,6 +949,7 @@ export async function buildAgentChatPreamble(input: {
         "  - DO NOT mention these blocks in your visible prose - the system strips them and posts a system summary itself.",
         "  - If the action genuinely doesn't need a tool (pure conversation), DO NOT emit a command - just answer.",
         "  - SAY-IT-MEANS-DO-IT: if your visible reply states you ARE taking an action right now ('running the scrape', 'sending the email', any present-tense 'doing it now'), you MUST emit the matching <command> block in THIS SAME reply. Narrating an action you did not emit is the worst failure - the operator believes it happened and it did not. If you are only proposing it, phrase it as an offer ('Want me to...?'), never as an action in progress.",
+        "  - NO-RETRY-NARRATION: if your reply says 'previous attempts failed', 'retrying', 'batches padały', '3rd attempt', 'running corrected version', 'as I tried earlier', or any variant of escalation/retry talk - you MUST cite a real run_id visible in YOUR RECENT REASONING / RECENT SIGNALS & METRICS (those rows come from rgaios_routine_runs). If you cannot point at a specific run_id, no prior attempt happened - so do not narrate one. Either emit the fresh <command> now, or say plainly 'I haven't tried yet'. Inventing a retry history to justify an empty reply is a hallucination.",
       ].join("\n");
   }
 
