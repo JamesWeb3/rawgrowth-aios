@@ -17,6 +17,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { stripOrchestrationMarkup } from "@/lib/runs/executor";
 
 const THINKING_RE = /<thinking>\s*([\s\S]*?)\s*<\/thinking>/i;
 
@@ -53,10 +54,10 @@ export function extractThinking(reply: string): ExtractedThinking {
     const openOnly = reply.match(/<thinking>/i);
     if (openOnly && !/<\/thinking>/i.test(reply)) {
       const idx = openOnly.index ?? 0;
-      const raw = reply
-        .slice(idx + openOnly[0].length)
-        .replace(/\s*\n\s*/g, " ")
-        .trim();
+      const cleaned = stripOrchestrationMarkup(
+        reply.slice(idx + openOnly[0].length),
+      );
+      const raw = cleaned.replace(/\s*\n\s*/g, " ").trim();
       return {
         thinking: raw ? raw.slice(0, 600) : null,
         visibleReply: reply.slice(0, idx).trim(),
@@ -69,7 +70,14 @@ export function extractThinking(reply: string): ExtractedThinking {
     };
   }
 
-  const raw = (m[1] ?? "").replace(/\s*\n\s*/g, " ").trim();
+  // Strip any bare-JSON command shapes the model dumped into its
+  // <thinking> trace. The reasoning surface renders this raw, and
+  // Marti's live test on 6a60aa7 caught the leak: Kasia's thinking
+  // included a "I'll call {tool: apify_run_actor, args: ...}" block
+  // and the JSON rendered inline in the Reasoning card. The strip is
+  // safe - thinking is narrative, not a command surface.
+  const cleaned = stripOrchestrationMarkup(m[1] ?? "");
+  const raw = cleaned.replace(/\s*\n\s*/g, " ").trim();
   const thinking = raw ? raw.slice(0, 600) : null;
 
   // Strip ALL <thinking> blocks (the matched one + any extras) PLUS any
