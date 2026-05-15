@@ -154,16 +154,28 @@ registerTool({
       .maybeSingle();
     if (!target) return textError("Agent not found in this organization.");
 
-    // Cycle + depth guard. The MCP context does not identify the calling
-    // agent directly (no run id, no input_payload), so the reachable
-    // signal is the incoming chain recovered from the DB keyed on
-    // ctx.userId. Refuse a hop that would re-enter the chain or exceed
-    // the depth cap. When no chain is discoverable the call proceeds
-    // (treated as an original operator-driven invoke).
+    // Cycle + depth guard (GAP #18 / Marti client-acceptance.html PHASE-0).
+    // PRE-FIX: this keyed the incoming-chain lookup off ctx.userId. But
+    // loadIncomingChain joins through rgaios_routines on
+    // assignee_agent_id - which is an AGENT id, never a user id. So
+    // for every agent->agent invocation the lookup matched zero rows,
+    // returned an empty chain, and the MAX_DELEGATION_DEPTH=3 cap
+    // never fired. A runaway delegation chain could recurse without
+    // limit (P0 abuse vector flagged in Marti client-acceptance.html
+    // PHASE-0 pre-req).
+    //
+    // POST-FIX: key the lookup off ctx.agentId. ToolContext.agentId
+    // (src/lib/mcp/types.ts:14) is populated by exactly the
+    // in-process call paths that constitute an agent->agent
+    // delegation chain: executor, execToolCall (chat speaker),
+    // decideApproval (stored approval row). When agentId is null
+    // (external bearer-token MCP client - not part of a delegation
+    // chain by definition) loadIncomingChain short-circuits to an
+    // empty chain so the call still proceeds.
     const incoming = await loadIncomingChain(
       db,
       ctx.organizationId,
-      String(ctx.userId ?? ""),
+      String(ctx.agentId ?? ""),
     );
     if (incoming.chain.includes(agentId)) {
       return textError(
