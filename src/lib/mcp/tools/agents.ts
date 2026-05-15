@@ -158,6 +158,18 @@ registerTool({
       );
     }
 
+    // Privilege guard - mirrors agents_update's CEO protection (lines
+    // 308-312). Without it any MCP caller could spawn a fresh agent
+    // with role:"ceo", which grants the orchestrator surface + JSON
+    // COMMANDS authority. role:"ceo" passes the VALID_ROLES check so
+    // the gate has to live here. Promoting to CEO is an operator
+    // action in the dashboard agent panel, not an MCP-driven one.
+    if (role === "ceo") {
+      return textError(
+        'can\'t create an agent with role:"ceo" from MCP - role:"ceo" is an operator action in the dashboard agent panel.',
+      );
+    }
+
     const DEPARTMENTS = ["marketing", "sales", "fulfilment", "finance"] as const;
     type Department = typeof DEPARTMENTS[number];
     let department: Department | null = null;
