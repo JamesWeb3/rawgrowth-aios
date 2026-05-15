@@ -73,7 +73,43 @@ type HistoryRow = {
   role: "user" | "assistant" | "system";
   content: string;
   created_at: string;
+  metadata?: Record<string, unknown> | null;
 };
+
+// One archived conversation. Each "+ New chat" press stamps every
+// row in the closing thread with metadata.archived_at = <ISO>, so
+// rows sharing the same archived_at belong to the same past chat.
+type HistorySession = {
+  archivedAt: string;
+  rows: HistoryRow[];
+};
+
+function groupHistorySessions(rows: HistoryRow[]): HistorySession[] {
+  const byStamp = new Map<string, HistoryRow[]>();
+  for (const r of rows) {
+    const m = (r.metadata ?? {}) as Record<string, unknown>;
+    const stamp =
+      typeof m.archived_at === "string" && m.archived_at
+        ? m.archived_at
+        // Rows missing archived_at (older data, mid-archive partial
+        // failure) bucket together as one "unsorted" group keyed by
+        // the empty string so the operator still sees them, not loses them.
+        : "";
+    const bucket = byStamp.get(stamp);
+    if (bucket) bucket.push(r);
+    else byStamp.set(stamp, [r]);
+  }
+  return [...byStamp.entries()]
+    .map(([archivedAt, rs]) => ({
+      archivedAt,
+      // Within a session, oldest-first reads as a normal conversation.
+      rows: rs
+        .slice()
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    }))
+    // Newest session first.
+    .sort((a, b) => b.archivedAt.localeCompare(a.archivedAt));
+}
 
 // A row as returned by GET /api/agents/[id]/chat - carries metadata so
 // the client can keep the proactive feed coherent across reloads.
@@ -329,6 +365,10 @@ export default function AgentChatTab({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRows, setHistoryRows] = useState<HistoryRow[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Which past conversation the operator clicked into. null = the
+  // session-list view (default); a string = that archived_at's
+  // messages are open in the drawer.
+  const [historySession, setHistorySession] = useState<string | null>(null);
 
   const _roleMeta =
     AGENT_ROLES.find((r) => r.value === agentRole) ??
@@ -866,6 +906,7 @@ export default function AgentChatTab({
               type="button"
               onClick={async () => {
                 setHistoryOpen(true);
+                setHistorySession(null);
                 setHistoryLoading(true);
                 try {
                   const r = await fetch(`/api/agents/${agentId}/chat?include=archived`);
@@ -933,62 +974,124 @@ export default function AgentChatTab({
           timeline; renders nothing when there is no active plan. */}
       <AgentPlanPanel agentId={agentId} />
 
-      {/* History drawer */}
-      {historyOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm"
-          onClick={() => setHistoryOpen(false)}
-        >
+      {/* History drawer - session-grouped + click-to-open. Each "+ New
+          chat" stamps the closing thread's rows with metadata.archived_at;
+          we group by that stamp so the operator sees PAST CONVERSATIONS
+          (one row per conversation), not a flat list of every message
+          ever. Clicking a session opens its full transcript inside the
+          same drawer (no navigation, no lost context). Marti Loom
+          complaint: "HISTORICO NN FUNCIONA, NN CONSIGO CLICAR EM
+          CONVERSA PASSADA". */}
+      {historyOpen && (() => {
+        const sessions = groupHistorySessions(historyRows ?? []);
+        const openSession =
+          historySession === null
+            ? null
+            : sessions.find((s) => s.archivedAt === historySession) ?? null;
+        return (
           <div
-            className="h-full w-[480px] overflow-y-auto border-l border-[var(--line)] bg-[var(--brand-bg)] p-5"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm"
+            onClick={() => setHistoryOpen(false)}
           >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-serif text-xl tracking-tight text-foreground">
-                Chat history with {displayName}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(false)}
-                className="text-sm text-[var(--text-muted)] hover:text-foreground"
-              >
-                ×
-              </button>
-            </div>
-            {historyLoading ? (
-              <p className="text-xs text-[var(--text-muted)]">Loading...</p>
-            ) : (historyRows ?? []).length === 0 ? (
-              <p className="text-xs text-[var(--text-muted)]">No history yet.</p>
-            ) : (
-              <ul className="space-y-3">
-                {(historyRows ?? []).map((m) => (
-                  <li
-                    key={m.id}
-                    className={
-                      "rounded-md border p-3 " +
-                      (m.role === "user"
-                        ? "border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5"
-                        : "border-[var(--line)] bg-[var(--brand-surface)]")
-                    }
+            <div
+              className="h-full w-[480px] overflow-y-auto border-l border-[var(--line)] bg-[var(--brand-bg)] p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="font-serif text-xl tracking-tight text-foreground">
+                  {openSession ? "Past conversation" : `Chat history with ${displayName}`}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(false)}
+                  className="text-sm text-[var(--text-muted)] hover:text-foreground"
+                  aria-label="Close history"
+                >
+                  ×
+                </button>
+              </div>
+              {historyLoading ? (
+                <p className="text-xs text-[var(--text-muted)]">Loading...</p>
+              ) : sessions.length === 0 ? (
+                <p className="text-xs text-[var(--text-muted)]">No past conversations yet.</p>
+              ) : openSession ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setHistorySession(null)}
+                    className="mb-3 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-foreground"
                   >
-                    <div className="mb-1 flex items-baseline justify-between gap-2">
-                      <span className="text-[10px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
-                        {m.role}
-                      </span>
-                      <time className="text-[10px] text-[var(--text-muted)]">
-                        {new Date(m.created_at).toLocaleString()}
-                      </time>
-                    </div>
-                    <p className="whitespace-pre-wrap text-[13px] text-[var(--text-body)]">
-                      {m.content}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
+                    &lt; back to conversations ({sessions.length})
+                  </button>
+                  <p className="mb-3 text-[10px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
+                    {openSession.archivedAt
+                      ? `archived ${new Date(openSession.archivedAt).toLocaleString()}`
+                      : "older / unsorted"}
+                    {" · "}
+                    {openSession.rows.length} message{openSession.rows.length === 1 ? "" : "s"}
+                  </p>
+                  <ul className="space-y-3">
+                    {openSession.rows.map((m) => (
+                      <li
+                        key={m.id}
+                        className={
+                          "rounded-md border p-3 " +
+                          (m.role === "user"
+                            ? "border-[var(--brand-primary)]/30 bg-[var(--brand-primary)]/5"
+                            : "border-[var(--line)] bg-[var(--brand-surface)]")
+                        }
+                      >
+                        <div className="mb-1 flex items-baseline justify-between gap-2">
+                          <span className="text-[10px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
+                            {m.role}
+                          </span>
+                          <time className="text-[10px] text-[var(--text-muted)]">
+                            {new Date(m.created_at).toLocaleString()}
+                          </time>
+                        </div>
+                        <p className="whitespace-pre-wrap text-[13px] text-[var(--text-body)]">
+                          {m.content}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <ul className="space-y-2">
+                  {sessions.map((s) => {
+                    const firstUser = s.rows.find((r) => r.role === "user");
+                    const lastMsg = s.rows[s.rows.length - 1];
+                    const preview = (firstUser ?? lastMsg)?.content?.slice(0, 100) ?? "";
+                    return (
+                      <li key={s.archivedAt || "unsorted"}>
+                        <button
+                          type="button"
+                          onClick={() => setHistorySession(s.archivedAt)}
+                          className="w-full rounded-md border border-[var(--line)] bg-[var(--brand-surface)] p-3 text-left transition-colors hover:border-[var(--brand-primary)]/50 hover:bg-[var(--brand-primary)]/5"
+                        >
+                          <div className="mb-1 flex items-baseline justify-between gap-2">
+                            <span className="text-[10px] uppercase tracking-[1.5px] text-[var(--text-muted)]">
+                              {s.archivedAt
+                                ? new Date(s.archivedAt).toLocaleString()
+                                : "older"}
+                            </span>
+                            <span className="text-[10px] text-[var(--text-muted)]">
+                              {s.rows.length} msg
+                            </span>
+                          </div>
+                          <p className="line-clamp-2 text-[12px] text-[var(--text-body)]">
+                            {preview || "(no preview)"}
+                          </p>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Messages */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4">
