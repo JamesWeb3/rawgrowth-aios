@@ -111,14 +111,7 @@ registerTool({
 
     const limit = clampLimit(args.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
-    // Decouple what we FETCH from the actor from what we RETURN. The
-    // Instagram scraper surfaces pinned posts first; if we ask the
-    // actor for only `limit` items (e.g. 3) it returns 3 pinned posts
-    // and there is nothing left to sort - "latest 3" comes back as the
-    // 3 oldest pinned bangers. So always pull a generous window, sort
-    // newest-first below, then slice to `limit`. Also bump any
-    // run_input.resultsLimit the model set to the same floor so the
-    // actor itself does not pre-truncate to the small number.
+    // Decouple what we FETCH from the actor from what we RETURN.
     const fetchLimit = Math.min(Math.max(limit * 5, 30), MAX_LIMIT);
     const runInputObj = runInput as Record<string, unknown>;
     if (
@@ -131,10 +124,19 @@ registerTool({
     const resolved = await resolveApifyKey(ctx.organizationId);
     if ("error" in resolved) return textError(resolved.error);
 
-    // Apify API expects the actor id in the path as `username~actorname`.
-    // Models naturally write `apify/instagram-scraper` (the slash form
-    // shown on apify.com) - left as-is that becomes an extra path
-    // segment and the API 404s ("no API endpoint at this URL").
+    // Auto-split: if the agent passed >5 handles in `username`, the
+    // Apify run-sync call would scrape all of them serially inside
+    // the actor and frequently exceed our chat budget. Split into
+    // 5-handle parallel sub-runs (Promise.all) so total wall-clock
+    // = max(batch durations) instead of sum. Single tool call from
+    // the agent's POV, hidden parallelism, same return shape.
+    const usernameArg = runInputObj.username;
+    const handles =
+      Array.isArray(usernameArg) &&
+      usernameArg.every((u) => typeof u === "string")
+        ? (usernameArg as string[])
+        : null;
+    const AUTO_SPLIT_AT = 5;
     const actorPath = actorId.replace("/", "~");
     // Token goes in the Authorization header, not the query string - a
     // secret in a URL leaks into access logs / proxy logs / error traces.
@@ -143,7 +145,43 @@ registerTool({
       `?limit=${fetchLimit}`;
 
     let res: Response;
-    try {
+    let parsedInjection: unknown[] | null = null;
+    // Parallel auto-split path: >5 handles -> Promise.all across
+    // 5-handle batches. Each carries its own RUN_TIMEOUT_MS budget.
+    // Single tool call from the agent's POV, hidden parallelism.
+    if (handles && handles.length > AUTO_SPLIT_AT) {
+      const batches: string[][] = [];
+      for (let i = 0; i < handles.length; i += AUTO_SPLIT_AT) {
+        batches.push(handles.slice(i, i + AUTO_SPLIT_AT));
+      }
+      const batchResults = await Promise.all(
+        batches.map(async (batch): Promise<unknown[]> => {
+          const subInput = { ...runInputObj, username: batch };
+          try {
+            const r = await fetch(url, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${resolved.key}`,
+              },
+              body: JSON.stringify(subInput),
+              signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+            });
+            if (r.status !== 200 && r.status !== 201) return [];
+            const j = await r.json();
+            return Array.isArray(j) ? j : [];
+          } catch {
+            return [];
+          }
+        }),
+      );
+      const merged: unknown[] = [];
+      for (const items of batchResults) {
+        for (const it of items) merged.push(it);
+      }
+      res = { status: 200 } as Response;
+      parsedInjection = merged;
+    } else try {
       res = await fetch(url, {
         method: "POST",
         headers: {
@@ -192,20 +230,16 @@ registerTool({
       );
     }
 
-    let parsed: unknown;
-    try {
-      parsed = await res.json();
-    } catch (err) {
-      return textError(`apify_run_actor: bad JSON - ${(err as Error).message}`);
+    let parsed: unknown = parsedInjection;
+    if (parsed === null) {
+      try {
+        parsed = await res.json();
+      } catch (err) {
+        return textError(`apify_run_actor: bad JSON - ${(err as Error).message}`);
+      }
     }
 
-    // Sort newest-first BEFORE slicing. The Instagram scraper returns a
-    // profile's PINNED posts at the top of the grid (they can be years
-    // old) followed by the rest in roughly feed order - a plain
-    // slice(0,limit) therefore returned a mix of pinned + recent and
-    // missed the actual latest posts. Sort by the post timestamp
-    // descending so "latest N" means latest N. Items with no timestamp
-    // sort last rather than poisoning the order.
+    // Sort newest-first BEFORE slicing.
     const postTime = (o: unknown): number => {
       const r = (o ?? {}) as Record<string, unknown>;
       const raw =
