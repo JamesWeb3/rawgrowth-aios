@@ -1,6 +1,7 @@
 import { registerTool, text, textError } from "../registry";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { tryDecryptSecret } from "@/lib/crypto";
+import type { ToolContext } from "../types";
 
 /**
  * Apify actor runner. Apify isn't a Composio app, so this wires the
@@ -1209,6 +1210,315 @@ registerTool({
       .join("; ");
     return text(
       `Winner by quality: ${winner.actor} (${winner.brief}, score ${winner.score.toFixed(0)}). Others: ${others}.\n${lines.join("\n")}${more}`,
+    );
+  },
+});
+
+/**
+ * apify_top_reels_from_file - one-shot tool for "top N reels by metric
+ * from MY creator list" style queries.
+ *
+ * The agent should not have to do the dance of:
+ *   1) knowledge_query to load the creator-list file,
+ *   2) parse out the @handles,
+ *   3) call apify_race_scrape with the full handle array,
+ *   4) filter window + cap per creator + rank,
+ *   5) deliver.
+ *
+ * It picks the right tool and the tool does the work. Hands the agent
+ * back a ranked, window-filtered, creator-diversified text block plus a
+ * coverage_brief line so it can declare ranked_by / window / source in
+ * its OBSERVATION step exactly like the RANKED-GROUNDING preamble asks.
+ */
+async function readAgentFileBody(
+  ctx: ToolContext,
+  fileName: string,
+): Promise<{ filename: string; body: string } | { error: string }> {
+  const agentId = ctx.agentId;
+  if (!agentId) {
+    return { error: "agent_id missing on this surface" };
+  }
+  const db = supabaseAdmin();
+  const { data: agent } = await db
+    .from("rgaios_agents")
+    .select("id")
+    .eq("id", agentId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!agent) return { error: "agent not found in this organization" };
+
+  // Loose filename match - the agent often passes the bare name without
+  // extension (e.g. "creator-list" instead of "creator-list-v2.md"). Pick
+  // the most recently uploaded file whose name contains the substring.
+  const { data: files } = await db
+    .from("rgaios_agent_files")
+    .select("id, filename, uploaded_at")
+    .eq("organization_id", ctx.organizationId)
+    .eq("agent_id", agentId)
+    .ilike("filename", `%${fileName}%`)
+    .order("uploaded_at", { ascending: false })
+    .limit(1);
+  const file = (files ?? [])[0] as
+    | { id: string; filename: string }
+    | undefined;
+  if (!file) {
+    return { error: `no agent file matched "${fileName}"` };
+  }
+  const { data: chunks } = await db
+    .from("rgaios_agent_file_chunks")
+    .select("content, chunk_index")
+    .eq("file_id", file.id)
+    .order("chunk_index", { ascending: true });
+  const body = (chunks ?? []).map((c) => c.content).join("\n");
+  return { filename: file.filename, body };
+}
+
+function extractHandles(input: string): string[] {
+  // Match @handle (Instagram allows lowercase, digits, dot, underscore).
+  // Also pick up plain instagram.com/<handle> URLs the user may have
+  // pasted instead of @handle. Deduped, lower-cased.
+  const handles = new Set<string>();
+  const atRe = /@([A-Za-z0-9._]{2,30})\b/g;
+  const urlRe = /instagram\.com\/([A-Za-z0-9._]{2,30})(?:\/|\b)/g;
+  let m: RegExpExecArray | null;
+  while ((m = atRe.exec(input)) !== null) handles.add(m[1].toLowerCase());
+  while ((m = urlRe.exec(input)) !== null) {
+    const h = m[1].toLowerCase();
+    if (!["p", "reel", "reels", "explore", "stories", "tv"].includes(h)) {
+      handles.add(h);
+    }
+  }
+  return [...handles];
+}
+
+registerTool({
+  name: "apify_top_reels_from_file",
+  description:
+    "Top-N Instagram reels by a metric, ranked across every creator " +
+    "listed in one of YOUR uploaded knowledge files. The tool reads " +
+    "the file, extracts every @handle / instagram.com/<handle> URL " +
+    "in it, scrapes all of them in parallel batches, filters by your " +
+    "time window, ranks by the metric, caps each creator at 2 reels " +
+    "for diversity, and returns the top N with @handle + caption + " +
+    "metric + URL per line. Use this whenever the operator says \"my " +
+    "creator list\" / \"from my creators\" / \"from the list I uploaded\". " +
+    "ONE call, no handle-passing.",
+  isWrite: true,
+  requiresIntegration: "apify",
+  inputSchema: {
+    type: "object",
+    required: ["file_name"],
+    properties: {
+      file_name: {
+        type: "string",
+        description:
+          "Substring match against your agent files (e.g. \"creator-list\"). The most recently uploaded match is used.",
+      },
+      window_days: {
+        type: "number",
+        description: "How far back to scrape (default 10, max 90).",
+      },
+      top_n: {
+        type: "number",
+        description: "How many reels to return after ranking (default 10, max 50).",
+      },
+      metric: {
+        type: "string",
+        description:
+          "Ranking metric. \"comments\" (default), \"likes\", or \"plays\".",
+      },
+      results_per_handle: {
+        type: "number",
+        description:
+          "How many recent reels per handle to fetch before ranking (default 20). Lower = faster but may miss high-comment older posts inside the window.",
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    const fileNameArg = String(args.file_name ?? "").trim();
+    if (!fileNameArg) return textError("file_name is required");
+
+    const windowDays = Math.min(
+      Math.max(Number(args.window_days ?? 10) || 10, 1),
+      90,
+    );
+    const topN = Math.min(Math.max(Number(args.top_n ?? 10) || 10, 1), 50);
+    const metricArg = String(args.metric ?? "comments").toLowerCase();
+    const metricKey =
+      metricArg === "likes"
+        ? "likesCount"
+        : metricArg === "plays" || metricArg === "views"
+          ? "playsCount"
+          : "commentsCount";
+    const resultsPerHandle = Math.min(
+      Math.max(Number(args.results_per_handle ?? 20) || 20, 5),
+      50,
+    );
+
+    const fileRes = await readAgentFileBody(ctx, fileNameArg);
+    if ("error" in fileRes) return textError(fileRes.error);
+    const handles = extractHandles(fileRes.body);
+    if (handles.length === 0) {
+      return textError(
+        `Found "${fileRes.filename}" but no @handles inside. Body length ${fileRes.body.length}.`,
+      );
+    }
+
+    const resolved = await resolveApifyKey(ctx.organizationId);
+    if ("error" in resolved) return textError(resolved.error);
+
+    // Split into 5-handle batches and scrape in parallel. Each batch
+    // runs apify/instagram-scraper which returns the latest N posts
+    // per handle. We accept partial - some handles may be private or
+    // have no posts in the window.
+    const BATCH_SIZE = 5;
+    const batches: string[][] = [];
+    for (let i = 0; i < handles.length; i += BATCH_SIZE) {
+      batches.push(handles.slice(i, i + BATCH_SIZE));
+    }
+    const actorPath = "apify~instagram-scraper";
+    const fetchLimit = batches.flat().length * resultsPerHandle;
+    const url =
+      `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
+      `?limit=${Math.min(fetchLimit, MAX_LIMIT)}`;
+
+    type BatchResult = { items: unknown[]; handles: string[]; error?: string };
+    const batchResults: BatchResult[] = await Promise.all(
+      batches.map(async (batch): Promise<BatchResult> => {
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${resolved.key}`,
+            },
+            body: JSON.stringify({
+              directUrls: batch.map(
+                (h) => `https://www.instagram.com/${h}/`,
+              ),
+              resultsType: "posts",
+              resultsLimit: resultsPerHandle,
+              addParentData: false,
+            }),
+            signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+          });
+          if (r.status !== 200 && r.status !== 201) {
+            return { items: [], handles: batch, error: `http ${r.status}` };
+          }
+          const j = await r.json();
+          return { items: Array.isArray(j) ? j : [], handles: batch };
+        } catch (e) {
+          return {
+            items: [],
+            handles: batch,
+            error: (e as Error)?.message ?? "fetch error",
+          };
+        }
+      }),
+    );
+    const allItems: unknown[] = [];
+    for (const br of batchResults) for (const it of br.items) allItems.push(it);
+
+    if (allItems.length === 0) {
+      const errs = batchResults
+        .map((b) => `${b.handles.join(",")}: ${b.error ?? "0 items"}`)
+        .join("; ");
+      return textError(`apify_top_reels_from_file: no data - ${errs}`);
+    }
+
+    const numOf = (raw: unknown, key: string): number => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const v = o[key] ?? o[key.replace(/Count$/, "")];
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const handleOf = (raw: unknown): string => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const v =
+        (typeof o.ownerUsername === "string" && o.ownerUsername) ||
+        (typeof o.username === "string" && o.username) ||
+        (typeof o.author === "string" && o.author) ||
+        "";
+      return String(v).toLowerCase();
+    };
+    const postTime = (raw: unknown): number => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const t = o.timestamp ?? o.takenAt ?? o.postedAt ?? o.createdAt;
+      if (!t) return 0;
+      if (typeof t === "number") {
+        return t > 1e12 ? t : t * 1000;
+      }
+      const parsed = Date.parse(String(t));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const windowMs = windowDays * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - windowMs;
+    const inWindow = allItems.filter((it) => {
+      const t = postTime(it);
+      return t > 0 && t >= cutoff;
+    });
+    const handlesWithData = new Set(inWindow.map(handleOf).filter(Boolean));
+
+    // Rank by metric desc, cap 2 per creator for diversity.
+    const PER_CREATOR_CAP = 2;
+    const sortedAll = [...inWindow].sort(
+      (a, b) => numOf(b, metricKey) - numOf(a, metricKey),
+    );
+    const byCreator = new Map<string, number>();
+    const picked: unknown[] = [];
+    const overflow: unknown[] = [];
+    for (const it of sortedAll) {
+      const h = handleOf(it);
+      const seen = byCreator.get(h) ?? 0;
+      if (!h || seen < PER_CREATOR_CAP) {
+        picked.push(it);
+        if (h) byCreator.set(h, seen + 1);
+      } else {
+        overflow.push(it);
+      }
+    }
+    const top = [...picked, ...overflow].slice(0, topN);
+
+    const today = new Date();
+    const start = new Date(Date.now() - windowMs);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const missing = handles.filter((h) => !handlesWithData.has(h));
+    const coverageBrief =
+      `ranked_by: ${metricKey}, window: ${fmt(start)} to ${fmt(today)}, ` +
+      `source: ${fileRes.filename} via apify/instagram-scraper ` +
+      `(${handlesWithData.size}/${handles.length} handles returned posts in window, ` +
+      `${inWindow.length} reels in window)`;
+
+    const lines = top.map((raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const who = handleOf(raw);
+      const cap =
+        (typeof o.caption === "string" && o.caption) ||
+        (typeof o.title === "string" && o.title) ||
+        "";
+      const m = numOf(raw, metricKey);
+      const ts = postTime(raw);
+      const dStr = ts > 0 ? new Date(ts).toISOString().slice(0, 10) : "";
+      const urlVal =
+        (typeof o.url === "string" && o.url) ||
+        (typeof o.postUrl === "string" && o.postUrl) ||
+        "";
+      const head = cap.replace(/\s+/g, " ").slice(0, 100) || "(no caption)";
+      return `@${who} - ${m.toLocaleString()} ${metricArg} - "${head}" (${dStr})${
+        urlVal ? `\n  ${urlVal}` : ""
+      }`;
+    });
+
+    const missingNote =
+      missing.length > 0
+        ? `\n\nNo posts in window for: ${missing.map((h) => `@${h}`).join(", ")}`
+        : "";
+
+    return text(
+      `${coverageBrief}\n\nTop ${top.length} reels by ${metricArg}:\n${lines.join(
+        "\n",
+      )}${missingNote}`,
     );
   },
 });

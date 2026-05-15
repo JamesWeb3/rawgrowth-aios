@@ -406,6 +406,7 @@ async function execToolCall(
     "apify_poll_run",
     "apify_batch_scrape",
     "apify_race_scrape",
+    "apify_top_reels_from_file",
     "composio_list_tools",
     "web_search",
     "plan_create",
