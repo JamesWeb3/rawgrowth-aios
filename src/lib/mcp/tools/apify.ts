@@ -1016,17 +1016,17 @@ registerTool({
         : { actor: "?", items: [], error: (s.reason as Error).message },
     );
 
-    // Pick the winning actor: first non-empty dataset.
-    const winner = results.find((r) => r.items.length > 0);
-    if (!winner) {
-      const errs = results
-        .map((r) => `${r.actor}: ${r.error ?? "0 items"}`)
-        .join("; ");
-      return textError(`All racing actors failed - ${errs}`);
-    }
-
-    // Format the winner's dataset same shape as apify_run_actor so
-    // the agent reads both paths identically.
+    // Quality scoring beats raw race-to-first. The fastest actor may
+    // return junk (empty captions, missing comments, stale items),
+    // while the slower one delivers what the operator actually asked
+    // for. Wait for every settled result, then score each dataset on
+    // the criteria the operator's prompt cares about:
+    //   - has caption text
+    //   - has commentsCount
+    //   - has a parseable timestamp (so window-filter actually works)
+    //   - covers MULTIPLE distinct handles (creator-domination guard)
+    // Pick the dataset that wins overall, NOT the one that returned
+    // first.
     const postTime = (o: unknown): number => {
       const r = (o ?? {}) as Record<string, unknown>;
       const raw =
@@ -1039,6 +1039,63 @@ registerTool({
       const p = Date.parse(String(raw ?? ""));
       return Number.isFinite(p) ? p : 0;
     };
+    const scoreDataset = (items: unknown[]): { score: number; brief: string } => {
+      if (items.length === 0) return { score: 0, brief: "0 items" };
+      let hasCaption = 0;
+      let hasComments = 0;
+      let hasTs = 0;
+      const handlesSet = new Set<string>();
+      for (const raw of items) {
+        const o = (raw ?? {}) as Record<string, unknown>;
+        const caption =
+          typeof o.caption === "string"
+            ? o.caption
+            : typeof o.title === "string"
+              ? o.title
+              : typeof o.text === "string"
+                ? o.text
+                : "";
+        if (caption.trim().length > 0) hasCaption++;
+        const comments = o.commentsCount ?? o.commentCount ?? o.comments;
+        if (typeof comments === "number") hasComments++;
+        if (postTime(o) > 0) hasTs++;
+        const who =
+          typeof o.ownerUsername === "string"
+            ? o.ownerUsername
+            : typeof o.username === "string"
+              ? o.username
+              : typeof o.author === "string"
+                ? o.author
+                : "";
+        if (who.trim().length > 0) handlesSet.add(who.trim().toLowerCase());
+      }
+      // Weighted: completeness matters more than raw count. Multi-creator
+      // gets a bonus so a single-creator dump can't win over a thinner
+      // multi-creator dataset.
+      const completeness =
+        (hasCaption + hasComments + hasTs) / (items.length * 3);
+      const multiCreatorBonus = Math.min(handlesSet.size, 10) * 5;
+      const score = items.length * completeness * 10 + multiCreatorBonus;
+      const brief =
+        `${items.length} items, ${handlesSet.size} handles, ` +
+        `${hasComments}/${items.length} have comments, ` +
+        `${hasTs}/${items.length} have timestamp, ` +
+        `completeness ${(completeness * 100).toFixed(0)}%`;
+      return { score, brief };
+    };
+    const scored = results.map((r) => ({
+      ...r,
+      ...scoreDataset(r.items),
+    }));
+    // Sort by score desc; the highest-quality dataset wins.
+    scored.sort((a, b) => b.score - a.score);
+    const winner = scored[0];
+    if (!winner || winner.score === 0) {
+      const errs = results
+        .map((r) => `${r.actor}: ${r.error ?? "0 items"}`)
+        .join("; ");
+      return textError(`All racing actors failed quality bar - ${errs}`);
+    }
     const sorted = [...winner.items]
       .sort((a, b) => postTime(b) - postTime(a))
       .slice(0, MAX_LIMIT);
@@ -1068,12 +1125,15 @@ registerTool({
       return `• ${head}${meta ? ` (${meta})` : ""}${url ? `\n  ${url}` : ""}`;
     });
     const more = sorted.length > cap ? `\n…and ${sorted.length - cap} more` : "";
-    const others = results
+    const others = scored
       .filter((r) => r.actor !== winner.actor)
-      .map((r) => `${r.actor}: ${r.error ?? `${r.items.length} items`}`)
+      .map(
+        (r) =>
+          `${r.actor}: ${r.error ?? r.brief} (score ${r.score.toFixed(0)})`,
+      )
       .join("; ");
     return text(
-      `Winner: ${winner.actor} (${winner.items.length} items). Others: ${others}.\n${lines.join("\n")}${more}`,
+      `Winner by quality: ${winner.actor} (${winner.brief}, score ${winner.score.toFixed(0)}). Others: ${others}.\n${lines.join("\n")}${more}`,
     );
   },
 });
