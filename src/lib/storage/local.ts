@@ -49,11 +49,34 @@ export async function uploadToBucket(
     };
   }
   // Hosted / v3: real Supabase Storage.
-  const { error } = await supabaseAdmin()
-    .storage.from(bucket)
-    .upload(path, bytes, { contentType, upsert: false });
+  const sb = supabaseAdmin();
+  let { error } = await sb.storage.from(bucket).upload(path, bytes, {
+    contentType,
+    upsert: false,
+  });
+  // Self-heal: a fresh VPS Supabase that was never wired with
+  // scripts/wire-supabase.sh has neither the agent-files nor the
+  // knowledge buckets, and uploads fail "Bucket not found" forever.
+  // Marti's deploy hit exactly this - bucket never provisioned, the
+  // UI dropzone gave 500 Bucket not found on every file. Auto-
+  // create on the missing-bucket signal + retry once is idempotent
+  // (createBucket returns "already exists" on second call) and
+  // unblocks future deploys without a side script.
+  if (error && /not found/i.test(error.message)) {
+    const isPublic = bucket === "knowledge"; // org-wide markdown stays public; agent files stay private
+    const createRes = await sb.storage.createBucket(bucket, { public: isPublic });
+    if (createRes.error && !/already exists/i.test(createRes.error.message)) {
+      throw new Error(
+        `storage.upload: bucket "${bucket}" missing and auto-create failed: ${createRes.error.message}`,
+      );
+    }
+    const retry = await sb.storage
+      .from(bucket)
+      .upload(path, bytes, { contentType, upsert: false });
+    error = retry.error;
+  }
   if (error) throw new Error(`storage.upload: ${error.message}`);
-  const { data } = supabaseAdmin().storage.from(bucket).getPublicUrl(path);
+  const { data } = sb.storage.from(bucket).getPublicUrl(path);
   return { publicUrl: data.publicUrl, storagePath: path };
 }
 
