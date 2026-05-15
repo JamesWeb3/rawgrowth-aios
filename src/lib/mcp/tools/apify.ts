@@ -12,11 +12,18 @@ import { tryDecryptSecret } from "@/lib/crypto";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_RUNS_LIMIT = 10;
-// run-sync-get-dataset-items blocks until the actor finishes; a cold
-// start + a real scrape regularly needs >2min. Both call surfaces allow
-// >=300s turns (telegram webhook maxDuration=300, dashboard chat route
-// uncapped), so 180s survives most cold starts with headroom.
-const RUN_TIMEOUT_MS = 180_000;
+// run-sync-get-dataset-items blocks until the actor finishes. Apify's
+// own server-side max for this endpoint is 300s (per
+// https://docs.apify.com/api/v2/act-run-sync-get-dataset-items-post -
+// "default maximum synchronous wait is 300 seconds; exceeding it
+// results in a timeout error"). We previously capped at 180s which
+// aborted runs Apify itself would have completed inside their own
+// 300s budget. A multi-handle Instagram reel scrape on 13 profiles
+// with resultsLimit 5 typically finishes 70-90s scrape + 30s cold
+// start = ~120s total - the 180s ceiling was clipping the long tail.
+// Set to 280_000 so we abort just under Apify's hard limit, giving
+// the actor every chance to finish.
+const RUN_TIMEOUT_MS = 280_000;
 const MAX_BODY = 500;
 
 type ApifyMetadata = {
