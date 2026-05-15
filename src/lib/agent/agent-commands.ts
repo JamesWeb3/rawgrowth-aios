@@ -447,12 +447,28 @@ async function execToolCall(
     "plan_get",
     "agent_message",
     "agent_inbox",
+    // Knowledge + file lookup over the agent's uploaded files + org
+    // corpus. The preamble at line ~1091 + ~1128 actively teaches the
+    // agent to call knowledge_query for full-text retrieval - but the
+    // chat surface refused it and the model's fallback was to wrap it
+    // as `composio_use_tool({app:"composio",action:"knowledge_query"})`
+    // which 404'd at Composio. Live test on 00051e5 with Marti's exact
+    // prompt reproduced exactly that. These are read-only retrieval
+    // tools; callTool enforces approval gates for any write tool.
+    "knowledge_query",
+    "company_query",
+    "lookup_my_files",
+    "list_knowledge_files",
+    "read_knowledge_file",
+    "lookup_brand_voice",
+    "lookup_company_fact",
+    "workspace_file_read",
   ]);
   if (tool !== "composio_use_tool" && !MCP_DIRECT_TOOLS.has(tool ?? "")) {
     return {
       ok: false,
       type: "tool_call",
-      summary: `tool_call: supported tools are composio_use_tool, composio_list_tools, apify_run_actor, apify_list_actor_runs, web_search, plan_create, plan_update, plan_get, agent_message, agent_inbox (got "${tool ?? "(missing)"}")`,
+      summary: `tool_call: supported tools are composio_use_tool, composio_list_tools, apify_run_actor, apify_list_actor_runs, web_search, plan_create, plan_update, plan_get, agent_message, agent_inbox, knowledge_query, company_query, lookup_my_files, list_knowledge_files, read_knowledge_file, lookup_brand_voice, lookup_company_fact, workspace_file_read (got "${tool ?? "(missing)"}")`,
     };
   }
   if (!args || typeof args !== "object") {
