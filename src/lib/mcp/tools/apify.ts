@@ -274,6 +274,23 @@ registerTool({
     const items = [...allItems]
       .sort((a, b) => postTime(b) - postTime(a))
       .slice(0, limit);
+    // Marti's complaint - "low comment reels / wrong info" - traced to
+    // the model anchoring on the time-ordered visible list. Compute the
+    // top-5 by commentsCount ACROSS the full pre-truncation list and
+    // prepend as a header so the model sees the comment-ranked picks
+    // BEFORE the time-ordered body. Same approach used in
+    // humanizeToolResult Instagram branch (inv-tool-quality D4).
+    const _commentsOf = (o: unknown): number => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      const v = r.commentsCount ?? r.commentCount ?? r.comments;
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const topByComments = [...allItems]
+      .map((p) => ({ p, c: _commentsOf(p) }))
+      .filter((r) => r.c > 0)
+      .sort((a, b) => b.c - a.c)
+      .slice(0, 5);
 
     // Human-readable list instead of a raw JSON dump. Most scrape actors
     // (Instagram, web) return items with some recognisable subset of
@@ -304,10 +321,25 @@ registerTool({
     });
     const more = items.length > 15 ? `\n…and ${items.length - 15} more` : "";
 
+    // Top-by-comments header (Marti GAP #12 wrong-info root cause):
+    // pre-fix the visible result list was time-ordered, agent claimed
+    // "top by comments" while reading time-ranked items. Prepending the
+    // comment-ranked picks forces the agent's eye onto the right metric.
+    const topHeader =
+      topByComments.length > 0
+        ? `Top ${topByComments.length} by comments (across all ${allItems.length} items): ${topByComments
+            .map((r) => {
+              const o = (r.p ?? {}) as Record<string, unknown>;
+              const who = s(o.ownerUsername) || s(o.username) || s(o.author);
+              return who ? `@${who} (${r.c})` : `(${r.c})`;
+            })
+            .join(", ")}.\n\n`
+        : "";
+
     return text(
       items.length === 0
         ? `Actor ${actorId} ran - 0 items returned.`
-        : `Actor ${actorId} returned ${items.length} item(s):\n${lines.join("\n")}${more}`,
+        : `${topHeader}Actor ${actorId} returned ${items.length} item(s):\n${lines.join("\n")}${more}`,
     );
   },
 });

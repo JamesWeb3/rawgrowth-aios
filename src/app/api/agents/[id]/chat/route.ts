@@ -990,6 +990,12 @@ export async function POST(
                 "\n\n═══ TOOL RESULTS - YOU ALREADY RAN THESE ═══\n" +
                 "You emitted command block(s) on the previous turn and the system executed them. The real results are below.\n\n" +
                 "Open your reply with a <thinking> block that is your OBSERVATION step: in one or two sentences, say what the results actually show and what you make of them (\"3 emails back, all the same membership-confirmation template\" / \"Kasia delivered 3 usable hooks, the contrarian one is strongest\"). This is the Observation in Thought -> Action -> Observation - it must reference the real data, not be generic.\n\n" +
+                // RANKED / FILTERED GROUNDING (Marti GAP #12 wrong-info root cause,
+                // inv-logic-thinking D5). When operator asked for a ranked or filtered
+                // list, OBSERVATION must declare the ranking field + window + source
+                // and every visible item must cite its metric.
+                "RANKED / FILTERED ANSWERS - GROUNDING RULE: when the operator asked for a ranked or filtered list (top N by X, latest N in window Y, most-engaged Z), your OBSERVATION <thinking> MUST include a one-line declaration: `ranked_by: <field>, window: <if any>, source: <tool/dataset>`. The visible answer MUST inline-cite the metric value per item that justifies its position (\"@advicewithjean - 2,125 comments\", \"@codiesanchez - 1,261 comments\"). NEVER claim 'top by X' while ordering by anything else - that is the wrong-info failure mode. If the tool result surface includes a `Top by comments: ...` header (apify or composio Instagram), rank YOUR visible reply by THAT header, not by the order of the body.\n\n" +
+
                 "Then write your final answer to the operator USING this data - quote the actual emails / posts / numbers / the delegated agent's actual output. Do NOT say 'pulling now' or 'on it' for the work that is already done. You MAY emit ONE follow-on <command> block IF the results genuinely call for a next action you could not have known to take before seeing them - e.g. now that you have the top post, dispatch Kasia to draft hooks off it. If you do, the system runs it and shows the card; if you only say you are doing it, you MUST emit it (SAY-IT-MEANS-DO-IT). Do NOT re-run a command that already ran above.\n\n" +
                 resultsBlock,
               noHandoff: true,
