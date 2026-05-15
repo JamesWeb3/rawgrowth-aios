@@ -1428,7 +1428,24 @@ registerTool({
 
     const numOf = (raw: unknown, key: string): number => {
       const o = (raw ?? {}) as Record<string, unknown>;
-      const v = o[key] ?? o[key.replace(/Count$/, "")];
+      // Mirror the field-fallback chain used by every other apify
+      // formatter in this file (commentsCount ?? commentCount ?? comments).
+      // Singular `commentCount` shows up on some apify/instagram-scraper
+      // run shapes; missing it collapses ranking to whichever creator
+      // happens to emit the plural variant - same root cause that gave
+      // codiesanchez 7/9 in eval 6/7.
+      const singularKey =
+        key === "commentsCount"
+          ? "commentCount"
+          : key === "likesCount"
+            ? "likeCount"
+            : key === "playsCount"
+              ? "videoPlayCount"
+              : "";
+      const v =
+        o[key] ??
+        (singularKey ? o[singularKey] : undefined) ??
+        o[key.replace(/Count$/, "")];
       const n = typeof v === "number" ? v : Number(v);
       return Number.isFinite(n) ? n : 0;
     };
