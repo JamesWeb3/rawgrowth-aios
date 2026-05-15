@@ -133,17 +133,24 @@ registerTool({
     "input tokens.",
   inputSchema: {
     type: "object",
-    required: ["agent_id"],
+    required: [],
     properties: {
       agent_id: {
         type: "string",
-        description: "The agent whose files you want listed.",
+        description:
+          "The agent whose files you want listed. Optional - defaults to the calling agent (ctx.agentId), which is what chat surfaces always want.",
       },
     },
   },
   handler: async (args, ctx) => {
-    const agentId = String(args.agent_id ?? "").trim();
-    if (!agentId) return textError("agent_id is required.");
+    // Same ctx.agentId fallback as knowledge_query - Marti's live
+    // test surfaced this circular requirement on both tools.
+    const agentId = String(args.agent_id ?? ctx.agentId ?? "").trim();
+    if (!agentId) {
+      return textError(
+        "agent_id could not be derived - this surface did not set ctx.agentId. Provide agent_id explicitly.",
+      );
+    }
 
     const db = supabaseAdmin();
 

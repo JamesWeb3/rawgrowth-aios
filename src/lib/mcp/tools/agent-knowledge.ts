@@ -23,20 +23,35 @@ registerTool({
     "(brand voice docs, past scripts, sample emails) should drive the reply.",
   inputSchema: {
     type: "object",
-    required: ["agent_id", "prompt"],
+    required: ["prompt"],
     properties: {
-      agent_id: { type: "string", description: "Which agent's files to search." },
+      agent_id: {
+        type: "string",
+        description:
+          "Which agent's files to search. Optional - defaults to the calling agent (ctx.agentId), which is what the chat surface always wants.",
+      },
       prompt: { type: "string", description: "Natural-language query." },
       top_k: { type: "number", description: "Chunks to return (default 8, max 20)." },
     },
   },
   handler: async (args, ctx) => {
-    const agentId = String(args.agent_id ?? "").trim();
+    // Fall back to the calling agent's id - the chat surface ALWAYS
+    // wants "search my own files", and forcing the model to pass
+    // agent_id from chat dropped Marti's live test on a circular
+    // requirement ("knowledge_query wymaga agent_id którego z tego
+    // czatu nie mam jak podać"). ctx.agentId is set by the chat
+    // dispatch path (agent-commands.ts MCP-direct branch).
+    const agentId = String(args.agent_id ?? ctx.agentId ?? "").trim();
     const prompt = String(args.prompt ?? "").trim();
     const topK = Math.min(Math.max(Number(args.top_k ?? 8) || 8, 1), 20);
 
-    if (!agentId || !prompt) {
-      return textError("Both agent_id and prompt are required.");
+    if (!prompt) {
+      return textError("prompt is required.");
+    }
+    if (!agentId) {
+      return textError(
+        "agent_id could not be derived - this surface did not set ctx.agentId. Provide agent_id explicitly.",
+      );
     }
 
     const db = supabaseAdmin();
