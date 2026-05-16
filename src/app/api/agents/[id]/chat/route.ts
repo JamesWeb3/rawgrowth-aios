@@ -6,6 +6,7 @@ import { getOrgContext, getActiveOrgRole } from "@/lib/auth/admin";
 import { isDepartmentAllowed } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
+import { extractChatMemoryFact } from "@/lib/agent/chat-memory";
 import { applyBrandFilter } from "@/lib/brand/apply-filter";
 import { buildAgentChatPreamble } from "@/lib/agent/preamble";
 import { extractAndCreateTasks } from "@/lib/agent/tasks";
@@ -1301,38 +1302,39 @@ export async function POST(
           );
         }
 
-        // 5b. Extract a single short memory from this exchange so future
-        // chats remember decisions / facts / preferences. Heuristic v0:
-        // pull the user's question + first sentence of the reply, write
-        // a one-line "user asked X; agent decided Y" memory. Future:
-        // call a small LLM to do this properly. Best-effort, non-fatal.
+        // 5b. Distil ONE concrete fact from this turn and persist it as
+        // a chat_memory row that the next-turn preamble can inject as
+        // "things you remember". The previous template-slice heuristic
+        // stripped numbers from tool-result replies, so the preamble
+        // re-injected number-stripped lines as ground truth and the
+        // model filled the gaps from nowhere - the dominant source of
+        // cross-turn metric hallucination.
         //
-        // Skip noisy exchanges - greetings, ack-only messages, and
-        // hard-fail replies aren't worth remembering and just bloat the
-        // preamble's Past Memories section. Thresholds picked from
-        // looking at the rawgrowth-mvp memory log: under 30 chars is
-        // basically always "thanks" / "ok" / "sim" / a typo.
+        // extractChatMemoryFact returns null on filler turns, on Haiku
+        // errors, and when no API key is set. Null = skip the write.
+        // The preamble fetcher silently tolerates an empty set, so a
+        // skipped write costs nothing downstream and avoids storing a
+        // hollow fact that the next turn would treat as authoritative.
         const skipMemory =
           !filtered.ok ||
           lastContent.trim().length < 30 ||
           visibleText.trim().length < 30;
         if (!skipMemory) {
           try {
-            const userBit = lastContent.trim().slice(0, 140);
-            const replyBit =
-              visibleText.trim().split(/[.!?\n]/)[0]?.slice(0, 200) ?? "";
-            const fact = `User asked: "${userBit}". I responded with: "${replyBit}".`;
-            await db.from("rgaios_audit_log").insert({
-              organization_id: orgId,
-              kind: "chat_memory",
-              actor_type: "agent",
-              actor_id: agentId,
-              detail: {
-                agent_id: agentId,
-                fact,
-                user_id: userId,
-              },
-            });
+            const fact = await extractChatMemoryFact(lastContent, visibleText);
+            if (fact) {
+              await db.from("rgaios_audit_log").insert({
+                organization_id: orgId,
+                kind: "chat_memory",
+                actor_type: "agent",
+                actor_id: agentId,
+                detail: {
+                  agent_id: agentId,
+                  fact,
+                  user_id: userId,
+                },
+              });
+            }
           } catch (err) {
             console.warn("[chat] memory extract failed:", (err as Error).message);
           }
