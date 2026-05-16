@@ -1623,11 +1623,27 @@ registerTool({
     const start = new Date(Date.now() - windowMs);
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
     const missing = handles.filter((h) => !handlesWithData.has(h));
+    // Per-handle rollup: in-window reel count + total metric per handle.
+    // Surfaces "@aiwithremy: 3 reels, 6,706 comments" so the operator
+    // can see the engagement distribution at a glance, not just the
+    // top-N picks. Per [B 21:46 SUGG #2] in marti-control.html TALK.
+    const perHandleRollup = handles
+      .filter((h) => handlesWithData.has(h))
+      .map((h) => {
+        const items = inWindow.filter((it) => handleOf(it) === h);
+        const totalMetric: number = items.reduce(
+          (s: number, it: unknown) => s + numOf(it, metricKey),
+          0,
+        );
+        return `@${h}: ${items.length} reels, ${totalMetric.toLocaleString()} ${metricArg}`;
+      })
+      .join("; ");
     const coverageBrief =
       `ranked_by: ${metricKey}, window: ${fmt(start)} to ${fmt(today)}, ` +
       `source: ${fileRes.filename} via apify/instagram-scraper ` +
       `(${handlesWithData.size}/${handles.length} handles returned posts in window, ` +
-      `${inWindow.length} reels in window)`;
+      `${inWindow.length} reels in window)` +
+      (perHandleRollup ? `\nIn-window per handle: ${perHandleRollup}` : "");
 
     const lines = top.map((raw) => {
       const o = (raw ?? {}) as Record<string, unknown>;
