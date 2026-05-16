@@ -1280,41 +1280,6 @@ function extractHandles(input: string): string[] {
   const handles = new Set<string>();
   const atRe = /@([A-Za-z0-9._]{2,30})\b/g;
   const urlRe = /instagram\.com\/([A-Za-z0-9._]{2,30})(?:\/|\b)/g;
-  // Bare-handle line pattern: a markdown bullet or empty line prefix,
-  // optionally a "- " or "* ", then a handle. Marti's creator-list-v2.md
-  // uses bare handles (one per line, no `@` prefix). Without this branch
-  // the tool failed in eval 12 with "file found but no @handles".
-  // The pattern requires the handle to START a line (after optional
-  // bullet + whitespace) and END at whitespace / comma / end-of-line -
-  // that's strict enough to avoid catching arbitrary words in prose
-  // paragraphs while still picking up plain markdown list items.
-  const lineRe =
-    /(?:^|\n)\s*(?:[-*]\s+)?([A-Za-z0-9_][A-Za-z0-9._]{1,29})(?=\s|,|$)/g;
-  const BARE_BLOCKLIST = new Set([
-    "instagram",
-    "tiktok",
-    "youtube",
-    "twitter",
-    "facebook",
-    "linkedin",
-    "creator",
-    "creators",
-    "list",
-    "handles",
-    "username",
-    "usernames",
-    "name",
-    "names",
-    "v1",
-    "v2",
-    "v3",
-    "todo",
-    "done",
-    "n/a",
-    "na",
-    "tba",
-    "tbd",
-  ]);
   let m: RegExpExecArray | null;
   while ((m = atRe.exec(input)) !== null) handles.add(m[1].toLowerCase());
   while ((m = urlRe.exec(input)) !== null) {
@@ -1323,16 +1288,121 @@ function extractHandles(input: string): string[] {
       handles.add(h);
     }
   }
-  while ((m = lineRe.exec(input)) !== null) {
-    const h = m[1].toLowerCase();
-    // Skip obviously non-handle tokens. Also skip too-short (<3) and
-    // tokens that look like headings / sentence words by their position
-    // in the file: we already require start-of-line, but heading lines
-    // ("# CREATORS") have the leading marker stripped by the regex so
-    // we still need the blocklist + length floor.
-    if (h.length < 3) continue;
-    if (BARE_BLOCKLIST.has(h)) continue;
-    handles.add(h);
+  // Colon-list parser: Marti's creator-list-v2.md (and most operator-
+  // authored handle lists) puts the handles in comma-separated form
+  // AFTER a colon, e.g.
+  //   "Pillar 1 AI tools: advicewithjean, aiwithremy, edwinavoiceofai"
+  // Per-line scan: anything before ":" is the label, anything after is
+  // a handle list. Split the after-colon part on `,` / `;` / whitespace
+  // and keep tokens that look like Instagram handles AND are not in the
+  // blocklist of obvious non-handle words.
+  //
+  // We deliberately do NOT do a global free-text token scan - that
+  // produced "@pillar" / "@for" false-positives in eval 13 because
+  // those were the first words of header / prose lines. Limiting to
+  // after-colon avoids picking up prose tokens that happen to look
+  // like handles.
+  const HANDLE_BLOCKLIST = new Set([
+    "instagram",
+    "tiktok",
+    "youtube",
+    "twitter",
+    "facebook",
+    "linkedin",
+    "list",
+    "lists",
+    "handles",
+    "username",
+    "usernames",
+    "name",
+    "names",
+    "profile",
+    "profiles",
+    "account",
+    "accounts",
+    "creator",
+    "creators",
+    "pillar",
+    "pillars",
+    "tools",
+    "audience",
+    "online",
+    "biz",
+    "ai",
+    "content",
+    "for",
+    "the",
+    "and",
+    "all",
+    "any",
+    "top",
+    "comment",
+    "comments",
+    "like",
+    "likes",
+    "reel",
+    "reels",
+    "post",
+    "posts",
+    "scrape",
+    "scraper",
+    "filter",
+    "sort",
+    "desc",
+    "asc",
+    "limit",
+    "results",
+    "timestamp",
+    "window",
+    "metric",
+    "apify",
+    "actor",
+    "instagram-reel-scraper",
+    "instagram-scraper",
+    "apify_run_actor",
+    "username",
+    "v1",
+    "v2",
+    "v3",
+    "tba",
+    "tbd",
+    "n/a",
+    "na",
+    "todo",
+    "done",
+  ]);
+  // Match each line that contains a `:` followed by stuff. Use the
+  // text AFTER the FIRST `:` on the line as the handle list. `^.*?:`
+  // is non-greedy so we stop at the first colon, not the last.
+  const colonLineRe = /^([^\n:]*):\s*([^\n]+)$/gm;
+  while ((m = colonLineRe.exec(input)) !== null) {
+    // Skip prose-label lines like 'For "top N by comments": apify_run...'
+    // or "Note: ..." or "How to use: ..." - the part after the colon is
+    // instructions to the agent, not a handle list. The signal is the
+    // label-side containing common prose / instruction words.
+    const label = m[1].toLowerCase();
+    if (
+      /\b(for|note|how|when|where|why|tip|hint|reminder|step|todo|use|see|run|scrape|sort|filter|rank|use|usage|example|sample|format|guide|pseudo|sql|api)\b/.test(
+        label,
+      )
+    ) {
+      continue;
+    }
+    const after = m[2];
+    // Split on commas, semicolons, and whitespace runs - handles are
+    // typically comma-separated but also tolerate space-only lists.
+    for (const raw of after.split(/[,;\s]+/)) {
+      const tok = raw.trim().toLowerCase();
+      if (!tok) continue;
+      // Strip a leading @ if the operator wrote `@handle` after the colon.
+      const cleaned = tok.replace(/^@/, "").replace(/[.,;:]+$/, "");
+      // Handle char class. Length 3-30. Must contain at least one
+      // letter (so "13" / "10d" are filtered out).
+      if (!/^[a-z0-9._]{3,30}$/.test(cleaned)) continue;
+      if (!/[a-z]/.test(cleaned)) continue;
+      if (HANDLE_BLOCKLIST.has(cleaned)) continue;
+      handles.add(cleaned);
+    }
   }
   return [...handles];
 }
