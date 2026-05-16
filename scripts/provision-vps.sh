@@ -303,6 +303,22 @@ import { spawn } from "node:child_process";
 const PORT = 9876;
 const CLAUDE = "/usr/local/bin/claude";
 
+// R02 / R08 close: code-enforce the one-org-per-VPS boundary. Migration
+// 0014 dropped the DB trigger that used to guard cross-tenant inserts,
+// leaving the boundary operational-only. VPS_ORG_ID is written into the
+// systemd Environment block at provision time; the drain refuses to
+// spawn when the env var is missing, and stamps it into every spawn so
+// downstream slash commands (rawgrowth-chat / rawgrowth-triage) can
+// assert agent.organization_id === VPS_ORG_ID before reading any row.
+const VPS_ORG_ID = (process.env.VPS_ORG_ID ?? "").trim();
+if (!VPS_ORG_ID) {
+  console.error(
+    "rawclaw-drain: VPS_ORG_ID env var is missing. " +
+    "Set it in /etc/systemd/system/rawclaw-drain.service.d/ or the " +
+    "drain unit Environment block. Spawns will be REJECTED until set.",
+  );
+}
+
 // CTO brief §02 + R05: 4-concurrent spawn cap. CX22 has 4GB RAM and each
 // claude --print holds ~300-500MB resident. Four concurrent leaves
 // headroom for Next.js + Caddy + Postgres client. Override via env.
@@ -311,6 +327,23 @@ let inFlight = 0;
 const pendingPrompts = []; // queued strings when at cap
 
 const slots = new Map(); // command → { running, redrive }
+
+function childEnv() {
+  // Inherit parent env so PATH / NODE / CLAUDE creds work, but
+  // explicitly re-stamp VPS_ORG_ID so the child cannot drift via a
+  // tampered-with sub-env. Empty string when unset means the slash
+  // command sees ENOTSET and aborts before reading any agent row.
+  return { ...process.env, VPS_ORG_ID };
+}
+
+function refuseUnscoped(res, label) {
+  // No VPS_ORG_ID = the spawn would let any tenant row through. Fail
+  // closed before the spawn rather than logging a warning and
+  // continuing - silent cross-tenant is exactly what R08 closes.
+  console.error(`rawclaw-drain[${label}] rejected: VPS_ORG_ID not set`);
+  res.writeHead(503, { "content-type": "text/plain" });
+  res.end("VPS_ORG_ID not configured; refusing spawn");
+}
 
 function trigger(command) {
   const slot = slots.get(command) ?? { running: false, redrive: false };
@@ -323,9 +356,9 @@ function trigger(command) {
     "--print",
     "--dangerously-skip-permissions",
     `/${command}`,
-  ], { stdio: ["ignore", "inherit", "inherit"], detached: true });
+  ], { stdio: ["ignore", "inherit", "inherit"], detached: true, env: childEnv() });
   child.on("exit", (code) => {
-    console.log(`drain[${command}] exit=${code} duration=${Date.now()-started}ms`);
+    console.log(`drain[${command}] exit=${code} duration=${Date.now()-started}ms org=${VPS_ORG_ID || "UNSET"}`);
     slot.running = false;
     if (slot.redrive) trigger(command);
   });
@@ -344,10 +377,10 @@ function spawnWithPrompt(prompt) {
     "--print",
     "--dangerously-skip-permissions",
     prompt,
-  ], { stdio: ["ignore", "inherit", "inherit"], detached: true });
+  ], { stdio: ["ignore", "inherit", "inherit"], detached: true, env: childEnv() });
   child.on("exit", (code) => {
     inFlight -= 1;
-    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length} inFlight=${inFlight}`);
+    console.log(`drain[run] exit=${code} duration=${Date.now()-started}ms prompt_len=${prompt.length} inFlight=${inFlight} org=${VPS_ORG_ID || "UNSET"}`);
     const next = pendingPrompts.shift();
     if (next !== undefined) spawnWithPrompt(next);
   });
@@ -401,6 +434,10 @@ http.createServer(async (req, res) => {
       res.end("prompt required");
       return;
     }
+    if (!VPS_ORG_ID) {
+      refuseUnscoped(res, "run");
+      return;
+    }
     res.writeHead(202, { "content-type": "text/plain" });
     res.end("ok");
     spawnWithPrompt(prompt);
@@ -415,11 +452,15 @@ http.createServer(async (req, res) => {
     res.end("not found");
     return;
   }
+  if (!VPS_ORG_ID) {
+    refuseUnscoped(res, command);
+    return;
+  }
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("ok");
   trigger(command);
 }).listen(PORT, "0.0.0.0", () => {
-  console.log(`rawclaw-drain listening on 0.0.0.0:${PORT}`);
+  console.log(`rawclaw-drain listening on 0.0.0.0:${PORT} org=${VPS_ORG_ID || "UNSET"}`);
   if (STARTUP_SWEEP_DELAY_MS >= 0) {
     setTimeout(() => sweep("startup"), STARTUP_SWEEP_DELAY_MS).unref();
   }
@@ -430,10 +471,30 @@ http.createServer(async (req, res) => {
 JS
 chown -R rawclaw:rawclaw /opt/rawclaw-drain
 
-# systemd unit
+# systemd unit + env file. The drain reads VPS_ORG_ID from
+# /etc/default/rawclaw-drain (Debian convention) to refuse cross-tenant
+# spawns (P0-7 R02 close). EnvironmentFile is marked optional with `-`
+# so the unit still starts during the first-boot window before the env
+# file is populated; the drain itself refuses spawns until VPS_ORG_ID
+# arrives. The seed flow writes the value into the file after the
+# org row exists.
+cat > /etc/default/rawclaw-drain <<'ENVFILE'
+# Rawclaw drain environment.
+#
+# VPS_ORG_ID: the rgaios_organizations.id this VPS is dedicated to.
+# Mandatory - the drain refuses to spawn /chat | /triage | /run with
+# this unset. Filled in by the seed flow after first boot, or by the
+# operator with:
+#   sudo sed -i "s/^VPS_ORG_ID=.*/VPS_ORG_ID=<uuid>/" /etc/default/rawclaw-drain
+#   sudo systemctl restart rawclaw-drain
+VPS_ORG_ID=
+ENVFILE
+chmod 0640 /etc/default/rawclaw-drain
+chown root:rawclaw /etc/default/rawclaw-drain
+
 cat > /etc/systemd/system/rawclaw-drain.service <<'UNIT'
 [Unit]
-Description=Rawclaw drain trigger — spawns Claude Code on HTTP POST
+Description=Rawclaw drain trigger - spawns Claude Code on HTTP POST
 After=network.target
 
 [Service]
@@ -441,6 +502,7 @@ Type=simple
 User=rawclaw
 Group=rawclaw
 WorkingDirectory=/home/rawclaw
+EnvironmentFile=-/etc/default/rawclaw-drain
 ExecStart=/usr/bin/node /opt/rawclaw-drain/drain-server.mjs
 Restart=always
 RestartSec=3
