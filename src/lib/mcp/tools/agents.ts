@@ -336,14 +336,35 @@ registerTool({
         'can\'t promote an agent to CEO from MCP - role:"ceo" is an operator action in the dashboard agent panel.',
       );
     }
-    if (target.role === "ceo" || target.is_department_head === true) {
+    // FLEX VOICE FIX 4 (Chris feedback 2026-05-17 / triage HOTFIX 1):
+    // dept-heads previously had a wide guard that blocked integrations /
+    // department / status from MCP, making T9 "Kasia self-adds Gmail
+    // integration" fail. Narrow the guard:
+    //
+    //   role === "ceo"         : full lock minus name/title/desc/budget.
+    //                            CEO row is operator-managed only.
+    //   is_department_head     : only `role` + `reports_to` + `department`
+    //                            stay locked. integrations / status open
+    //                            so a dept-head agent can self-edit its
+    //                            own wiring (the FLEX win Chris asked for).
+    if (target.role === "ceo") {
       const guarded = ["role", "reports_to", "integrations", "department", "status"];
       const touched = guarded.filter(
         (k) => (args as Record<string, unknown>)[k] !== undefined,
       );
       if (touched.length > 0) {
         return textError(
-          `${target.name} is the CEO or a department head - ${touched.join(", ")} can only be changed from the dashboard agent panel. name / title / description / budget stay editable from MCP.`,
+          `${target.name} is the CEO - ${touched.join(", ")} can only be changed from the dashboard agent panel. name / title / description / budget stay editable from MCP.`,
+        );
+      }
+    } else if (target.is_department_head === true) {
+      const guarded = ["role", "reports_to", "department"];
+      const touched = guarded.filter(
+        (k) => (args as Record<string, unknown>)[k] !== undefined,
+      );
+      if (touched.length > 0) {
+        return textError(
+          `${target.name} is a department head - ${touched.join(", ")} can only be changed from the dashboard agent panel. integrations / status / name / title / description / budget / system_prompt / max_tokens stay editable from MCP.`,
         );
       }
     }
