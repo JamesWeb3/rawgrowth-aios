@@ -92,13 +92,40 @@ export async function addSharedMemory(input: {
   const importance = clampImportance(input.importance);
   const db = supabaseAdmin();
 
-  // Dedup path: the unique index uq_rgaios_shared_memory_dedup_active
-  // (migration 0075) covers (organization_id, fact_prefix, scope_key)
-  // where archived_at is null. Try the insert first; on conflict, fetch
-  // the existing row and bump importance if the incoming value is
-  // higher. This is one round-trip in the common case (no dup) and two
-  // when a dup exists - vs the prior fetch-up-to-500-then-insert path
-  // which was always two round-trips and grew O(N) with org memory size.
+  // Dedup path: 0075 attempted a unique index but the prod Postgres
+  // image rejects the IMMUTABLE expression so the index is currently
+  // a no-op. Fall back to the original scan-then-insert flow. JS-side
+  // prefixKey + scopeKey still collapse exact-prefix dups; the only
+  // thing we lose vs the index plan is the race-safe enforcement of
+  // uniqueness under concurrent writes (acceptable for now - the
+  // memory write path is low-concurrency per org).
+  const incomingHead = prefixKey(fact);
+  const incomingScopeKey = scopeKey(scope);
+  const { data: priorRows } = await db
+    .from("rgaios_shared_memory")
+    .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
+    .eq("organization_id", input.orgId)
+    .is("archived_at", null)
+    .limit(500);
+  const dup = ((priorRows ?? []) as SharedMemoryRow[]).find(
+    (p) =>
+      prefixKey(p.fact) === incomingHead &&
+      scopeKey(p.scope ?? []) === incomingScopeKey,
+  );
+  if (dup) {
+    if (importance > dup.importance) {
+      await db
+        .from("rgaios_shared_memory")
+        .update({
+          importance,
+          updated_at: new Date().toISOString(),
+        } as never)
+        .eq("id", dup.id);
+      dup.importance = importance;
+    }
+    return { row: dup, deduped: true };
+  }
+
   const { data: inserted, error } = await db
     .from("rgaios_shared_memory")
     .insert({
@@ -110,61 +137,12 @@ export async function addSharedMemory(input: {
       source_chat_id: input.sourceChatId ?? null,
     } as never)
     .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
-    .maybeSingle();
-  if (inserted) {
-    return { row: inserted as SharedMemoryRow, deduped: false };
-  }
-
-  const isConflict =
-    !!error &&
-    (error.code === "23505" || /duplicate key/i.test(error.message ?? ""));
-  if (!error && !inserted) {
-    console.warn(`[shared-memory] insert returned no row and no error`);
+    .single();
+  if (error || !inserted) {
+    console.warn(`[shared-memory] insert failed: ${error?.message ?? "unknown"}`);
     return { row: null, deduped: false };
   }
-  if (error && !isConflict) {
-    console.warn(`[shared-memory] insert failed: ${error.message}`);
-    return { row: null, deduped: false };
-  }
-
-  // Conflict (23505): the partial unique expression index in migration
-  // 0075 caught an exact-key dup. The index is on
-  //   (organization_id, lower(substring(trim(fact) ...)) collate "C",
-  //    array_to_string(scope, '|') collate "C")
-  // - it is an expression index, NOT stored columns, so the colliding
-  // row cannot be fetched by .eq("fact_prefix"). Fall back to the
-  // org-scoped scan and re-run prefixKey/scopeKey in JS to find it.
-  // The unique index already eliminated the race; this lookup is
-  // only fetching the existing row to bump importance.
-  const incomingHead = prefixKey(fact);
-  const incomingScopeKey = scopeKey(scope);
-  const { data: dupRows } = await db
-    .from("rgaios_shared_memory")
-    .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
-    .eq("organization_id", input.orgId)
-    .is("archived_at", null)
-    .limit(500);
-  const dup = ((dupRows ?? []) as SharedMemoryRow[]).find(
-    (p) =>
-      prefixKey(p.fact) === incomingHead &&
-      scopeKey(p.scope ?? []) === incomingScopeKey,
-  );
-  if (!dup) {
-    console.warn(`[shared-memory] conflict reported but no matching row found by JS key`);
-    return { row: null, deduped: false };
-  }
-  const dupRow = dup;
-  if (importance > dupRow.importance) {
-    await db
-      .from("rgaios_shared_memory")
-      .update({
-        importance,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .eq("id", dupRow.id);
-    dupRow.importance = importance;
-  }
-  return { row: dupRow, deduped: true };
+  return { row: inserted as SharedMemoryRow, deduped: false };
 }
 
 /**

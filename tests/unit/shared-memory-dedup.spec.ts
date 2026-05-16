@@ -88,21 +88,26 @@ test("scopeKey is a pure '|'-join matching DB array_to_string(scope, '|')", () =
   );
 });
 
-test("migration 0075 ships the partial unique expression index used by dedup", () => {
-  // 0075 went through two failed shapes (stored generated columns
-  // with expression-level COLLATE then column-level COLLATE) before
-  // landing on an expression index. Pin the final shape: drop-any-
-  // half-state prelude + unique expression index over (org_id,
-  // lower-prefix collated "C", scope-join collated "C") restricted
-  // to archived_at IS NULL.
+test("migration 0075 cleans half-state from prior attempts but ships no live index yet", () => {
+  // 0075 went through three failed shapes on the prod Postgres image:
+  // stored generated columns (expr-level COLLATE), stored generated
+  // columns (column-level COLLATE), expression index. All three hit
+  // "functions in index expression must be marked IMMUTABLE" / the
+  // generated-column equivalent. The shipped 0075 now only drops any
+  // half-state and leaves dedup to the JS layer. A follow-up migration
+  // can ship a real IMMUTABLE wrapper function + bring back the
+  // partial unique index.
   const sql = readFileSync(
     resolve(__dirname, "../../supabase/migrations/0075_shared_memory_dedup_index.sql"),
     "utf8",
   );
   assert.match(sql, /drop column if exists fact_prefix/);
   assert.match(sql, /drop column if exists scope_key/);
-  assert.match(
-    sql,
-    /create unique index if not exists uq_rgaios_shared_memory_dedup_active[\s\S]+collate "C"[\s\S]+where archived_at is null/,
+  assert.match(sql, /drop index if exists uq_rgaios_shared_memory_dedup_active/);
+  // Confirm no naive CREATE INDEX line slipped back in - the next
+  // attempt belongs in a fresh migration.
+  assert.ok(
+    !/create unique index/i.test(sql),
+    "0075 must stay no-op until an IMMUTABLE wrapper migration ships",
   );
 });
