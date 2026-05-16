@@ -1467,9 +1467,15 @@ registerTool({
           ? "playsCount"
           : "commentsCount";
     const resultsPerHandle = Math.min(
-      Math.max(Number(args.results_per_handle ?? 20) || 20, 5),
+      Math.max(Number(args.results_per_handle ?? 8) || 8, 3),
       50,
     );
+    // Per-batch hard timeout. Apify run-sync server cap is 300s but for
+    // the chat-budget we need to stay well under 5min wall-clock. Eval 14
+    // on 2046996 hung at the Apify ceiling for 6+ min - the chat backend
+    // gave up before the tool result persisted. Cap the wait at 100s per
+    // batch so even a worst-case Promise.all completes well under 4min.
+    const PER_BATCH_TIMEOUT_MS = 100_000;
 
     const fileRes = await readAgentFileBody(ctx, fileNameArg);
     if ("error" in fileRes) return textError(fileRes.error);
@@ -1516,7 +1522,7 @@ registerTool({
               resultsLimit: resultsPerHandle,
               addParentData: false,
             }),
-            signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+            signal: AbortSignal.timeout(PER_BATCH_TIMEOUT_MS),
           });
           if (r.status !== 200 && r.status !== 201) {
             return { items: [], handles: batch, error: `http ${r.status}` };
