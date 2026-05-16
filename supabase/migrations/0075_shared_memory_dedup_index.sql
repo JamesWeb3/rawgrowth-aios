@@ -26,13 +26,21 @@
 -- Both generated expressions are IMMUTABLE so Postgres accepts them in
 -- a STORED generated column without further marking.
 
+-- COLLATE "C" is REQUIRED: without it Postgres 16+ rejects the
+-- generated column with "generation expression is not immutable",
+-- because lower() / array_to_string() are only marked IMMUTABLE for
+-- collation-deterministic input. The C collation is byte-level and
+-- always deterministic. The downstream JS helpers (prefixKey /
+-- scopeKey in shared.ts) also produce ASCII-lower output so the
+-- equality semantics line up.
+
 alter table rgaios_shared_memory
   add column if not exists fact_prefix text
-    generated always as (lower(substring(trim(fact) from 1 for 80))) stored;
+    generated always as (lower(substring(trim(fact) from 1 for 80)) collate "C") stored;
 
 alter table rgaios_shared_memory
   add column if not exists scope_key text
-    generated always as (array_to_string(scope, '|')) stored;
+    generated always as ((array_to_string(scope, '|')) collate "C") stored;
 
 create unique index if not exists uq_rgaios_shared_memory_dedup_active
   on rgaios_shared_memory (organization_id, fact_prefix, scope_key)
