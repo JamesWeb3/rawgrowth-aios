@@ -1470,12 +1470,12 @@ registerTool({
       Math.max(Number(args.results_per_handle ?? 8) || 8, 3),
       50,
     );
-    // Per-batch hard timeout. Apify run-sync server cap is 300s but for
-    // the chat-budget we need to stay well under 5min wall-clock. Eval 14
-    // on 2046996 hung at the Apify ceiling for 6+ min - the chat backend
-    // gave up before the tool result persisted. Cap the wait at 100s per
-    // batch so even a worst-case Promise.all completes well under 4min.
-    const PER_BATCH_TIMEOUT_MS = 100_000;
+    // Per-batch hard timeout. Apify run-sync server cap is 300s. With the
+    // batch size bumped to 25 we typically send ONE batch covering the
+    // whole list - a 13-handle scrape takes 90-180s on apify side. Cap
+    // generously at 240s so we don't abort a healthy run, while staying
+    // under Apify's own 300s ceiling and inside the chat-route budget.
+    const PER_BATCH_TIMEOUT_MS = 240_000;
 
     const fileRes = await readAgentFileBody(ctx, fileNameArg);
     if ("error" in fileRes) return textError(fileRes.error);
@@ -1489,11 +1489,21 @@ registerTool({
     const resolved = await resolveApifyKey(ctx.organizationId);
     if ("error" in resolved) return textError(resolved.error);
 
-    // Split into 5-handle batches and scrape in parallel. Each batch
-    // runs apify/instagram-scraper which returns the latest N posts
-    // per handle. We accept partial - some handles may be private or
-    // have no posts in the window.
-    const BATCH_SIZE = 5;
+    // Single-batch by default: apify/instagram-scraper can handle the
+    // whole handle list in one run-sync call. Splitting into parallel
+    // 5-handle batches risks per-batch rate-limit on starter-tier
+    // apify plans, where 2 of 3 parallel run-sync calls queue + the
+    // chat-budget runs out. Eval 16 on 74b0822 showed 10 of 13 handles
+    // returning 0 - consistent with parallel-batch silent rate-limit
+    // (3 batches sent at once, 1 wins the slot, 2 get throttled with
+    // empty datasets). A single batch with all 13 handles costs the
+    // same Apify compute but stays inside one run-sync slot.
+    //
+    // Cap at 25 handles per single run (Apify run-sync handles many
+    // input URLs but very long lists slow down the response). For
+    // operator lists > 25 we still split, but the common path (Marti
+    // 13 handles) goes single-batch.
+    const BATCH_SIZE = 25;
     const batches: string[][] = [];
     for (let i = 0; i < handles.length; i += BATCH_SIZE) {
       batches.push(handles.slice(i, i + BATCH_SIZE));
