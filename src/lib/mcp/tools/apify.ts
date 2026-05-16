@@ -1509,37 +1509,72 @@ registerTool({
     for (let i = 0; i < handles.length; i += BATCH_SIZE) {
       batches.push(handles.slice(i, i + BATCH_SIZE));
     }
-    const actorPath = "apify~instagram-scraper";
     const fetchLimit = batches.flat().length * resultsPerHandle;
-    const url =
-      `https://api.apify.com/v2/acts/${actorPath}/run-sync-get-dataset-items` +
-      `?limit=${Math.min(fetchLimit, MAX_LIMIT)}`;
-
-    type BatchResult = { items: unknown[]; handles: string[]; error?: string };
-    const batchResults: BatchResult[] = await Promise.all(
-      batches.map(async (batch): Promise<BatchResult> => {
-        try {
-          const r = await fetch(url, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${resolved.key}`,
-            },
-            body: JSON.stringify({
+    // Per-batch: race TWO actors in parallel + merge their items, dedup by
+    // post URL. Single actor (apify/instagram-scraper) returned 0 for 10
+    // of 13 handles even when the profiles post daily (eval 20-23
+    // pattern). Probably actor-specific intermittency. Racing
+    // apify/instagram-scraper + apify/instagram-reel-scraper covers each
+    // other's blind spots - same wall-clock (Promise.all the pair), 2x
+    // chance of returning data per handle.
+    const runActor = async (
+      actor: "apify~instagram-scraper" | "apify~instagram-reel-scraper",
+      batch: string[],
+    ): Promise<unknown[]> => {
+      const url =
+        `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items` +
+        `?limit=${Math.min(fetchLimit, MAX_LIMIT)}`;
+      const body =
+        actor === "apify~instagram-reel-scraper"
+          ? { username: batch, resultsLimit: resultsPerHandle }
+          : {
               directUrls: batch.map(
                 (h) => `https://www.instagram.com/${h}/`,
               ),
               resultsType: "posts",
               resultsLimit: resultsPerHandle,
               addParentData: false,
-            }),
-            signal: AbortSignal.timeout(PER_BATCH_TIMEOUT_MS),
-          });
-          if (r.status !== 200 && r.status !== 201) {
-            return { items: [], handles: batch, error: `http ${r.status}` };
+            };
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${resolved.key}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(PER_BATCH_TIMEOUT_MS),
+      });
+      if (r.status !== 200 && r.status !== 201) return [];
+      const j = await r.json();
+      return Array.isArray(j) ? j : [];
+    };
+
+    type BatchResult = { items: unknown[]; handles: string[]; error?: string };
+    const batchResults: BatchResult[] = await Promise.all(
+      batches.map(async (batch): Promise<BatchResult> => {
+        try {
+          // Run both actors in parallel for this batch, take whichever
+          // resolves first with non-empty data; merge dedup by post url.
+          const [scraperItems, reelItems] = await Promise.all([
+            runActor("apify~instagram-scraper", batch).catch(() => []),
+            runActor("apify~instagram-reel-scraper", batch).catch(() => []),
+          ]);
+          const merged: unknown[] = [];
+          const seenUrls = new Set<string>();
+          for (const it of [...scraperItems, ...reelItems]) {
+            const o = (it ?? {}) as Record<string, unknown>;
+            const u =
+              (typeof o.url === "string" && o.url) ||
+              (typeof o.postUrl === "string" && o.postUrl) ||
+              "";
+            if (u && seenUrls.has(u)) continue;
+            if (u) seenUrls.add(u);
+            merged.push(it);
           }
-          const j = await r.json();
-          return { items: Array.isArray(j) ? j : [], handles: batch };
+          if (merged.length > 0) {
+            return { items: merged, handles: batch };
+          }
+          return { items: [], handles: batch, error: "0 items both actors" };
         } catch (e) {
           return {
             items: [],
