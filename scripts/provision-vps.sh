@@ -363,6 +363,25 @@ function readBody(req) {
   });
 }
 
+// Startup sweep + safety heartbeat. R1 close: if drain crashed
+// between an inbound Telegram message and the spawn, the SQLite queue
+// row stays pending forever because nothing re-fires the claim. On
+// every restart, fire both surfaces once - the slash commands are
+// idempotent (claim-or-noop). The periodic SAFETY_SWEEP_MS heartbeat
+// catches rows that pile up during a silent stretch (no inbound HTTP
+// for >60s) and rows whose first spawn died mid-process. Both
+// intervals are env-overridable for testing or per-VPS tuning.
+const STARTUP_SWEEP_DELAY_MS = Number(process.env.DRAIN_STARTUP_SWEEP_MS ?? 2000);
+const SAFETY_SWEEP_MS = Number(process.env.DRAIN_SAFETY_SWEEP_MS ?? 60000);
+const SWEEP_COMMANDS = ["rawgrowth-chat", "rawgrowth-triage"];
+
+function sweep(reason) {
+  for (const command of SWEEP_COMMANDS) {
+    console.log(`drain[sweep] reason=${reason} command=${command}`);
+    trigger(command);
+  }
+}
+
 http.createServer(async (req, res) => {
   const path = (req.url ?? "/").split("?")[0];
 
@@ -401,6 +420,12 @@ http.createServer(async (req, res) => {
   trigger(command);
 }).listen(PORT, "0.0.0.0", () => {
   console.log(`rawclaw-drain listening on 0.0.0.0:${PORT}`);
+  if (STARTUP_SWEEP_DELAY_MS >= 0) {
+    setTimeout(() => sweep("startup"), STARTUP_SWEEP_DELAY_MS).unref();
+  }
+  if (SAFETY_SWEEP_MS > 0) {
+    setInterval(() => sweep("safety-heartbeat"), SAFETY_SWEEP_MS).unref();
+  }
 });
 JS
 chown -R rawclaw:rawclaw /opt/rawclaw-drain
