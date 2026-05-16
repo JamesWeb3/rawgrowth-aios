@@ -34,13 +34,24 @@
 -- scopeKey in shared.ts) also produce ASCII-lower output so the
 -- equality semantics line up.
 
+-- Drop any partial state from prior failed apply attempts. The IF
+-- EXISTS makes this safe to run on a fresh DB too.
+alter table rgaios_shared_memory drop column if exists fact_prefix;
+alter table rgaios_shared_memory drop column if exists scope_key;
+drop index if exists uq_rgaios_shared_memory_dedup_active;
+
+-- Column-level COLLATE "C" makes lower() / substring() / array_to_string()
+-- IMMUTABLE in the generated expression. The expression-level COLLATE
+-- "C" we tried first was not enough on Postgres 16+ - the expression
+-- inherits the COLUMN's collation, so the C collation has to be
+-- declared at column-definition time.
 alter table rgaios_shared_memory
-  add column if not exists fact_prefix text
-    generated always as (lower(substring(trim(fact) from 1 for 80)) collate "C") stored;
+  add column fact_prefix text collate "C"
+    generated always as (lower(substring(trim(fact) from 1 for 80))) stored;
 
 alter table rgaios_shared_memory
-  add column if not exists scope_key text
-    generated always as ((array_to_string(scope, '|')) collate "C") stored;
+  add column scope_key text collate "C"
+    generated always as (array_to_string(scope, '|')) stored;
 
 create unique index if not exists uq_rgaios_shared_memory_dedup_active
   on rgaios_shared_memory (organization_id, fact_prefix, scope_key)
