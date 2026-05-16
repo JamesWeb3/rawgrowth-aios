@@ -430,6 +430,12 @@ test("composio_use_tool: missing COMPOSIO_API_KEY surfaces textError, doesn't th
   try {
     delete process.env.COMPOSIO_API_KEY;
     installFetchRouter((req) => {
+      if (req.url.includes("/rest/v1/rgaios_organizations")) {
+        // P0-5 S3 unifies the gate read via shouldGateTool(); it runs
+        // BEFORE the connection lookup now. Approvals off so execution
+        // falls through to the original code path under test.
+        return jsonResponse({ approvals_gate_all: false });
+      }
       if (req.url.includes("/rest/v1/rgaios_connections")) {
         // Pool listing happens BEFORE the env check inside composioCall;
         // either order is fine - we just need the handler to terminate

@@ -1,4 +1,5 @@
 import { registerTool, text, textError } from "../registry";
+import { shouldGateTool } from "../approval-gate";
 import { composioAction } from "../proxy";
 import { createApproval } from "@/lib/approvals/queries";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -394,71 +395,44 @@ registerTool({
     // since PR 1 (commit 0149bb9).
     const callerUserId = ctx.userId ?? null;
 
-    // Org-wide approval gate (migration 0067, Chris bug 8). When
-    // `rgaios_organizations.approvals_gate_all = true`, every outbound
-    // composio_use_tool call queues into rgaios_approvals instead of
-    // executing. Operator decides at /approvals. Default false = zero
-    // behaviour change for clients that haven't opted in.
-    try {
-      const { data: orgRow, error: orgErr } = await supabaseAdmin()
-        .from("rgaios_organizations")
-        .select("approvals_gate_all")
-        .eq("id", ctx.organizationId)
-        .maybeSingle();
-      if (orgErr) {
-        // Read failed (RLS, transient DB). Log loudly and fall through
-        // to execute; downstream composioCall will fail anyway if the
-        // DB is fully broken. The narrow risk is approvals_gate_all=true
-        // bypassed on a transient read failure - we accept that trade
-        // because failing closed here breaks the happy-path test suite
-        // and produces confusing errors on routine DB hiccups. The
-        // createApproval inner-catch (below) is the real security gate.
+    // Org-wide approval gate (migration 0067, Chris bug 8) via the
+    // shared shouldGateTool() helper. P0-5 S3 unifies what used to be
+    // an inline copy here, a parallel copy in registry.ts, and an
+    // implicit per-tool write_policy path in executor.ts. Behavior
+    // change vs the old inline: this surface now FAILS CLOSED on a
+    // transient read failure of approvals_gate_all (parity with
+    // registry.ts). The prior inline path silently fell through to
+    // execute on read error, leaving the gate bypassed during DB
+    // hiccups. createApproval failure still aborts the call.
+    const composioToolLabel = `composio:${app}:${action}`;
+    const decision = await shouldGateTool(ctx, composioToolLabel, true);
+    if (decision.gate) {
+      try {
+        await createApproval({
+          organizationId: ctx.organizationId,
+          routineRunId: null,
+          agentId: null,
+          toolName: composioToolLabel,
+          toolArgs: rawInput as Record<string, unknown>,
+          reason: decision.reason,
+        });
+      } catch (approvalErr) {
+        // createApproval IS the gate. If it throws (RLS, table missing,
+        // write failure) abort the tool call - falling through to
+        // execute would bypass the gate entirely.
         console.error(
-          `composio_use_tool: approvals_gate_all read failed, continuing without gate: ${orgErr.message}`,
+          `composio_use_tool: createApproval failed under approvals_gate_all, aborting tool execution: ${(approvalErr as Error).message}`,
+        );
+        return textError(
+          `composio_use_tool ${app}/${action}: approval system failed; tool execution aborted (${(approvalErr as Error).message})`,
         );
       }
-      const gateAll =
-        (orgRow as { approvals_gate_all?: boolean } | null)?.approvals_gate_all ===
-        true;
-      if (gateAll) {
-        try {
-          await createApproval({
-            organizationId: ctx.organizationId,
-            routineRunId: null,
-            agentId: null,
-            toolName: `composio:${app}:${action}`,
-            toolArgs: rawInput as Record<string, unknown>,
-            reason: "Org policy approvals_gate_all is on; every outbound action requires operator approval.",
-          });
-        } catch (approvalErr) {
-          // createApproval is the gate itself. If it throws (RLS, table
-          // missing, write failure) we MUST NOT fall through to the
-          // execute path - that bypasses approvals_gate_all entirely.
-          // Abort the tool call and surface the failure to the caller.
-          console.error(
-            `composio_use_tool: createApproval failed under approvals_gate_all, aborting tool execution: ${(approvalErr as Error).message}`,
-          );
-          return textError(
-            `composio_use_tool ${app}/${action}: approval system failed; tool execution aborted (${(approvalErr as Error).message})`,
-          );
-        }
-        return text(
-          [
-            `Queued for approval: ${app}/${action}.`,
-            "An operator needs to approve this at /approvals before it runs.",
-            "When approved, the tool re-executes server-side with the same input.",
-          ].join("\n"),
-        );
-      }
-    } catch (gateErr) {
-      // Network throw on the gate read is rare. We log loudly and fall
-      // through; downstream composioCall will fail with a clearer
-      // message if the underlying DB is also down for the rest of the
-      // pipeline. The explicit `orgErr` branch above already fails
-      // closed on real Supabase-reported errors (RLS, schema, query),
-      // which is the path the original reviewer flagged.
-      console.error(
-        `composio_use_tool: approvals_gate_all check threw, falling through to execute: ${(gateErr as Error).message}`,
+      return text(
+        [
+          `Queued for approval: ${app}/${action}.`,
+          "An operator needs to approve this at /approvals before it runs.",
+          "When approved, the tool re-executes server-side with the same input.",
+        ].join("\n"),
       );
     }
 
