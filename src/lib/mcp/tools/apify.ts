@@ -1590,6 +1590,58 @@ registerTool({
       return textError(`apify_top_reels_from_file: no data - ${errs}`);
     }
 
+    // Per-handle retry: any handle that appears in input but NOT in the
+    // returned items (silent drop in batch scrape) gets one more shot
+    // via single-handle apify/instagram-scraper. Apify batch runs
+    // occasionally drop handles without error - the per-handle retry
+    // catches those. Time budget ~60s capped; parallel with Promise.all.
+    {
+      const handleOfRetry = (raw: unknown): string => {
+        const o = (raw ?? {}) as Record<string, unknown>;
+        const v =
+          (typeof o.ownerUsername === "string" && o.ownerUsername) ||
+          (typeof o.username === "string" && o.username) ||
+          (typeof o.author === "string" && o.author) ||
+          "";
+        return String(v).toLowerCase();
+      };
+      const covered = new Set<string>(allItems.map(handleOfRetry).filter(Boolean));
+      const missingForRetry = handles.filter((h) => !covered.has(h));
+      if (missingForRetry.length > 0 && missingForRetry.length <= 12) {
+        const RETRY_TIMEOUT = 60_000;
+        const retryResults = await Promise.all(
+          missingForRetry.map(async (handle): Promise<unknown[]> => {
+            try {
+              const r = await fetch(
+                "https://api.apify.com/v2/acts/apify~instagram-scraper" +
+                  `/run-sync-get-dataset-items?limit=${resultsPerHandle}`,
+                {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    authorization: `Bearer ${resolved.key}`,
+                  },
+                  body: JSON.stringify({
+                    directUrls: [`https://www.instagram.com/${handle}/`],
+                    resultsType: "posts",
+                    resultsLimit: resultsPerHandle,
+                    addParentData: false,
+                  }),
+                  signal: AbortSignal.timeout(RETRY_TIMEOUT),
+                },
+              );
+              if (r.status !== 200 && r.status !== 201) return [];
+              const j = await r.json();
+              return Array.isArray(j) ? j : [];
+            } catch {
+              return [];
+            }
+          }),
+        );
+        for (const items of retryResults) for (const it of items) allItems.push(it);
+      }
+    }
+
     const numOf = (raw: unknown, key: string): number => {
       const o = (raw ?? {}) as Record<string, unknown>;
       // Mirror the field-fallback chain used by every other apify
