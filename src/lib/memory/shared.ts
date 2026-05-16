@@ -44,20 +44,31 @@ function clampImportance(n: number | undefined): number {
   return Math.max(1, Math.min(5, Math.round(n)));
 }
 
-function normalizeScope(scope: string[] | undefined): string[] {
+// Exported for unit tests + for code that needs to mirror the dedup
+// key Postgres uses (migration 0075 generated columns). Do not import
+// for hot-path scans - the unique index already enforces dedup.
+export function normalizeScope(scope: string[] | undefined): string[] {
   if (!scope || !Array.isArray(scope)) return [];
   const cleaned = scope
     .map((s) => (s ?? "").toString().trim().toLowerCase())
     .filter((s) => s.length > 0 && s !== "all" && s !== "*");
-  return Array.from(new Set(cleaned));
+  // Sort + dedupe. Sort matters because the dedup unique index in
+  // migration 0075 uses array_to_string(scope, '|') as the key - the
+  // DB stores whatever order we send, so we have to send a canonical
+  // (sorted) order or two writes with the same dept set in different
+  // order will both pass the unique check.
+  return Array.from(new Set(cleaned)).sort();
 }
 
-function prefixKey(fact: string): string {
+export function prefixKey(fact: string): string {
   return fact.trim().slice(0, DEDUP_PREFIX_LEN).toLowerCase();
 }
 
-function scopeKey(scope: string[]): string {
-  return [...scope].sort().join("|");
+// Pure join. Callers must pre-sort via normalizeScope so the result
+// matches the DB's array_to_string(scope, '|') generated column - the
+// DB does not sort, it joins in the stored order.
+export function scopeKey(scope: string[]): string {
+  return scope.join("|");
 }
 
 /**
@@ -81,36 +92,13 @@ export async function addSharedMemory(input: {
   const importance = clampImportance(input.importance);
   const db = supabaseAdmin();
 
-  // Dedup: pull active rows for the org, compare prefix + scope set.
-  const { data: priorRows } = await db
-    .from("rgaios_shared_memory")
-    .select("id, fact, scope, importance, organization_id, source_agent_id, source_chat_id, supersedes_id, created_at, updated_at, archived_at")
-    .eq("organization_id", input.orgId)
-    .is("archived_at", null)
-    .limit(500);
-  const priors = (priorRows ?? []) as SharedMemoryRow[];
-  const incomingHead = prefixKey(fact);
-  const incomingScopeKey = scopeKey(scope);
-  const dup = priors.find(
-    (p) =>
-      prefixKey(p.fact) === incomingHead &&
-      scopeKey(p.scope ?? []) === incomingScopeKey,
-  );
-  if (dup) {
-    // Bump updated_at so importance refresh shows recency, but do not
-    // touch importance downwards.
-    if (importance > dup.importance) {
-      await db
-        .from("rgaios_shared_memory")
-        .update({
-          importance,
-          updated_at: new Date().toISOString(),
-        } as never)
-        .eq("id", dup.id);
-    }
-    return { row: dup, deduped: true };
-  }
-
+  // Dedup path: the unique index uq_rgaios_shared_memory_dedup_active
+  // (migration 0075) covers (organization_id, fact_prefix, scope_key)
+  // where archived_at is null. Try the insert first; on conflict, fetch
+  // the existing row and bump importance if the incoming value is
+  // higher. This is one round-trip in the common case (no dup) and two
+  // when a dup exists - vs the prior fetch-up-to-500-then-insert path
+  // which was always two round-trips and grew O(N) with org memory size.
   const { data: inserted, error } = await db
     .from("rgaios_shared_memory")
     .insert({
@@ -122,12 +110,54 @@ export async function addSharedMemory(input: {
       source_chat_id: input.sourceChatId ?? null,
     } as never)
     .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
-    .single();
-  if (error || !inserted) {
-    console.warn(`[shared-memory] insert failed: ${error?.message ?? "unknown"}`);
+    .maybeSingle();
+  if (inserted) {
+    return { row: inserted as SharedMemoryRow, deduped: false };
+  }
+
+  const isConflict =
+    !!error &&
+    (error.code === "23505" || /duplicate key/i.test(error.message ?? ""));
+  if (!error && !inserted) {
+    console.warn(`[shared-memory] insert returned no row and no error`);
     return { row: null, deduped: false };
   }
-  return { row: inserted as SharedMemoryRow, deduped: false };
+  if (error && !isConflict) {
+    console.warn(`[shared-memory] insert failed: ${error.message}`);
+    return { row: null, deduped: false };
+  }
+
+  // Conflict (23505): the partial unique index in migration 0075 caught
+  // an exact-key dup. Fetch the colliding row by the SAME key the index
+  // covers - fact_prefix + scope_key are stored generated columns, so
+  // this is one B-tree probe regardless of org memory size. The prior
+  // .limit(50) JS scan could miss in orgs with >50 active rows.
+  const incomingHead = prefixKey(fact);
+  const incomingScopeKey = scopeKey(scope);
+  const { data: dup } = await db
+    .from("rgaios_shared_memory")
+    .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
+    .eq("organization_id", input.orgId)
+    .eq("fact_prefix", incomingHead)
+    .eq("scope_key", incomingScopeKey)
+    .is("archived_at", null)
+    .maybeSingle();
+  if (!dup) {
+    console.warn(`[shared-memory] conflict reported but no dup row found by index key`);
+    return { row: null, deduped: false };
+  }
+  const dupRow = dup as SharedMemoryRow;
+  if (importance > dupRow.importance) {
+    await db
+      .from("rgaios_shared_memory")
+      .update({
+        importance,
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq("id", dupRow.id);
+    dupRow.importance = importance;
+  }
+  return { row: dupRow, deduped: true };
 }
 
 /**

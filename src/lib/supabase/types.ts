@@ -1048,6 +1048,11 @@ export type Database = {
           created_at: string;
           updated_at: string;
           archived_at: string | null;
+          // Stored generated columns (migration 0075). Read-only - the
+          // DB computes them from fact + scope. .eq() lookups against
+          // them are the fast dedup path used by addSharedMemory().
+          fact_prefix: string;
+          scope_key: string;
         };
         Insert: {
           id?: string;
