@@ -1467,15 +1467,17 @@ registerTool({
           ? "playsCount"
           : "commentsCount";
     const resultsPerHandle = Math.min(
-      Math.max(Number(args.results_per_handle ?? 8) || 8, 3),
+      Math.max(Number(args.results_per_handle ?? 3) || 3, 1),
       50,
     );
-    // Per-batch hard timeout. Apify run-sync server cap is 300s. With the
-    // batch size bumped to 25 we typically send ONE batch covering the
-    // whole list - a 13-handle scrape takes 90-180s on apify side. Cap
-    // generously at 240s so we don't abort a healthy run, while staying
-    // under Apify's own 300s ceiling and inside the chat-route budget.
-    const PER_BATCH_TIMEOUT_MS = 240_000;
+    // Per-batch hard timeout. Apify run-sync server cap is 300s. Eval 18
+    // on cd2ff53 hung 7+min on a 13-handle single batch even at
+    // results_per_handle=8. Cutting the per-handle fetch to 3 brings
+    // expected wall-clock under 2min for the same 13-handle list (3 x
+    // 13 = 39 items vs 8 x 13 = 104 items - apify time scales with
+    // items requested). Cap timeout at 180s so we abort before chat-
+    // route limit if apify stalls.
+    const PER_BATCH_TIMEOUT_MS = 180_000;
 
     const fileRes = await readAgentFileBody(ctx, fileNameArg);
     if ("error" in fileRes) return textError(fileRes.error);
