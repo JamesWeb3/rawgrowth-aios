@@ -271,6 +271,75 @@ export async function archiveSharedMemory(input: {
 }
 
 /**
+ * Atomic supersede: archive an old fact AND insert its replacement
+ * with supersedes_id pointing at the archived row. Closes the M3
+ * memory-hygiene gap - the old archiveSharedMemory had zero callers
+ * and supersedes_id was schema-only. Without an atomic supersede
+ * agents could only ADD facts, never CORRECT them, so a wrong fact
+ * ("client uses Shopify") would coexist with its correction ("client
+ * migrated to Webflow") in the preamble and the next turn would see
+ * both.
+ *
+ * Flow:
+ *   1. archive old row (stamps archived_at)
+ *   2. insert new row via addSharedMemory; if dedup catches an
+ *      identical fact+scope already present, we instead bump THAT
+ *      row to point at the archived row (the dedup is a write success
+ *      from the caller's perspective).
+ *   3. write supersedes_id on the new row so audit can trace back.
+ *
+ * Best-effort by design: an archive that succeeds but the insert
+ * fails leaves the old fact archived but no replacement. That is
+ * still strictly better than leaving the wrong fact live, which is
+ * the bug we are closing.
+ */
+export async function supersedeSharedMemory(input: {
+  orgId: string;
+  oldRowId: string;
+  newFact: string;
+  importance?: number;
+  scope?: string[];
+  sourceAgentId?: string | null;
+  sourceChatId?: number | null;
+}): Promise<{ newRow: SharedMemoryRow | null; archivedOldRow: boolean }> {
+  // Guard: old row must exist + belong to the org. Without this an
+  // attacker (or a buggy delegate) could supply any row id and we
+  // would happily archive a different tenant's memory.
+  const db = supabaseAdmin();
+  const { data: oldRowData } = await db
+    .from("rgaios_shared_memory")
+    .select("id, organization_id, archived_at")
+    .eq("id", input.oldRowId)
+    .eq("organization_id", input.orgId)
+    .maybeSingle();
+  if (!oldRowData) {
+    console.warn(
+      `[shared-memory] supersede: old row ${input.oldRowId} not found in org ${input.orgId}`,
+    );
+    return { newRow: null, archivedOldRow: false };
+  }
+  await archiveSharedMemory({ orgId: input.orgId, rowId: input.oldRowId });
+
+  const result = await addSharedMemory({
+    orgId: input.orgId,
+    fact: input.newFact,
+    importance: input.importance,
+    scope: input.scope,
+    sourceAgentId: input.sourceAgentId ?? null,
+    sourceChatId: input.sourceChatId ?? null,
+  });
+  if (result.row) {
+    await db
+      .from("rgaios_shared_memory")
+      .update({ supersedes_id: input.oldRowId } as never)
+      .eq("id", result.row.id)
+      .eq("organization_id", input.orgId);
+    result.row.supersedes_id = input.oldRowId;
+  }
+  return { newRow: result.row, archivedOldRow: true };
+}
+
+/**
  * Phrases that mark a fact as a NEGATIVE connection claim ("X isn't
  * connected"). Kept deliberately tight: a stale negative fact ("Apify
  * isn't connected") is worse than no fact once the integration is
