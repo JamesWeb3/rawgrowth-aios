@@ -290,6 +290,20 @@ registerTool({
         description:
           "One of: marketing, sales, fulfilment, finance. Pass empty string to unassign.",
       },
+      // FLEX MODE 2026-05-17: schema gap surfaced by the B audit -
+      // queries.ts:75 already writes system_prompt, only the MCP
+      // schema didn't expose it. Primary self-fix use case Chris
+      // described: "client agent rewrites its own persona".
+      system_prompt: {
+        type: "string",
+        description:
+          "The agent's full system prompt (persona / mission / hard rules). Pass an empty string to clear.",
+      },
+      max_tokens: {
+        type: "number",
+        description:
+          "Per-agent reasoning budget cap (migration 0074). Default null = use the global DEFAULT_MAX_TOKENS.",
+      },
     },
     required: ["id"],
   },
@@ -367,6 +381,19 @@ registerTool({
       } else {
         patch.department = d;
       }
+    }
+    if (args.system_prompt !== undefined) {
+      // Empty string = clear the override + fall back to whatever the
+      // role-template / starter system prompt was. queries.ts:75
+      // normalises empty -> null on write.
+      patch.systemPrompt = String(args.system_prompt);
+    }
+    if (args.max_tokens !== undefined) {
+      const n = Number(args.max_tokens);
+      if (!Number.isFinite(n) || n <= 0) {
+        return textError("max_tokens must be a positive number");
+      }
+      patch.maxTokens = n;
     }
 
     const agent = await updateAgent(ctx.organizationId, id, patch);

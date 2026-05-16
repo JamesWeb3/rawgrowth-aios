@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { getOrgContext } from "@/lib/auth/admin";
+import { getOrgContext, getActiveOrgRole } from "@/lib/auth/admin";
 import { tryDecryptSecret } from "@/lib/crypto";
 import { badUuidResponse } from "@/lib/utils";
 
@@ -29,7 +29,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const ctx = await getOrgContext();
-  if (!ctx?.isAdmin) {
+  if (!ctx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  // FLEX MODE 2026-05-17: was Pedro-only (isAdmin). Owners + admins of
+  // the active org can self-serve their own bot token. Client should
+  // not need a platform-operator ticket to copy a token they paid for
+  // and provisioned through the same dashboard.
+  const role = await getActiveOrgRole(ctx);
+  const allowed = ctx.isAdmin || role === "owner" || role === "admin";
+  if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const { id } = await params;
