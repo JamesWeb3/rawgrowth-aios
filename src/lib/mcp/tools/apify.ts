@@ -1608,7 +1608,7 @@ registerTool({
       const covered = new Set<string>(allItems.map(handleOfRetry).filter(Boolean));
       const missingForRetry = handles.filter((h) => !covered.has(h));
       if (missingForRetry.length > 0 && missingForRetry.length <= 12) {
-        const RETRY_TIMEOUT = 60_000;
+        const RETRY_TIMEOUT = 30_000;
         // First retry: apify/instagram-scraper per-handle. Eval 27
         // confirmed this recovers some dropped handles (codiesanchez).
         const retry1 = await Promise.all(
@@ -1641,43 +1641,9 @@ registerTool({
           }),
         );
         for (const items of retry1) for (const it of items) allItems.push(it);
-        // Second retry on STILL-missing handles via apify/instagram-reel-
-        // scraper (different actor, different blind spot). Recovers handles
-        // that scraper actor can't see.
-        const stillCovered = new Set<string>(
-          allItems.map(handleOfRetry).filter(Boolean),
-        );
-        const stillMissing = missingForRetry.filter((h) => !stillCovered.has(h));
-        if (stillMissing.length > 0) {
-          const retry2 = await Promise.all(
-            stillMissing.map(async (handle): Promise<unknown[]> => {
-              try {
-                const r = await fetch(
-                  "https://api.apify.com/v2/acts/apify~instagram-reel-scraper" +
-                    `/run-sync-get-dataset-items?limit=${resultsPerHandle}`,
-                  {
-                    method: "POST",
-                    headers: {
-                      "content-type": "application/json",
-                      authorization: `Bearer ${resolved.key}`,
-                    },
-                    body: JSON.stringify({
-                      username: [handle],
-                      resultsLimit: resultsPerHandle,
-                    }),
-                    signal: AbortSignal.timeout(RETRY_TIMEOUT),
-                  },
-                );
-                if (r.status !== 200 && r.status !== 201) return [];
-                const j = await r.json();
-                return Array.isArray(j) ? j : [];
-              } catch {
-                return [];
-              }
-            }),
-          );
-          for (const items of retry2) for (const it of items) allItems.push(it);
-        }
+        // (second retry removed - was doubling wall-clock with marginal
+        // gain; eval 28 hung 12+min on double retry vs eval 27's 4min
+        // single retry. One retry is the right cost/benefit.)
       }
     }
 
