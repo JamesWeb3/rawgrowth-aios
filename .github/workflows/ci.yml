@@ -49,17 +49,18 @@ jobs:
           DEPLOY_MODE: v3
 
   migrations:
-    # Prod-parity migration smoke. Spins postgres:16-alpine, runs
-    # scripts/migrate.ts against a fresh DB, runs it again to assert
-    # idempotency, then greps both logs for fatal Postgres patterns
-    # that an exit-0 migrate run can still leave behind (the 0075
-    # IMMUTABLE-disaster shape). Finally invokes
-    # tests/migrations/*.spec.ts for structural assertions (0075
-    # no-op contract, schema_migrations row integrity).
+    # Prod-parity migration smoke. Spins pgvector/pgvector:pg16 (mirrors
+    # Supabase Cloud's pgvector availability - 0023_scrape_snapshots.sql
+    # creates the vector extension), runs scripts/migrate.ts against a
+    # fresh DB, runs it again to assert idempotency, then greps both
+    # logs for fatal Postgres patterns that an exit-0 migrate run can
+    # still leave behind (the 0075 IMMUTABLE-disaster shape). Finally
+    # invokes tests/migrations/*.spec.ts for structural assertions
+    # (0075 no-op contract, schema_migrations row integrity).
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -74,6 +75,13 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       DEPLOY_MODE: self_hosted
+    defaults:
+      run:
+        # pipefail so `npm run self-hosted:migrate | tee` propagates the
+        # migrate.ts process.exit(1) failure mode instead of letting tee
+        # mask it as exit 0 (the bug that the first CI green-then-fail
+        # cycle on this PR exposed).
+        shell: bash -eo pipefail {0}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
