@@ -1510,13 +1510,13 @@ registerTool({
       batches.push(handles.slice(i, i + BATCH_SIZE));
     }
     const fetchLimit = batches.flat().length * resultsPerHandle;
-    // Per-batch: race TWO actors in parallel + merge their items, dedup by
-    // post URL. Single actor (apify/instagram-scraper) returned 0 for 10
-    // of 13 handles even when the profiles post daily (eval 20-23
-    // pattern). Probably actor-specific intermittency. Racing
-    // apify/instagram-scraper + apify/instagram-reel-scraper covers each
-    // other's blind spots - same wall-clock (Promise.all the pair), 2x
-    // chance of returning data per handle.
+    // Per-batch: race TWO actors with Promise.race, NOT Promise.all -
+    // take whichever finishes first with data. Eval 24-25 confirmed
+    // Promise.all doubled wall-clock because both actors had to finish
+    // before merge. Race-first = whichever actor is faster today wins,
+    // we don't wait on the slow one. Different actors have different
+    // blind spots for handle coverage; the race still gives 2x chance
+    // of getting data within the batch budget.
     const runActor = async (
       actor: "apify~instagram-scraper" | "apify~instagram-reel-scraper",
       batch: string[],
@@ -1553,26 +1553,22 @@ registerTool({
     const batchResults: BatchResult[] = await Promise.all(
       batches.map(async (batch): Promise<BatchResult> => {
         try {
-          // Run both actors in parallel for this batch, take whichever
-          // resolves first with non-empty data; merge dedup by post url.
-          const [scraperItems, reelItems] = await Promise.all([
-            runActor("apify~instagram-scraper", batch).catch(() => []),
-            runActor("apify~instagram-reel-scraper", batch).catch(() => []),
-          ]);
-          const merged: unknown[] = [];
-          const seenUrls = new Set<string>();
-          for (const it of [...scraperItems, ...reelItems]) {
-            const o = (it ?? {}) as Record<string, unknown>;
-            const u =
-              (typeof o.url === "string" && o.url) ||
-              (typeof o.postUrl === "string" && o.postUrl) ||
-              "";
-            if (u && seenUrls.has(u)) continue;
-            if (u) seenUrls.add(u);
-            merged.push(it);
+          // Race-first: take whichever actor returns data first. If the
+          // winner returned empty, fall back to await the other.
+          const scraperPromise = runActor("apify~instagram-scraper", batch).catch(() => [] as unknown[]);
+          const reelPromise = runActor("apify~instagram-reel-scraper", batch).catch(() => [] as unknown[]);
+          const wrapped = [
+            scraperPromise.then((items) => ({ source: "scraper", items })),
+            reelPromise.then((items) => ({ source: "reel", items })),
+          ];
+          const first = await Promise.race(wrapped);
+          if (first.items.length > 0) {
+            return { items: first.items, handles: batch };
           }
-          if (merged.length > 0) {
-            return { items: merged, handles: batch };
+          // First finished empty; await the other.
+          const other = await (first.source === "scraper" ? reelPromise : scraperPromise);
+          if (other.length > 0) {
+            return { items: other, handles: batch };
           }
           return { items: [], handles: batch, error: "0 items both actors" };
         } catch (e) {
