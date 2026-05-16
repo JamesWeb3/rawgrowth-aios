@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 
-import { getOrgContext } from "@/lib/auth/admin";
+import { getOrgContext, getActiveOrgRole } from "@/lib/auth/admin";
 import { isDepartmentAllowed } from "@/lib/auth/dept-acl";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { chatReply } from "@/lib/agent/chat";
@@ -736,12 +736,19 @@ export async function POST(
   // 2. Build the full preamble (persona + org place + memories + brand
   // + RAG over agent files + company corpus). Helper is shared with the
   // per-agent Telegram webhook so both surfaces see the same grounding.
+  // FLEX MODE (Chris feedback 2026-05-17): thread the operator's role
+  // through so the preamble can swap third-person ("the client") for
+  // second-person ("your brand profile") when owner/admin is talking.
+  // Anonymous + member surfaces (legacy seed users without a membership
+  // row, scheduled routine runs) get the original client-facing tone.
+  const userRole = await getActiveOrgRole(ctx);
   const extraPreamble =
     (await buildAgentChatPreamble({
       orgId,
       agentId,
       orgName: ctx.activeOrgName,
       queryText: lastContent,
+      userRole,
     })) + recallBlock;
 
   const encoder = new TextEncoder();

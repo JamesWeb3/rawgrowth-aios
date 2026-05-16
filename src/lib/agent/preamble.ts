@@ -52,8 +52,21 @@ export async function buildAgentChatPreamble(input: {
   agentId: string;
   orgName: string | null;
   queryText: string;
+  /**
+   * Role of the user driving this chat turn. When "owner" or "admin"
+   * the agent stops third-personing the operator ("the client",
+   * "Marti's instance") and addresses them directly as "you / your".
+   * Chris feedback 2026-05-17: the SaaS-style framing made agents
+   * sound like they were talking ABOUT the operator instead of TO
+   * them. Anything else (member, null, unknown) keeps the original
+   * client-facing tone so downstream surfaces (Telegram webhook with
+   * no logged-in user, scheduled routines) stay safe.
+   */
+  userRole?: "owner" | "admin" | "developer" | "member" | null;
 }): Promise<string> {
   const { orgId, agentId, orgName, queryText } = input;
+  const isOwnerContext =
+    input.userRole === "owner" || input.userRole === "admin";
   const db = supabaseAdmin();
   let preamble = "";
 
@@ -1066,9 +1079,18 @@ export async function buildAgentChatPreamble(input: {
         lastSpace > 80 ? tasterRaw.slice(0, lastSpace) : tasterRaw;
       const truncated = content.length > BRAND_VOICE_INLINE_LIMIT;
       const sampleBanned = BANNED_WORDS.slice(0, 3).join(", ");
+      // FLEX MODE (Chris feedback 2026-05-17): when the operator is
+      // the owner/admin, talk TO them ("your brand profile") instead
+      // of ABOUT them ("the client"). Anything else keeps the original
+      // third-person framing for legitimate client-facing surfaces
+      // (Telegram webhook with no session, scheduled routine runs,
+      // delegate-to-CEO chains).
+      const brandFrame = isOwnerContext
+        ? `Your brand profile (${orgName ?? "this organisation"}) - match this voice in every reply, never generic advice`
+        : `Brand profile for ${orgName ?? "this organisation"} (THIS IS THE CLIENT YOU WORK FOR - match their voice, never use generic advice)`;
       preamble +=
         (preamble ? "\n\n" : "") +
-        `Brand profile for ${orgName ?? "this organisation"} (THIS IS THE CLIENT YOU WORK FOR - match their voice, never use generic advice):\n\n${taster}${truncated ? "..." : ""}\n\nBanned words sample (${BANNED_WORDS.length} total - never use): ${sampleBanned}.\n\nFor the full voice markdown, complete banned-words list, or any documented framework, call the lookup_brand_voice tool.`;
+        `${brandFrame}:\n\n${taster}${truncated ? "..." : ""}\n\nBanned words sample (${BANNED_WORDS.length} total - never use): ${sampleBanned}.\n\nFor the full voice markdown, complete banned-words list, or any documented framework, call the lookup_brand_voice tool.`;
     }
   } catch (err) {
     console.warn(

@@ -177,7 +177,9 @@ export function SlackConnectionCard() {
                 ) : data.configured ? (
                   <Badge
                     variant="secondary"
-                    className="bg-cyan-500/10 text-[10px] text-cyan-400"
+                    // Faded primary instead of cyan - "configured but not
+                    // installed" is a transitional state, still on-brand.
+                    className="bg-primary/8 text-[10px] text-primary/80"
                   >
                     App configured · not installed
                   </Badge>

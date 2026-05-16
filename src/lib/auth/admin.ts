@@ -87,6 +87,43 @@ export async function getOrgContext(): Promise<OrgContext | null> {
   };
 }
 
+/**
+ * Look up the caller's role inside the active org. Used by the chat
+ * route to flip the agent preamble from third-person ("the client") to
+ * second-person ("you / your") when the operator IS the owner / admin.
+ *
+ * - Returns "admin" for any user whose home org is the platform ADMIN_ORG_ID
+ *   (Rawgrowth operators viewing client VPSes via impersonation).
+ * - Returns the rgaios_organization_memberships.role value when set.
+ * - Returns null on lookup failure or no membership row (legacy seed flows
+ *   create a user without a membership row; treat as no-elevation).
+ *
+ * Reads are cheap (single .eq().eq().maybeSingle()) so callers can hit
+ * this per chat turn without batching.
+ */
+export async function getActiveOrgRole(
+  ctx: OrgContext,
+): Promise<"owner" | "admin" | "developer" | "member" | null> {
+  if (ctx.isAdmin) return "admin";
+  if (!ctx.activeOrgId) return null;
+  const { data } = await supabaseAdmin()
+    .from("rgaios_organization_memberships")
+    .select("role")
+    .eq("user_id", ctx.userId)
+    .eq("organization_id", ctx.activeOrgId)
+    .maybeSingle();
+  const role = (data as { role?: string } | null)?.role;
+  if (
+    role === "owner" ||
+    role === "admin" ||
+    role === "developer" ||
+    role === "member"
+  ) {
+    return role;
+  }
+  return null;
+}
+
 export async function listAllOrganizations(): Promise<OrgSummary[]> {
   const { data } = await supabaseAdmin()
     .from("rgaios_organizations")

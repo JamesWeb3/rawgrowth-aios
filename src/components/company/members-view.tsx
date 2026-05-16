@@ -69,7 +69,10 @@ function roleBadgeClass(role: Role) {
     return "rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-amber-400";
   }
   if (role === "developer") {
-    return "rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-cyan-400";
+    // Use a brand-token surface (faded primary green) instead of cyan
+    // so the role-badge row stays on the RG green palette - Chris
+    // feedback 2026-05-17 "needs to be RG green".
+    return "rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-primary/80";
   }
   return "rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-muted-foreground";
 }
