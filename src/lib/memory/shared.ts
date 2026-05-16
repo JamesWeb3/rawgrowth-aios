@@ -127,26 +127,33 @@ export async function addSharedMemory(input: {
     return { row: null, deduped: false };
   }
 
-  // Conflict (23505): the partial unique index in migration 0075 caught
-  // an exact-key dup. Fetch the colliding row by the SAME key the index
-  // covers - fact_prefix + scope_key are stored generated columns, so
-  // this is one B-tree probe regardless of org memory size. The prior
-  // .limit(50) JS scan could miss in orgs with >50 active rows.
+  // Conflict (23505): the partial unique expression index in migration
+  // 0075 caught an exact-key dup. The index is on
+  //   (organization_id, lower(substring(trim(fact) ...)) collate "C",
+  //    array_to_string(scope, '|') collate "C")
+  // - it is an expression index, NOT stored columns, so the colliding
+  // row cannot be fetched by .eq("fact_prefix"). Fall back to the
+  // org-scoped scan and re-run prefixKey/scopeKey in JS to find it.
+  // The unique index already eliminated the race; this lookup is
+  // only fetching the existing row to bump importance.
   const incomingHead = prefixKey(fact);
   const incomingScopeKey = scopeKey(scope);
-  const { data: dup } = await db
+  const { data: dupRows } = await db
     .from("rgaios_shared_memory")
     .select("id, organization_id, fact, source_agent_id, source_chat_id, importance, scope, supersedes_id, created_at, updated_at, archived_at")
     .eq("organization_id", input.orgId)
-    .eq("fact_prefix", incomingHead)
-    .eq("scope_key", incomingScopeKey)
     .is("archived_at", null)
-    .maybeSingle();
+    .limit(500);
+  const dup = ((dupRows ?? []) as SharedMemoryRow[]).find(
+    (p) =>
+      prefixKey(p.fact) === incomingHead &&
+      scopeKey(p.scope ?? []) === incomingScopeKey,
+  );
   if (!dup) {
-    console.warn(`[shared-memory] conflict reported but no dup row found by index key`);
+    console.warn(`[shared-memory] conflict reported but no matching row found by JS key`);
     return { row: null, deduped: false };
   }
-  const dupRow = dup as SharedMemoryRow;
+  const dupRow = dup;
   if (importance > dupRow.importance) {
     await db
       .from("rgaios_shared_memory")
