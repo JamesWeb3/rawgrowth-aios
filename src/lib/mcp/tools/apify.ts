@@ -1467,17 +1467,15 @@ registerTool({
           ? "playsCount"
           : "commentsCount";
     const resultsPerHandle = Math.min(
-      Math.max(Number(args.results_per_handle ?? 3) || 3, 1),
+      Math.max(Number(args.results_per_handle ?? 5) || 5, 1),
       50,
     );
-    // Per-batch hard timeout. Apify run-sync server cap is 300s. Eval 18
-    // on cd2ff53 hung 7+min on a 13-handle single batch even at
-    // results_per_handle=8. Cutting the per-handle fetch to 3 brings
-    // expected wall-clock under 2min for the same 13-handle list (3 x
-    // 13 = 39 items vs 8 x 13 = 104 items - apify time scales with
-    // items requested). Cap timeout at 180s so we abort before chat-
-    // route limit if apify stalls.
-    const PER_BATCH_TIMEOUT_MS = 180_000;
+    // Per-batch hard timeout 100s + parallel 5-handle batches. This is
+    // the eval-16 (74b0822) config that ACTUALLY landed an MCP card in
+    // ~3min and PASSED 6/7. Single-batch 13-handle (eval 17+18+19) hung
+    // 7+min - apify processes URL list serially inside a run, so single-
+    // batch is slower than 3 parallel batches. Reverting.
+    const PER_BATCH_TIMEOUT_MS = 100_000;
 
     const fileRes = await readAgentFileBody(ctx, fileNameArg);
     if ("error" in fileRes) return textError(fileRes.error);
@@ -1501,11 +1499,12 @@ registerTool({
     // empty datasets). A single batch with all 13 handles costs the
     // same Apify compute but stays inside one run-sync slot.
     //
-    // Cap at 25 handles per single run (Apify run-sync handles many
-    // input URLs but very long lists slow down the response). For
-    // operator lists > 25 we still split, but the common path (Marti
-    // 13 handles) goes single-batch.
-    const BATCH_SIZE = 25;
+    // 5-handle parallel batches. Apify processes URLs serially within
+    // one run, so 3 parallel runs of 5 handles each finish faster than
+    // one serial run of 15 handles (eval 16 vs evals 17/18/19 confirmed
+    // this). Per-batch rate-limit risk (eval 15 partial 3-of-13) is
+    // accepted - the coverage_brief surfaces it honestly.
+    const BATCH_SIZE = 5;
     const batches: string[][] = [];
     for (let i = 0; i < handles.length; i += BATCH_SIZE) {
       batches.push(handles.slice(i, i + BATCH_SIZE));
