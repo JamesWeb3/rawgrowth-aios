@@ -1068,6 +1068,34 @@ export async function POST(
               "[chat] second-pass reply failed:",
               (err as Error).message,
             );
+            // Fallback: if pass2 OBSERVATION threw (commonly "Controller is
+            // already closed" when the stream timed out before pass2 finished),
+            // synthesize a minimal reply from the tool results so the
+            // operator still gets a persisted assistant message instead of
+            // a silent dropped turn. Without this, the chat reload shows
+            // user + reasoning + tool cards but NO assistant reply, and the
+            // tool output that just rendered live disappears.
+            if (commandResults.length > 0 && !preFilterText.trim()) {
+              const summary = commandResults
+                .filter((r) => r.ok)
+                .map((r) => {
+                  const detailText =
+                    (r.detail && typeof r.detail.text === "string"
+                      ? (r.detail.text as string)
+                      : null) ||
+                    (r.detail && typeof r.detail.outputText === "string"
+                      ? (r.detail.outputText as string)
+                      : null);
+                  return detailText || r.summary;
+                })
+                .join("\n\n")
+                .slice(0, 4000);
+              if (summary) {
+                preFilterText =
+                  "Tool results below (synthesis step was interrupted by stream timeout, raw output preserved):\n\n" +
+                  summary;
+              }
+            }
           }
         }
 
